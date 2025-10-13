@@ -28,4 +28,10 @@
 - [DPL](concepts/dpl.md)
 - [Task](concepts/task.md)
 
+# 架构设计
+- [架构总览](architecture/overview.md)
+- [核心组件](architecture/components.md)
+- [数据流设计](architecture/data-flow.md)
+- [设计原则](architecture/design-principles.md)
+
 # Mock API
