@@ -1,0 +1,54 @@
+/* COTA 文档自定义样式 */
+
+/* 优化中文字体显示 */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+/* 代码块字体优化 */
+code, .hljs {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+}
+
+/* 标题样式优化 */
+.chapter li.chapter-item {
+    line-height: 1.6;
+}
+
+/* 搜索结果样式 */
+#searchresults {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* 导航链接样式 */
+.nav-chapters .nav-chapter {
+    padding: 0.5rem 0;
+}
+
+/* 响应式优化 */
+@media (max-width: 768px) {
+    .sidetoc {
+        font-size: 0.9rem;
+    }
+}
+
+/* GitHub链接样式 */
+.github-corner:hover .octo-arm {
+    animation: octocat-wave 560ms ease-in-out;
+}
+
+@keyframes octocat-wave {
+    0%, 20% { transform: rotate(0deg) }
+    40%, 60% { transform: rotate(-25deg) }
+    80%, 100% { transform: rotate(10deg) }
+}
+
+/* 代码复制按钮样式 */
+.hljs .copy-button {
+    display: none;
+}
+
+pre:hover .copy-button {
+    display: block;
+}

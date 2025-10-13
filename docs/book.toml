@@ -1,0 +1,45 @@
+[book]
+title = "COTA Documentation"
+authors = ["CotaAI Team"]
+description = "COTA - chain of thought agent 对话平台文档"
+src = "src"
+language = "zh"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+curly-quotes = true
+mathjax-support = false
+copy-fonts = true
+additional-css = ["theme/custom.css"]
+additional-js = ["theme/custom.js"]
+no-section-label = false
+git-repository-url = "https://github.com/CotaAI/cota"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/CotaAI/cota/edit/main/docs/{path}"
+site-url = "https://cotaai.github.io/cota/"
+cname = "cotaai.github.io"
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+use-boolean-and = true
+boost-title = 2
+boost-hierarchy = 1
+boost-paragraph = 1
+expand = true
+heading-split-level = 3
+
+[output.html.print]
+enable = true
+
+[output.html.fold]
+enable = false
+level = 0
+
+[preprocessor.links]
+
+[preprocessor.index]
+
+[preprocessor.katex]

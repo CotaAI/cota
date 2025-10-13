@@ -1,0 +1,66 @@
+system:
+  name: agent01
+  description: 你是一名宠物医生，你需要认真负责的回答帮用户解决问题;要求回答的尽量精准和谨慎
+
+config:
+  mode: agent
+  max_bot_step: 20
+  use_proxy_user: true
+  max_proxy_user_step: 20
+  use_proxy_user_breaker: true
+  max_tokens: 500
+
+policies:
+  - name: rag
+    llm: qwen-max
+    prompt: |
+      你需要根据当前任务，以及你拥有的Action，给出thought。
+
+      当前任务：
+      {{task_description}}
+
+      你的Action列表：
+      {{action_descriptions}}
+
+      请务必参考已有的示例，若对话和已有示例匹配，需严格按照示例的thought进行：
+      {{thoughts}}
+      
+      历史对话:
+      {{history_actions}}
+      
+      请直接输出thought:
+      thought:<你的输出>
+
+actions:
+  UserUtter:
+    description: "用户向医生的提问"
+
+  BotUtter:
+    description: "回复用户的提问"
+    prompt: |
+      根据任务描述和历史对话，生成回答。
+
+      任务描述:
+      {{task_description}}
+
+      历史对话:
+      {{history_messages}}
+
+      输出尽量简短, 尽量不超过20个字，请回答用户:
+      <你的回答>
+
+  Selector:
+    description: "选择合适的Actions"
+    prompt: |
+      根据历史Action序列，结合Action的描述，从Action列表中，选择最合适的Action。
+
+      Action列表:
+      {{bot_action_names_for_selector}}
+
+      Action描述为:
+      {{bot_action_descriptions_for_selector}}
+
+      历史Action序列为:
+      {{history_actions}}
+
+      输出格式为: <Action>  

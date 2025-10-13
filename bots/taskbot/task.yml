@@ -1,0 +1,35 @@
+description: 模拟一段用户和咨询医生宠物问题的场景对话
+
+prompt: |
+    你是一个任务规划器，根据任务描述和历史对话，选择下一步指派哪个agent来执行
+    
+    任务描述：
+    {{task_description}}
+
+    agents描述为: 
+    {{agent_description}}
+
+    请根据当前的对话状态：
+    {{history_messages}}
+
+    请指派下一步agent，请按照如下JSON格式输出：
+
+    {"agent":'<选择的agent的名字>'}
+
+plans-bak:
+  - name: task1
+    agent: agent
+    user: 你家猫生病了，拉肚子，需要找医生咨询
+    dependencies: []
+  - name: task2
+    agent: agent
+    user: 你家狗生病了，不吃饭，需要找医生咨询
+    dependencies: [task1]
+  - name: task3
+    agent: agent
+    user: 你家鹦鹉生病了，掉毛，需要找医生咨询
+    dependencies: [task1]
+  - name: task4
+    agent: agent
+    user: 你家猫生病了，看起来像皮肤病，需要找医生咨询
+    dependencies: [task2, task3]

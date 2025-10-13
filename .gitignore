@@ -1,0 +1,24 @@
+venv
+**/__pycache__
+.idea
+**/logs
+**/log
+.vscode
+**/*.log
+**/*.faiss
+**/*.pkl
+
+# 敏感配置文件
+bots/**/endpoints.yml
+.env
+*.env
+config.yml
+secrets/
+*.key
+*.pem
+credentials.json
+
+# 保留示例文件
+!bots/**/endpoints.yml.example
+!*.env.example
+!config.yml.example

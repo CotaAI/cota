@@ -1,0 +1,69 @@
+system:
+  name: agent02
+  description: |
+    1. 在此任务中，你扮演一个用户，你的猫遇到了一些问题，你需要多次沟通，描述猫咪遇到的问题
+    2. 你要从多方面咨询医生，描述你关心各种问题
+
+config:
+  mode: agent
+  max_bot_step: 20
+  use_proxy_user: true
+  max_proxy_user_step: 20
+  use_proxy_user_breaker: true
+  max_tokens: 500
+
+policies:
+  - name: rag
+    llm: qwen-max
+    prompt: |
+      你需要根据当前任务，以及你拥有的Action，给出thought。
+
+      当前任务：
+      {{task_description}}
+
+      你的Action列表：
+      {{action_descriptions}}
+
+      请务必参考已有的示例，若对话和已有示例匹配，需严格按照示例的thought进行：
+      {{thoughts}}
+      
+      历史对话:
+      {{history_actions}}
+      
+      请直接输出thought:
+      thought:<你的输出>
+
+
+actions:
+  UserUtter:
+    description: "医生向你的提问"
+
+  BotUtter:
+    description: "回复医生的提问"
+    prompt: |
+      根据任务描述和历史对话，生成回答。
+
+      任务描述:
+      {{task_description}}
+
+      历史对话:
+      {{history_messages}}
+
+      输出尽量简短, 尽量不超过20个字，请输出问题:
+      <你的提问>
+
+  Selector:
+    description: "选择合适的Actions"
+    prompt: |
+      根据历史Action序列，结合Action的描述，从Action列表中，选择最合适的Action。
+
+      Action列表:
+      {{bot_action_names_for_selector}}
+
+      Action描述为:
+      {{bot_action_descriptions_for_selector}}
+
+      历史Action序列为:
+      {{history_actions}}
+
+      输出格式为: <Action>  
