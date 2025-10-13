@@ -52,3 +52,64 @@ code, .hljs {
 pre:hover .copy-button {
     display: block;
 }
+
+/* Mermaid 图表样式 */
+.mermaid-container {
+    margin: 1rem 0;
+    text-align: center;
+    padding: 1rem;
+    background: #1a1a1a;
+    border-radius: 8px;
+    border: 1px solid #333;
+}
+
+.mermaid {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Mermaid 深色主题适配 */
+.mermaid svg {
+    background: transparent !important;
+    max-width: 100%;
+    height: auto;
+}
+
+.mermaid .node rect,
+.mermaid .node circle,
+.mermaid .node ellipse,
+.mermaid .node polygon {
+    fill: #2d3748 !important;
+    stroke: #4a5568 !important;
+    stroke-width: 1px !important;
+}
+
+.mermaid .node .label {
+    color: #e2e8f0 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+
+.mermaid .edgePath .path {
+    stroke: #718096 !important;
+    stroke-width: 1.5px !important;
+}
+
+.mermaid .edgeLabel {
+    background-color: #1a202c !important;
+    color: #e2e8f0 !important;
+    padding: 2px 4px !important;
+    border-radius: 3px !important;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .mermaid-container {
+        margin: 0.5rem 0;
+        padding: 0.5rem;
+    }
+    
+    .mermaid svg {
+        width: 100% !important;
+        height: auto !important;
+    }
+}
