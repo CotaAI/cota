@@ -1,131 +1,158 @@
+<div align="center">
+
 # COTA
+**Chain of Thought Agent Platform for Industrial-Grade Dialogue Systems**
 
-COTA (COllaborative Task Agent) 是一个生成式多对话平台，用于构建智能对话机器人和任务执行代理。
+*Simple configuration, reliable performance, powered by annotated policy learning*
 
-## ✨ 特性
+[![License](https://img.shields.io/github/license/CotaAI/cota?style=for-the-badge)](https://github.com/CotaAI/cota/blob/main/LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.12+-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Documentation](https://img.shields.io/badge/Documentation-Available-green?style=for-the-badge)](https://cotaai.github.io/cota/)
 
-- 🤖 **多智能体架构**: 支持 simplebot 和 taskbot 等多种智能体类型
-- 💬 **多通道支持**: 命令行、WebSocket、Socket.IO、SSE 等多种交互方式
-- 🧠 **LLM 集成**: 支持 OpenAI、DeepSeek、通义千问等主流大语言模型
-- 📝 **对话管理**: 内置 DST(对话状态跟踪) 和对话流程控制
-- 🔧 **灵活动作系统**: 支持 HTTP 请求、Python 脚本、插件等多种动作执行
-- 📚 **RAG 支持**: 内置检索增强生成，支持向量数据库
-- 🗄️ **多存储后端**: 内存、MySQL、Redis 等多种数据存储选择
+[![GitHub Stars](https://img.shields.io/github/stars/CotaAI/cota?style=for-the-badge&logo=github)](https://github.com/CotaAI/cota/stargazers)
+[![GitHub Issues](https://img.shields.io/github/issues/CotaAI/cota?style=for-the-badge)](https://github.com/CotaAI/cota/issues)
+
+
+**[简体中文](#简体中文)** | **[Documentation](https://cotaai.github.io/cota/)**
+
+</div>
+
+## 简体中文
+
+> [!Note]
+> 完整的用户文档请访问 [COTA Documentation](https://cotaai.github.io/cota/)
+
+COTA (Chain of Thought Agent) 是一个基于大语言模型的智能体平台，通过**思维链推理**和**标注式策略学习**，让开发者以简单的方式构建可靠的工业级对话系统。
+
+### 💡 核心特征
+
+- **🧠 Chain of Thought 驱动**: 基于思维链推理机制，让AI具备类人的逻辑推理能力
+- **📝 标注式策略学习**: 通过标注policies中的thought，训练可靠的对话策略（DPL）
+- **🎯 简单易用**: 低代码配置，快速构建生产级智能体
+
+### 📄 许可证
+
+#### 代码许可
+代码使用 `MIT License` 发布，允许商业使用和修改。
+
+---
 
 ## 🚀 快速开始
 
-### 安装依赖
-
-```bash
-# 使用 Poetry (推荐)
-poetry install
-
-# 或使用 pip
-pip install -r requirements.txt
-```
-
-### 运行示例机器人
-
-#### SimpleBot - 简单问答机器人
-
-```bash
-cd bots/simplebot
-cota run --channel=cmdline
-# 或使用 Socket.IO
-cota run --channel=socket.io
-```
-
-#### TaskBot - 任务执行机器人
-
-```bash
-cd bots/taskbot
-cota run
-```
-
-## 📁 项目结构
-
-```
-cota/
-├── cota/                   # 核心框架
-│   ├── actions/           # 动作执行系统
-│   │   ├── action.py     # 基础动作类
-│   │   ├── rag.py        # RAG 检索动作
-│   │   ├── form.py       # 表单处理
-│   │   └── executors/    # 执行器 (HTTP, Python, Script)
-│   ├── channels/          # 通信通道
-│   │   ├── cmdline.py    # 命令行接口
-│   │   ├── websocket.py  # WebSocket 服务
-│   │   └── socketio.py   # Socket.IO 服务
-│   ├── dpl/              # 对话处理逻辑
-│   ├── llm.py            # LLM 集成
-│   └── agent.py          # 智能体核心
-├── bots/                  # 示例机器人
-│   ├── simplebot/        # 简单对话机器人
-│   └── taskbot/          # 任务执行机器人
-├── docs/                  # 项目文档
-└── tests/                 # 测试用例
-```
-
-## ⚙️ 配置说明
-
-每个机器人包含两个主要配置文件：
-
-### `endpoints.yml` - 服务端点配置
-
-```yaml
-# 数据存储配置
-base_store:
-  type: Memory  # 或 MySQL
-  
-# 通道配置  
-channel:
-  type: Memory  # 或 Redis
-
-# LLM 配置
-llm:
-  type: api
-  apitype: openai
-  key: your_api_key
-  apibase: your_api_endpoint
-```
-
-### `agent.yml` - 智能体配置
-
-```yaml
-system:
-  description: "智能体的描述和角色设定"
-
-actions:
-  # 定义智能体可执行的动作
-
-dialogue:
-  # 配置对话流程和策略
-```
-
-## 📚 文档
-
-详细文档请参考：
-- [快速入门](docs/src/tutorial/quick_start.md)
-- [核心概念](docs/src/concepts/)
-- [API 文档](docs/)
-
-## 🛠️ 开发
-
 ### 环境要求
 
-- Python >= 3.12
-- Poetry (推荐) 或 pip
+- **Python 3.12+** 
+- **Poetry** (推荐) 或 pip
+- **Git** 用于代码管理
 
-### 运行测试
+### 🔧 安装
+
+#### 方法1: 通过Poetry安装 (推荐)
 
 ```bash
-pytest tests/
+# 1. 克隆仓库
+git clone https://github.com/CotaAI/cota.git
+cd cota
+
+# 2. 安装Poetry
+pip install poetry
+
+# 3. 安装依赖
+poetry install
+
+# 4. 激活虚拟环境
+poetry shell
 ```
 
-## 🤝 贡献
+#### 方法2: 通过pip安装
 
-欢迎提交 Issue 和 Pull Request！
+```bash
+# 1. 创建虚拟环境
+python3 -m venv ./venv
+source ./venv/bin/activate  # Linux/macOS
+# 或 .\venv\Scripts\activate  # Windows
 
-## 📄 许可证
+# 2. 克隆仓库
+git clone https://github.com/CotaAI/cota.git
+cd cota
 
-[许可证信息待添加]
+# 3. 安装依赖
+pip install -r requirements.txt
+pip install -e .
+```
+
+### ⚡ 快速体验
+
+> 确保你在项目根目录下执行以下命令
+
+#### 1. 初始化项目
+```bash
+# 创建示例机器人配置
+cota init
+cd cota_projects/simplebot
+
+# 配置API密钥
+cp endpoints.yml.example endpoints.yml
+# 编辑 endpoints.yml，添加你的LLM API密钥
+```
+
+#### 2. 启动命令行对话
+```bash
+# 启动交互式命令行
+cota shell --config=.
+
+# 或启动Web服务
+cota run --channel=socket.io --port=5005
+```
+
+#### 3. 启动Web界面
+```bash
+# 启动WebSocket服务
+cota run --channel=websocket --host=localhost --port=5005
+
+# 访问 http://localhost:5005 开始对话
+```
+
+## 📚 文档和教程
+
+- **[📖 完整文档](https://cotaai.github.io/cota/)** - 详细的使用指南和API文档
+- **[🚀 快速入门](https://cotaai.github.io/cota/tutorial/quick_start.html)** - 5分钟上手指南
+- **[⚙️ 配置说明](https://cotaai.github.io/cota/configuration/)** - 智能体和系统配置
+- **[🏗️ 架构设计](https://cotaai.github.io/cota/architecture/)** - 深入了解系统架构
+- **[🚀 部署指南](https://cotaai.github.io/cota/deployment/)** - 生产环境部署
+
+## 🤝 贡献指南
+
+我们欢迎所有形式的贡献！
+
+1. **Fork** 本仓库
+2. 创建你的特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交你的更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启一个 **Pull Request**
+
+
+## 📞 联系我们
+
+> GitHub Issues 和 Pull Requests 随时欢迎！
+
+#### 正式咨询
+有关项目和商业合作的正式咨询，请联系：**690714362@qq.com**
+
+#### 社区讨论
+##### 1. GitHub Discussions
+参与项目讨论：[GitHub Discussions](https://github.com/CotaAI/cota/discussions)
+
+---
+
+<div align="center">
+
+---
+
+**⭐ 如果COTA对你有帮助，请给我们一个Star！**
+
+**⭐ If COTA helps you, please give us a Star!**
+
+![Visitor Count](https://komarev.com/ghpvc/?username=CotaAI&repo=cota&color=blue&style=flat-square)
+
+</div>
