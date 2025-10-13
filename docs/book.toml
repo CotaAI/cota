@@ -43,3 +43,7 @@ level = 0
 [preprocessor.index]
 
 [preprocessor.katex]
+
+# Mermaid支持 - 通过JavaScript实现
+[output.html.playground]
+runnable = false
