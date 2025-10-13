@@ -8,15 +8,24 @@
 
 # 教程
 - [快速开始](tutorial/quick_start.md)
-- [配置说明](configuration/overview.md)
-  - [Agent配置](configuration/agent.md)
-  - [Endpoints配置](configuration/endpoints.md) 
-  - [Policy配置](configuration/policy.md)
-  - [Trigger配置](configuration/trigger.md)
 - [最佳实践]()
   - [实践1](tutorial/best_practices/practice_1.md)
   - [实践2]()
   - [实践3]()
+
+# 配置说明
+- [配置总览](configuration/overview.md)
+- [Agent配置](configuration/agent.md)
+- [Endpoints配置](configuration/endpoints.md)
+- [Policy配置](configuration/policy.md)
+- [Trigger配置](configuration/trigger.md)
+
+# 上线部署
+- [部署指南](deployment/guide.md)
+- [API接口](deployment/api.md)
+- [命令行工具](deployment/cli.md)
+- [配置管理](deployment/configuration.md)
+- [故障排除](deployment/troubleshooting.md)
 
 # 基础概念
 - [Channel](concepts/channel.md)
@@ -33,5 +42,3 @@
 - [核心组件](architecture/components.md)
 - [数据流设计](architecture/data-flow.md)
 - [设计原则](architecture/design-principles.md)
-
-# Mock API
