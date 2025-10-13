@@ -8,7 +8,11 @@
 
 # 教程
 - [快速开始](tutorial/quick_start.md)
-- [配置说明]()
+- [配置说明](configuration/overview.md)
+  - [Agent配置](configuration/agent.md)
+  - [Endpoints配置](configuration/endpoints.md) 
+  - [Policy配置](configuration/policy.md)
+  - [Trigger配置](configuration/trigger.md)
 - [最佳实践]()
   - [实践1](tutorial/best_practices/practice_1.md)
   - [实践2]()
@@ -22,7 +26,6 @@
 - [Agent](concepts/agent.md)
 - [LLM](concepts/llm.md)
 - [DPL](concepts/dpl.md)
-- [RAG]()
 - [Task](concepts/task.md)
 
 # Mock API
