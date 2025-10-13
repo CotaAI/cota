@@ -19,10 +19,10 @@
 - [Message](concepts/message.md)
 - [Action](concepts/action.md)
 - [DST](concepts/dst.md)
-- [DPL](concepts/dpl.md)
 - [Agent](concepts/agent.md)
 - [LLM](concepts/llm.md)
+- [DPL](concepts/dpl.md)
 - [RAG]()
-- [Task]()
+- [Task](concepts/task.md)
 
 # Mock API
