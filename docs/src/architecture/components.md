@@ -300,7 +300,7 @@ DPL负责生成智能体的思维链和决策下一步动作。
 graph TD
     DPL[DPL对话策略学习] --> TriggerDPL[TriggerDPL触发式]
     DPL --> MatchDPL[MatchDPL匹配式]
-    DPL --> RAGDPL[RAGDPL检索增强式]
+    DPL --> LLMDPL[LLMDPL基于LLM知识检索]
     
     TriggerDPL --> RuleBased[基于规则匹配]
     TriggerDPL --> ActionPrediction[动作预测]
@@ -308,8 +308,8 @@ graph TD
     MatchDPL --> PatternMatch[模式匹配]
     MatchDPL --> ThoughtGeneration[思维链生成]
     
-    RAGDPL --> LLMGeneration[LLM生成]
-    RAGDPL --> KnowledgeRetrieval[知识检索]
+    LLMDPL --> LLMGeneration[LLM生成]
+    LLMDPL --> KnowledgeRetrieval[知识检索]
 ```
 
 ### 核心接口
@@ -344,9 +344,9 @@ class TriggerDPL(DPL):
         return None
 ```
 
-**3. RAGDPL实现**
+**3. LLMDPL实现**
 ```python
-class RAGDPL(DPL):
+class LLMDPL(DPL):
     async def generate_thoughts(self, dst: DST, action: Action) -> str:
         """使用LLM生成思维链"""
         llm_name = self.get_llm_for_action(action.name)
@@ -356,7 +356,9 @@ class RAGDPL(DPL):
             messages=[{"role": "user", "content": query_text}],
             max_tokens=dst.agent.dialogue.get('max_tokens', DEFAULT_DIALOGUE_MAX_TOKENS)
         )
-        return result["content"]
+        # Note: result is now a dict with 'content' field
+        content = result["content"]
+        return content
 ```
 
 ## ⚡ Actions (动作系统)

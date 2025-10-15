@@ -168,17 +168,17 @@ graph TD
     subgraph "策略类型"
         TriggerDPL[触发式策略]
         MatchDPL[匹配式策略]
-        RAGDPL[RAG策略]
+        LLMDPL[LLM策略]
     end
     
     DPLInput --> TriggerDPL
     DPLInput --> MatchDPL
-    DPLInput --> RAGDPL
+    DPLInput --> LLMDPL
     
     subgraph "数据处理"
         TriggerDPL --> RuleMatch[规则匹配]
         MatchDPL --> PatternMatch[模式匹配]
-        RAGDPL --> LLMCall[LLM调用]
+        LLMDPL --> LLMCall[LLM调用]
     end
     
     RuleMatch --> ActionPredict[动作预测]

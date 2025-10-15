@@ -284,7 +284,7 @@ async def test_llm():
         result = await llm.generate_chat([
             {"role": "user", "content": "Hello"}
         ])
-        print("✓ LLM连接成功:", result)
+        print("✓ LLM连接成功:", result["content"])
     except Exception as e:
         print("✗ LLM连接失败:", e)
 

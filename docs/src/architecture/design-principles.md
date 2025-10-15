@@ -401,7 +401,7 @@ class DPLFactory:
             elif policy_name == 'match':
                 dpl_list.append(MatchDPL(path=path))
             elif policy_name == 'rag':
-                dpl_list.append(RAGDPL(path=path, llm=policy.get('llm')))
+                dpl_list.append(LLMDPL(path=path, llm=policy.get('llm')))
         
         return dpl_list
 

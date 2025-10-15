@@ -44,9 +44,8 @@ channel:
       #password: your_redis_password # Redis password, if any
 
 llm:
-      type: api
+      type: openai
       #model: your_llm_model # openai, deepseek-chat, qwen 
-      apitype: openai
       key: your_model_key
       apibase: your_model_api_base
 ```
