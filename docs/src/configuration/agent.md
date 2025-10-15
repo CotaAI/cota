@@ -1,455 +1,441 @@
 # Agent配置详解
 
-Agent配置文件(`agent.yml`)是COTA智能体的核心配置，定义了智能体的基本信息、对话模式、策略配置和动作定义。
+Agent配置文件(`agent.yml`)是COTA智能体的核心配置文件，定义了智能体的身份、对话策略、知识管理和动作能力。它是智能体的"大脑"，决定了智能体如何思考、决策和响应用户。
 
-## 📋 配置文件结构
+## 🎯 Agent配置的作用与角色
+
+**核心作用**：
+- **身份定义**：通过`system`配置智能体的角色和性格
+- **对话控制**：通过`dialogue`控制对话流程和参数
+- **策略管理**：通过`policies`定义智能体的思维和决策模式
+- **知识整合**：通过`knowledge`配置知识来源和检索策略
+- **能力扩展**：通过`actions`定义智能体可执行的具体动作
+
+**在COTA架构中的角色**：
+- 被`Agent`类加载并解析为智能体实例
+- 与`endpoints.yml`协同工作，前者定义能力，后者提供服务连接
+- 通过`Processor`类驱动整体对话流程
+
+## 📋 配置项总览
 
 ```yaml
-system:          # 智能体基本信息
-  description: ...
-  
-dialogue:        # 对话配置
-  mode: ...
-  max_bot_step: ...
-  
-policies:        # 策略配置
-  - name: ...
-  
-actions:         # 动作定义
-  ActionName: ...
+system:      # 智能体身份 - 定义角色和基本信息
+dialogue:    # 对话控制 - 控制对话模式和参数限制  
+policies:    # 决策策略 - 定义思维模式和决策逻辑
+knowledge:   # 知识管理 - 配置知识来源和检索策略
+actions:     # 动作定义 - 定义智能体的具体能力和行为
 ```
+
+| 配置项 | 对应模块 | 核心作用 |
+|--------|----------|----------|
+| `system` | `Agent`类初始化 | 设定智能体身份和描述 |
+| `dialogue` | `Processor`对话处理 | 控制对话流程和限制 |
+| `policies` | `DPL`策略学习 | 驱动智能体思考和决策 |
+| `knowledge` | `Knowledge`知识管理 | 提供外部知识支持 |
+| `actions` | `Action`系统 | 定义智能体的具体行为 |
 
 ## 🔧 详细配置说明
 
-### 1. System配置
+### 1. System配置 - 智能体身份
 
-定义智能体的基本信息和身份。
-
-```yaml
-system:
-  description: "你是一个智能助手，需要认真负责地回答用户问题"
-  name: "assistant"  # 可选，智能体名称
-```
-
-**参数说明**：
-
-| 参数 | 类型 | 必需 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `description` | string | ✅ | - | 智能体的角色描述，影响对话风格和行为 |
-| `name` | string | ❌ | "agent" | 智能体名称，用于日志和调试 |
-
-**配置示例**：
+**作用**：定义智能体的基本身份信息，影响所有后续交互的语调和行为风格。
 
 ```yaml
-# 客服助手
 system:
-  description: "你是一个专业的客服助手，需要耐心、礼貌地解决用户问题"
-  name: "customer_service"
-
-# 医疗咨询助手  
-system:
-  description: "你是一名专业的医疗咨询助手，提供准确的医疗建议"
-  name: "medical_assistant"
-
-# 技术支持助手
-system:
-  description: "你是一个技术支持专家，帮助用户解决技术问题"
-  name: "tech_support"
+  description: "你是一个智能助手，你需要认真负责的回答帮用户解决问题"
+  name: "assistant"  # 可选
 ```
 
-### 2. Dialogue配置
+**配置参数**：
 
-控制对话的模式和参数。
+| 参数 | 必需 | 默认值 | 说明 |
+|------|------|--------|------|
+| `description` | ✅ | - | 智能体角色描述，作为系统提示词的基础 |
+| `name` | ❌ | "agent" | 智能体名称，用于日志和多Agent场景 |
+
+### 2. Dialogue配置 - 对话控制
+
+**作用**：控制对话的基本参数和流程限制，对应`Processor`类的对话处理逻辑。
 
 ```yaml
 dialogue:
   mode: agent                    # 对话模式
-  max_bot_step: 20              # 最大机器人步数
-  use_proxy_user: false         # 是否使用代理用户
-  max_proxy_user_step: 20       # 最大代理用户步数
+  max_bot_step: 20              # 最大机器人执行步数
+  use_proxy_user: false         # 是否启用代理用户模式
+  max_proxy_user_step: 20       # 代理用户最大步数
   use_proxy_user_breaker: true  # 是否使用代理用户中断器
-  max_tokens: 500               # 最大令牌数
+  max_tokens: 500               # LLM生成最大令牌数
 ```
 
-**参数说明**：
+**配置参数**：
 
-| 参数 | 类型 | 必需 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `mode` | string | ✅ | "agent" | 对话模式，当前支持 "agent" |
-| `max_bot_step` | int | ❌ | 10 | 单次对话中机器人最大执行步数 |
-| `use_proxy_user` | bool | ❌ | false | 是否启用代理用户模式 |
-| `max_proxy_user_step` | int | ❌ | 10 | 代理用户模式下的最大步数 |
-| `use_proxy_user_breaker` | bool | ❌ | true | 是否使用代理用户中断器 |
-| `max_tokens` | int | ❌ | 1000 | LLM生成的最大令牌数 |
+| 参数 | 必需 | 默认值 | 说明 |
+|------|------|--------|------|
+| `mode` | ✅ | "agent" | 对话模式，当前支持"agent" |
+| `max_bot_step` | ❌ | 10 | 单轮对话中机器人最大执行步数，防止无限循环 |
+| `use_proxy_user` | ❌ | false | 是否启用代理用户功能，用于模拟用户交互 |
+| `max_proxy_user_step` | ❌ | 10 | 代理用户模式下的最大步数限制 |
+| `use_proxy_user_breaker` | ❌ | true | 是否使用中断器判断代理用户会话结束 |
+| `max_tokens` | ❌ | 500 | LLM生成的最大令牌数，控制响应长度 |
 
-**配置示例**：
+### 3. Policies配置 - 决策策略
 
-```yaml
-# 简单对话模式
-dialogue:
-  mode: agent
-  max_bot_step: 10
-
-# 复杂交互模式
-dialogue:
-  mode: agent
-  max_bot_step: 30
-  use_proxy_user: true
-  max_proxy_user_step: 15
-  max_tokens: 800
-
-# 快速响应模式
-dialogue:
-  mode: agent
-  max_bot_step: 5
-  max_tokens: 200
-```
-
-### 3. Policies配置
-
-定义智能体使用的对话策略。
+**作用**：配置智能体的思维模式和决策策略，对应COTA的`DPL`(Dialogue Policy Learning)系统。
 
 ```yaml
 policies:
-  - name: trigger              # 触发式策略
-  - name: match               # 匹配式策略
-  - name: rag                 # RAG策略
-    llm: qwen-max            # 单一LLM配置
-  - name: rag                 # RAG策略（高级配置）
-    llm:                     # 多LLM配置
-      BotUtter: qwen-max     # 回复动作使用qwen-max
-      Selector: deepseek-chat # 选择动作使用deepseek-chat
-      default: glm-4         # 默认LLM
-    max_thoughts: 5          # 最大思维链数量
+  - type: trigger              # 触发式策略，基于规则匹配
+  - type: llm                 # LLM策略，基于大模型推理
+    config:
+      llms:                   # LLM配置列表
+        - name: rag-glm-4    # 默认LLM
+        - name: rag-utter    # BotUtter动作专用LLM
+          action: BotUtter
+        - name: rag-selector  # Selector动作专用LLM
+          action: Selector
 ```
 
 **策略类型说明**：
 
-| 策略名称 | 说明 | 适用场景 |
-|----------|------|----------|
-| `trigger` | 基于规则的触发策略 | 简单的触发响应 |
-| `match` | 基于模式匹配的策略 | 复杂的对话模式匹配 |
-| `rag` | 检索增强生成策略 | 需要外部知识的对话 |
+| 策略类型 | 对应类 | 作用机制 |
+|----------|--------|----------|
+| `trigger` | `TriggerDPL` | 基于历史动作序列模式匹配，预测下一步动作 |
+| `llm` | `LLMDPL` | 使用LLM进行推理，生成思维链和动作决策 |
 
-**RAG策略配置参数**：
+**LLM策略配置详解**：
+- **默认模式**：未指定`action`的LLM作为默认模型
+- **动作绑定**：通过`action`字段为特定动作类型绑定专用LLM
+- **优先级**：动作绑定的LLM优先级高于默认LLM
 
-| 参数 | 类型 | 必需 | 默认值 | 说明 |
-|------|------|------|--------|------|
-| `llm` | string/object | ✅ | - | LLM配置，支持字符串或对象格式 |
-| `max_thoughts` | int | ❌ | 5 | 最大思维链生成数量 |
+### 4. Knowledge配置 - 知识管理
 
-**配置示例**：
+**作用**：配置智能体的知识来源和检索策略，对应`Knowledge`和`KnowledgeFactory`类。
 
 ```yaml
-# 基础策略组合
-policies:
-  - name: trigger
-  - name: match
-
-# RAG策略（单一LLM）
-policies:
-  - name: rag
-    llm: qwen-max
-    max_thoughts: 3
-
-# 多策略组合（按优先级）
-policies:
-  - name: trigger     # 优先级最高
-  - name: match       # 其次匹配
-  - name: rag         # 最后RAG生成
-    llm:
-      BotUtter: qwen-max
-      Selector: deepseek-chat
-      default: glm-4
+knowledge:
+  - type: llm                 # LLM类型知识源
+    config:
+      llms: 
+        - name: rag-glm-4    # 知识检索使用的LLM
+          action: BotUtter   # 绑定到BotUtter动作
+        - name: rag-glm-4
+          action: Selector   # 绑定到Selector动作
+        - name: rag-glm-4    # 默认知识LLM
 ```
 
-### 4. Actions配置
+**知识配置参数**：
 
-定义智能体可以执行的动作。
+| 参数 | 说明 |
+|------|------|
+| `type` | 知识源类型，当前支持"llm" |
+| `config.llms` | 知识检索使用的LLM配置列表 |
 
-#### 4.1 基础动作
+### 5. Actions配置 - 动作定义
 
-**UserUtter - 用户输入动作**
+**作用**：定义智能体可执行的具体动作，每个动作对应一个`Action`类或其子类。
 
+#### 5.1 基础动作
+
+**UserUtter - 用户输入处理**
 ```yaml
 UserUtter:
-  description: "用户向智能体提问"
+  description: "用户的action - 用户向智能体提问"
   prompt: |
     历史对话:
     {{history_messages}}
+    请输出对医生说的话
     
-    请输出对智能体说的话
-    
-  breaker:  # 可选：对话中断判断
-    description: "判断是否结束对话"
+  breaker:  # 对话中断判断器
+    description: "判断是否跳出"
     prompt: |
-      根据对话内容，判断对话是否可以结束
-      
-      对话内容:
-      {{history_messages}}
-      
-      如果对话完整且可以结束，输出true
-      如果对话还需要继续，输出false
-      
-      输出格式：<标识符>
+      根据对话内容，判断对话是否满足要求
+      对话内容: {{history_messages}}
+      如果对话完整且可以结束, 输出标识符true。
+      如果对话还需要继续, 输出标识符false。
+      输出格式为: <标识符>
 ```
 
-**BotUtter - 机器人回复动作**
-
+**BotUtter - 智能体回复**
 ```yaml
 BotUtter:
   description: "回复用户"
   prompt: |
-    你是一个智能助手，需要根据对话历史生成合适的回复。
+    你是一个智能助手，需要根据当前对话历史生成合适的回复。
     
-    **任务描述：**
-    {{task_description}}
-    
+    **任务描述：** {{task_description}}
     **输出格式要求：**
-    你必须严格按照以下JSON格式响应：
+    你必须严格按照以下JSON格式响应，不要有任何其他内容：
     ```json
-    {"thought": "<推理过程>", "text": "<回复内容>"}
+    {"thought": "<你的推理过程>", "text": "<你的回复内容>"}
     ```
     
-    **学习参考资料：**
-    {{thoughts}}
+    **学习参考资料：** {{policies}}
+    **实际对话历史：** {{history_actions}}
     
-    **对话历史：**
-    {{history_actions}}
-    
-    请生成合适的JSON格式回复：
+    请分析上述实际对话历史，参考学习资料中的思维模式，生成合适的JSON格式回复：
 ```
 
 **Selector - 动作选择器**
-
 ```yaml
 Selector:
   description: "选择合适的Actions"
   prompt: |
-    你是一个智能对话助手，需要选择下一个最合适的Action。
+    你是一个智能对话助手，需要根据当前对话状态选择下一个最合适的Action。
     
     **输出格式要求：**
     ```json
-    {"thought": "<推理过程>", "action": "<工具名称>"}
+    {"thought": "<你的推理过程>", "action": "<工具名称>"}
     ```
     
-    **可用的Action工具：**
-    {{action_descriptions}}
+    **可用的Action工具：** {{action_descriptions}}
+    **决策参考模式：** {{policies}}
+    **当前对话状态：** {{history_actions}}
     
-    **决策参考模式：**
-    {{thoughts}}
-    
-    **当前对话状态：**
-    {{history_actions}}
-    
-    请选择最合适的Action：
+    请分析当前对话状态，参考决策模式，选择最合适的下一个Action并输出JSON格式结果：
 ```
 
-#### 4.2 Form动作（表单填充）
+#### 5.2 Form动作 - 表单处理
 
-Form动作用于收集用户信息和执行外部API调用。
+**作用**：Form动作用于收集用户信息并执行外部API调用，对应`Form`类。
 
+**核心组件**：
+- **slots**: 需要收集的信息槽位
+- **updater**: 槽位状态更新器
+- **executer**: 外部服务执行器
+
+**配置示例**：
 ```yaml
-Weather:  # 天气查询动作示例
-  description: "查询天气信息"
+Weather:  # 天气查询Form动作
+  description: "查询天气"
   prompt: |
-    当前正在执行{{current_form_name}}，描述：{{current_form_description}}
-    
-    查询结果：{{current_form_execute_result}}
-    
+    当前正在执行{{current_form_name}}, 其描述为{{current_form_description}}，将结果返给用户。
+    结果为: {{current_form_execute_result}}
     你必须严格按照以下JSON格式响应：
-    {"text": "<回复内容>"}
-    
-  updater:  # 状态更新器
-    description: "更新槽位状态"
+    {"text": "<你的回复内容>"}
+
+  updater:  # 槽位更新器（可选，有默认实现）
+    description: "更新状态"
     prompt: |
-      当前正在执行{{current_form_name}}，描述：{{current_form_description}}
+      当前正在执行{{current_form_name}}，其描述为{{current_form_description}}。
+      根据对话内容及Action序列，结合当前slot的状态，填充或重置slot的值。
       
-      历史Action序列：{{history_actions}}
-      当前slots：{{current_form_slot_states}}
-      slots含义：{{current_form_slot_descriptions}}
+      历史Action序列为: {{history_actions_with_thoughts}}
+      Action的描述为: {{action_descriptions}}
+      当前slots为: {{current_form_slot_states}}
+      slots的含义为: {{current_form_slot_descriptions}}
       
-      请填充或重置slot的值，输出JSON格式
-      
+      填充或重置slot的值, 保持slots格式输出json字符串。
+
   slots:  # 槽位定义
     city:
-      description: "城市名称，接口只支持单个城市"
+      description: "城市，注意：接口只支持输入单个城市"
       prompt: |
-        当前正在执行{{current_form_name}}，需要询问用户查询哪个城市的天气。
-        你必须严格按照JSON格式响应：
-        {"text": "<询问内容>"}
-        
+        当前正在执行Action {{current_form_name}}, 其描述为 {{current_form_description}}。
+        接下来需要询问用户，需要查询哪个城市的天气。
+        你必须严格按照以下JSON格式响应：
+        {"text": "<你的回复内容>"}
+
     time:
-      description: "查询时间"
+      description: "时间"
       prompt: |
-        需要询问用户查询哪天的天气。
-        {"text": "<询问内容>"}
-        
+        需要询问用户，需要查询哪天的天气。
+        {"text": "<你的回复内容>"}
+
   executer:  # 执行器配置
-    type: http
-    url: "http://api.weather.com/v1/current"
-    method: GET
-    client_key: default
-    output: ["<text>", "接口异常"]
-    mock: false  # 是否使用模拟数据
+    url: http://rap2api.taobao.org/app/mock/319677/Weather
+    method: GET      # HTTP方法，可选GET、POST等
+    output: ["<text>", "接口异常"]  # 预期输出格式
+    mock: false      # 是否使用模拟数据
 ```
 
-#### 4.3 自定义动作
+**Form动作工作流程**：
+1. **槽位收集**：依次询问用户填充`slots`中定义的信息
+2. **状态更新**：通过`updater`解析用户输入并更新槽位状态
+3. **完整性检查**：当所有必需槽位填充完成后，进入执行阶段
+4. **外部调用**：通过`executer`调用外部API获取结果
+5. **结果返回**：使用主`prompt`将执行结果返回给用户
 
-```yaml
-Calculate:  # 计算器动作
-  description: "执行数学计算"
-  prompt: |
-    当前正在执行计算功能，计算结果：{{current_form_execute_result}}
-    
-    请将结果返回给用户，不要自己计算。
-    {"text": "<回复内容>"}
-    
-  slots:
-    expression:
-      description: "数学表达式，如：1+1, 2*3等"
-      prompt: |
-        请输入需要计算的数学表达式：
-        {"text": "<询问内容>"}
-        
-  executer:
-    type: http
-    url: "http://calc.api.com/calculate"
-    method: POST
-    output: ["<text>", "计算错误"]
-    mock: true
+**为什么要这样配置**：
+- **slots**: 结构化收集用户信息，避免信息遗漏
+- **updater**: 智能解析用户自然语言输入，提取结构化信息
+- **executer**: 标准化外部服务调用，支持HTTP、模拟等多种方式
 
-CustomAction:  # 完全自定义动作
-  description: "自定义业务逻辑"
-  prompt: |
-    根据业务需求执行自定义逻辑
-    
-    输入参数：{{custom_params}}
-    历史对话：{{history_messages}}
-    
-    输出结果：
-    {"text": "<处理结果>", "data": "<业务数据>"}
-```
+**配了可以做什么**：
+- 实现结构化信息收集（如订单、预约、查询等）
+- 集成外部API服务（天气、计算、数据库等）
+- 提供交互式任务执行能力
 
-## 🔧 高级配置
+#### 5.3 模板变量
 
-### 1. 模板变量
+所有Action的`prompt`支持丰富的模板变量：
 
-Action的prompt支持丰富的模板变量：
-
-| 变量名 | 说明 | 使用场景 |
+| 变量名 | 说明 | 适用动作 |
 |--------|------|----------|
-| `{{task_description}}` | 任务描述 | 所有Action |
-| `{{history_messages}}` | 历史消息 | UserUtter, BotUtter |
+| `{{task_description}}` | 任务描述 | 所有动作 |
+| `{{history_messages}}` | 历史消息列表 | UserUtter, BotUtter |
 | `{{history_actions}}` | 历史动作序列 | Selector, BotUtter |
-| `{{thoughts}}` | 思维链参考 | RAG策略下的Action |
-| `{{action_descriptions}}` | 动作描述列表 | Selector |
+| `{{policies}}` | 策略思维链参考 | BotUtter, Selector |
+| `{{action_descriptions}}` | 可用动作描述 | Selector |
 | `{{current_form_name}}` | 当前表单名称 | Form动作 |
-| `{{current_form_slot_states}}` | 当前槽位状态 | Form动作的updater |
+| `{{current_form_slot_states}}` | 当前槽位状态 | Form动作 |
 | `{{current_form_execute_result}}` | 执行结果 | Form动作 |
 
-### 2. JSON格式约定
+## 📚 推荐配置示例
 
-所有Action的输出都应遵循JSON格式约定：
-
+### 1. 简单问答助手
 ```yaml
-# BotUtter输出格式
-{"thought": "我的推理过程", "text": "回复内容"}
+system:
+  description: "你是一个智能问答助手，提供准确、有用的回答"
 
-# Selector输出格式  
-{"thought": "选择理由", "action": "动作名称"}
+dialogue:
+  mode: agent
+  max_bot_step: 10
+  max_tokens: 300
 
-# Form动作输出格式
-{"text": "回复内容"}
-
-# 自定义输出格式
-{"text": "回复内容", "data": "业务数据", "status": "状态"}
-```
-
-### 3. 执行器配置
-
-Form动作的执行器支持多种类型：
-
-```yaml
-executer:
-  type: http           # 执行器类型：http, script, python, plugin
-  url: "http://..."    # API地址
-  method: GET          # HTTP方法
-  headers:             # 请求头
-    Authorization: "Bearer token"
-    Content-Type: "application/json"
-  client_key: default  # HTTP客户端配置键
-  output: ["<text>", "错误信息"]  # 预期输出格式
-  mock: false          # 是否使用模拟数据
-  timeout: 30          # 超时时间（秒）
-```
-
-## 📚 最佳实践
-
-### 1. 提示词设计
-
-- **明确指令**：使用清晰、具体的指令
-- **格式约束**：严格要求JSON输出格式
-- **上下文利用**：合理使用模板变量
-- **错误处理**：考虑异常情况的处理
-
-### 2. 动作组织
-
-- **单一职责**：每个Action专注一个功能
-- **合理粒度**：避免动作过于复杂或过于简单
-- **依赖管理**：明确动作间的依赖关系
-- **复用设计**：设计可复用的通用动作
-
-### 3. 性能优化
-
-- **缓存利用**：合理使用模板变量缓存
-- **并发控制**：避免过多同时执行的动作
-- **资源管理**：及时清理不需要的资源
-- **监控报警**：添加关键指标监控
-
-## 🚨 常见错误
-
-### 1. 配置语法错误
-
-```yaml
-# ❌ 错误：YAML语法错误
-actions:
-  UserUtter:
-    description "用户输入"  # 缺少冒号
-
-# ✅ 正确：标准YAML语法
-actions:
-  UserUtter:
-    description: "用户输入"
-```
-
-### 2. 必需字段缺失
-
-```yaml
-# ❌ 错误：缺少description
-actions:
-  UserUtter:
-    prompt: "..."
-
-# ✅ 正确：包含必需字段
-actions:
-  UserUtter:
-    description: "用户输入动作"
-    prompt: "..."
-```
-
-### 3. 策略配置错误
-
-```yaml
-# ❌ 错误：策略名称错误
 policies:
-  - name: unknown_policy
+  - type: trigger
+  - type: llm
+    config:
+      llms:
+        - name: qwen-max
 
-# ✅ 正确：使用支持的策略
-policies:
-  - name: trigger
-  - name: rag
-    llm: qwen-max
+actions:
+  UserUtter:
+    description: "用户提问"
+    prompt: "用户说：{{history_messages}}"
+    
+  BotUtter:
+    description: "回复用户"
+    prompt: |
+      任务：{{task_description}}
+      历史对话：{{history_actions}}
+      输出格式：{"thought": "<思考>", "text": "<回复>"}
+      
+  Selector:
+    description: "选择动作"
+    prompt: |
+      可用动作：{{action_descriptions}}
+      当前状态：{{history_actions}}
+      输出格式：{"thought": "<分析>", "action": "<动作名>"}
 ```
 
-通过合理配置Agent，你可以创建功能强大、响应准确的COTA智能体。建议从基础配置开始，逐步添加复杂功能。
+### 2. 带知识检索的客服助手
+```yaml
+system:
+  description: "你是专业的客服助手，基于知识库提供准确服务"
+
+dialogue:
+  mode: agent
+  max_bot_step: 15
+  max_tokens: 500
+
+policies:
+  - type: trigger
+  - type: llm
+    config:
+      llms:
+        - name: rag-glm-4      # 使用RAG模型
+
+knowledge:
+  - type: llm
+    config:
+      llms:
+        - name: rag-glm-4
+          action: BotUtter
+        - name: rag-glm-4
+          action: Selector
+        - name: rag-glm-4
+
+actions:
+  UserUtter:
+    description: "用户咨询"
+    prompt: "用户咨询：{{history_messages}}"
+    
+  RAG:
+    description: "检索知识库回答"
+    prompt: |
+      根据检索内容回答用户问题
+      检索内容：{{rag}}
+      用户问题：{{history_messages}}
+      请基于检索内容准确回答
+      
+  BotUtter:
+    description: "客服回复"
+    prompt: |
+      你是专业客服，需要提供准确、友好的服务
+      历史对话：{{history_actions}}
+      参考资料：{{policies}}
+      输出格式：{"thought": "<分析>", "text": "<回复>"}
+```
+
+### 3. 多功能服务助手（含Form动作）
+```yaml
+system:
+  description: "你是全能服务助手，可以查询天气、进行计算等"
+
+dialogue:
+  mode: agent
+  max_bot_step: 20
+  max_tokens: 400
+
+policies:
+  - type: trigger
+  - type: llm
+    config:
+      llms:
+        - name: qwen-max
+        - name: deepseek-chat
+          action: Selector
+
+actions:
+  UserUtter:
+    description: "用户请求"
+    prompt: "用户说：{{history_messages}}"
+    
+  BotUtter:
+    description: "助手回复"
+    prompt: |
+      任务：{{task_description}}
+      历史：{{history_actions}}
+      参考：{{policies}}
+      格式：{"thought": "<思考>", "text": "<回复>"}
+      
+  Selector:
+    description: "功能选择"
+    prompt: |
+      根据用户需求选择合适的功能：
+      可用功能：{{action_descriptions}}
+      对话历史：{{history_actions}}
+      输出：{"thought": "<分析>", "action": "<功能>"}
+      
+  Weather:
+    description: "天气查询"
+    prompt: |
+      查询结果：{{current_form_execute_result}}
+      输出：{"text": "<天气信息>"}
+    slots:
+      city:
+        description: "城市名称"
+        prompt: '{"text": "请问您要查询哪个城市的天气？"}'
+    executer:
+      url: "https://api.weather.com/v1/current"
+      method: GET
+      mock: false
+      
+  Calculate:
+    description: "数学计算"
+    prompt: |
+      计算结果：{{current_form_execute_result}}
+      输出：{"text": "<计算结果>"}
+    slots:
+      expression:
+        description: "数学表达式"
+        prompt: '{"text": "请输入要计算的表达式："}'
+    executer:
+      url: "https://calc.api.com/calculate"
+      method: POST
+      mock: true
+      output: ["<text>", "计算错误"]
+```
+
+通过合理配置Agent，可以创建功能强大、响应准确的COTA智能体。建议从简单配置开始，逐步增加复杂功能和Form动作。
