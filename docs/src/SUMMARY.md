@@ -18,7 +18,6 @@
 - [Agent配置](configuration/agent.md)
 - [Endpoints配置](configuration/endpoints.md)
 - [Policy配置](configuration/policy.md)
-- [Trigger配置](configuration/trigger.md)
 
 # 上线部署
 - [部署指南](deployment/guide.md)
