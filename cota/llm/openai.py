@@ -1,7 +1,7 @@
 """OpenAI compatible LLM clients."""
 
 import logging
-from typing import List, Dict, Text, Optional, Any
+from typing import List, Dict, Text, Optional, Any, Union
 
 from .base import LLMClient
 
@@ -41,22 +41,24 @@ class OpenAIClient(LLMClient):
             
             response = self.client.chat.completions.create(**request_params)
             
-            # Handle response
+            # Handle response - always return consistent dictionary format
+            result = {
+                "content": response.choices[0].message.content
+            }
+            
+            # Add tool_calls if they exist
             if tools and response.choices[0].message.tool_calls:
-                return {
-                    "content": response.choices[0].message.content,
-                    "tool_calls": [
-                        {
-                            "function": {
-                                "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments
-                            }
+                result["tool_calls"] = [
+                    {
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments
                         }
-                        for tool_call in response.choices[0].message.tool_calls
-                    ]
-                }
-            else:
-                return response.choices[0].message.content
+                    }
+                    for tool_call in response.choices[0].message.tool_calls
+                ]
+            
+            return result
                 
         except Exception as e:
             logger.error(f"Request failed: {e}")
@@ -113,22 +115,24 @@ class OpenAIRAGClient(LLMClient):
             
             response = self.client.chat.completions.create(**request_params)
             
-            # Handle response
+            # Handle response - always return consistent dictionary format
+            result = {
+                "content": response.choices[0].message.content
+            }
+            
+            # Add tool_calls if they exist
             if response.choices[0].message.tool_calls:
-                return {
-                    "content": response.choices[0].message.content,
-                    "tool_calls": [
-                        {
-                            "function": {
-                                "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments
-                            }
+                result["tool_calls"] = [
+                    {
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": tool_call.function.arguments
                         }
-                        for tool_call in response.choices[0].message.tool_calls
-                    ]
-                }
-            else:
-                return response.choices[0].message.content
+                    }
+                    for tool_call in response.choices[0].message.tool_calls
+                ]
+            
+            return result
                 
         except Exception as e:
             logger.error(f"Request failed: {e}")

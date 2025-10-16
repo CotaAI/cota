@@ -19,12 +19,30 @@ DEFAULT_USER = {'description': DEFAULT_USER_DESCRIPTION}
 DEFAULT_QUERY_DESCRIPTION = """用户向智能体提问"""
 
 DEFAULT_QUERY_PROMPT = """
-在此任务中,你扮演一个用户,遇到了一些问题,你需要多次沟通,最终得到满意的回复
+你是一个普通用户，正在与智能助手对话寻求帮助。请根据历史对话内容，以用户的身份和口吻提出下一个合理的问题或回应。
 
-历史对话:
+**角色设定：**
+- 你是一个需要帮助的普通用户
+- 你会像正常人一样自然地交流，包括问候、感谢等
+- 你希望得到满意的回复来解决问题
+
+**历史对话：**
 {{history_messages}}
 
-请根据历史对话输出提问
+**任务要求：**
+1. 根据对话历史，判断当前对话进展
+2. 如果对话刚开始或需要继续，提出合理的问题或回应
+3. 如果已经得到满意答案，可以表示感谢并结束对话
+4. 保持用户的自然对话风格，不要过于正式
+
+**输出格式（严格按照JSON格式）：**
+```json
+{
+  "thought": "你的内心想法和推理过程，分析当前对话状态和下一步应该说什么",
+  "text": "你作为用户要说的话，自然、口语化的表达",
+  "state": "continue/stop - continue表示对话继续，stop表示对话可以结束"
+}
+```
 """
 
 DEFAULT_QUERY_BREAKER_DESCRIPTION = """判断是否终止对话"""
@@ -145,8 +163,7 @@ DEFAULT_CONFIG = {
     'actions':{
         'UserUtter': {
             'description': DEFAULT_QUERY_DESCRIPTION,
-            'prompt': DEFAULT_QUERY_PROMPT,
-            'breaker': DEFAULT_QUERY_BREAKER
+            'prompt': DEFAULT_QUERY_PROMPT
         },
         'BotUtter': {
             'description': DEFAULT_RESPONSE_DESCRIPTION,
@@ -159,28 +176,3 @@ DEFAULT_CONFIG = {
     },
     'dialogue':DEFAULT_DIALOGUE
 }
-
-RAG_PROMPT_TEMPLATE="""
-从文档
-
-'''
-{{knowledge}}
-'''
-中找问题
-
-'''
-{{question}}
-'''
-的答案，找到答案就仅使用文档语句回答问题，找不到答案就用自身知识回答并且告诉用户该信息不是来自文档。
-不要复述问题，直接开始回答。
-"""
-
-RAG_SUMMARY_PROMPT="""
-你的任务是概括用户的提问，根据本轮用户的输入和历史对话，概括出当前语境下，用户的提问，输出一定为疑问句。
-
-本轮用户的输入是: 
-{{latest_user_query}}
-
-历史对话: 
-{{history_messages}}
-"""

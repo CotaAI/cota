@@ -13,6 +13,7 @@ from cota.processor import Processor
 from cota.store import Store, MemoryStore, SQLStore
 from cota.llm import LLM
 from cota.dpl.dpl import DPL, DPLFactory
+from cota.knowledge.knowledge import KnowledgeFactory, Knowledge
 from cota.utils.http import HttpClientManager, HttpConfig
 from cota.utils.common import (
     first_empty_key,
@@ -35,10 +36,11 @@ class Agent:
             description: Optional[Text] = None,
             actions: Optional[Dict] = None,
             llms: Optional[Dict[Text, LLM]] = None,
-            dpl: Optional[List[DPL]] = None,
+            dpl: Optional[DPL] = None,
             store: Optional[Store] = None,
             dialogue: Optional[Dict] = None,
-            user_proxy: Optional[Dict] = None
+            user_proxy: Optional[Dict] = None,
+            knowledge: Optional[Knowledge] = None
     ) -> None:
         self.name = name
         self.description = description
@@ -48,6 +50,7 @@ class Agent:
         self.store = store
         self.dialogue = dialogue
         self.user_proxy = user_proxy
+        self.knowledge = knowledge
         self.processor = Processor(agent=self, store=self.store)
         self._executors = {}  # Dictionary to store executor instances
 
@@ -93,6 +96,10 @@ class Agent:
         policy_path = os.path.join(path, "policy")
         dpl = DPLFactory.create(agent_config, policy_path)
 
+        # Initialize knowledge list
+        knowledge_configs = agent_config.get('knowledge', [])
+        knowledge = KnowledgeFactory.create(knowledge_configs, path)
+
         # Initialize executors
         executors = cls._init_executors(actions)
 
@@ -108,7 +115,8 @@ class Agent:
             llms=llms,
             dpl=dpl,
             dialogue=dialogue,
-            user_proxy=user_proxy
+            user_proxy=user_proxy,
+            knowledge=knowledge
         )
         
         agent._executors = executors
@@ -215,9 +223,8 @@ class Agent:
             return await self._handle_current_form(dst)
 
         # First try to generate action using DPL action generator
-        for dpl_instance in self.dpl:
-            # Try to generate next action
-            action_names = await dpl_instance.generate_actions(dst)
+        if self.dpl:
+            action_names = await self.dpl.generate_actions(dst)
             if action_names:
                 # Only take the first action as we only support single action
                 first_action_name = action_names[0]

@@ -75,19 +75,27 @@ class Processor:
 
     async def _handle_message_proxy(self, message: Message, channel: Optional[Channel] = None):
         self.dst = await self.get_tracker(message.session_id)
-        user = message.metadata.get('user') or self.agent.user
+        # user = message.metadata.get('user') or self.agent.user
 
         max_proxy_user_step = self.agent.dialogue.get('max_proxy_user_step')                
         for i in range(max_proxy_user_step):
-            action_config = self.agent.actions.get('Query', {})
+            action_config = self.agent.actions.get('UserUtter', {})
             action = Action.build_from_name(
-                name='Query',
+                name='UserUtter',
                 description=action_config.get("description", ''),
                 prompt=action_config.get("prompt", '')
             )
-            await action.run(self.agent, self.dst, user=user)
+            # await action.run(self.agent, self.dst, user=user)
+            await action.run(self.agent, self.dst)
             self.dst.update(action)
-            if action.result[0].get('text','') == '/stop':
+            
+            # Output user's message to channel first
+            if channel:
+                await self.execute_channel_effects(action, message.session_id, channel)
+            
+            # Check if user wants to stop the conversation based on state field in JSON response
+            if action.result and action.result[0].get('state', 'continue') == 'stop':
+                logger.debug(f"Conversation ending - Final DST state: \n {self.dst.current_state()}")
                 return 
 
             if self.agent.dialogue.get('mode') == 'direct':

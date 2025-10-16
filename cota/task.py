@@ -77,11 +77,11 @@ class Task:
                 logging.error("Error: The generated plans are not a DAG. Exiting the program.")
                 sys.exit(1)
             else:
-                await self.run_with_plan(5)
+                await self.run_with_plan()
 
         elif self.prompt:
             logger.debug(f"Generating a DAG plans through LLM...")
-            await self.run_with_llm(5)
+            await self.run_with_llm()
         else:
             logging.INFO("A plan can be generated through configuration or using an LLM.")
             sys.exit(1)
@@ -95,7 +95,7 @@ class Task:
             next_plan = await self.generate_plans()
 
     async def execute_task(self, task):
-        logger.debug(f"!!!!!!!!!Executing task {task}")
+        logger.debug(f"Executing task {task}")
         agent = self.agents.get(task.get('agent'))
         await agent.processor.handle_session('test_001')
 
@@ -166,7 +166,7 @@ class Task:
             response_format = {'type': 'json_object'}
         )
         print('result: ', result)
-        plans = json.loads(result)
+        plans = json.loads(result["content"])
 
         logger.debug(f"Generating plans prompt: {prompt}")
 
@@ -214,31 +214,3 @@ class Task:
     
     def current_plan(self) -> Text:
         return json.dumps(self.plans)
-
-
-
-'''
-while 'pending' in task_status.values():
-    ready_tasks = []
-    for task_name, status in task_status.items():
-        if status == 'pending':
-            dependencies = all_tasks.get(task_name).get('dependencies', [])
-            if all(task_status[dep] == 'completed' for dep in dependencies):
-                ready_tasks.append(task_name)
-
-    if ready_tasks:
-        tasks = []
-        for task_name in ready_tasks:
-            await self.execute_task(all_tasks[task_name])
-            task_status[task_name] = 'completed'
-            all_tasks[task_name]['status'] = 'completed'
-            logger.debug(f"Task {task_name} completed")
-
-    next_plan = await self.generate_plans()
-    next_plan['status'] = 'pending'
-    self.plans.append(next_plan)
-    print("xxxxxx plans: ", self.plans)
-    all_tasks = {task['name']: task for task in self.plans}
-    task_status ={task['name']: task['status'] for task in self.plans}
-
-'''

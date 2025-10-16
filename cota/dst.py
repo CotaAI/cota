@@ -1,9 +1,12 @@
 import json
 import re
+import logging
 from collections import deque
 from typing import Text, List, Dict, Any, Optional, Union, Tuple
 from cota.actions.action import Action
 from cota.constant import DEFAULT_DIALOGUE_MAX_TOKENS
+
+logger = logging.getLogger(__name__)
 
 
 class DST:
@@ -127,31 +130,77 @@ class DST:
             )
             return {'rag': rag_content["content"]}
         return {}
+    
+    async def format_knowledge(self, prompt: Text, action) -> Dict[str, str]:
+        """Format knowledge variables using the Knowledge system.
+        
+        Only supports general knowledge retrieval ({{knowledge}}).
+        """
+        # Find knowledge variables in prompt (only {{knowledge}} format)
+        knowledge_variables = re.findall(r'\{\{(knowledge)\}\}', prompt)
+        if not knowledge_variables:
+            return {}
+        
+        # Get knowledge from agent
+        knowledge = getattr(self.agent, 'knowledge', None)
+        if not knowledge:
+            return {}
+        
+        result = {}
+        
+        # Use knowledge instance
+        if knowledge:
+            try:
+                query = self.latest_query or ""
+                content = await knowledge.process_query(
+                    query=query,
+                    context={
+                        'dst': self,
+                        'agent': self.agent,
+                        'action': action
+                    }
+                )
+                result['knowledge'] = content or ""
+            except Exception as e:
+                logger.error(f"Knowledge retrieval failed: {e}")
+                result['knowledge'] = ""
+        else:
+            result['knowledge'] = ""
+        
+        return result
 
-    async def format_thoughts(self, prompt: Text, action):
-        """Format thoughts for the prompt by trying dialogue policy instances in priority order.
+    async def format_policies(self, prompt: Text, action):
+        """Format policies content for the prompt using dialogue policy instances.
         
         Args:
-            prompt: The prompt template text
-            action: The current action
+            prompt: The prompt template text containing policy variables
+            action: The current action being processed
             
         Returns:
-            Dict containing thoughts if {{thoughts}} is in prompt, empty dict otherwise
+            Dict containing policy content if {{policies}} is in prompt, empty dict otherwise
             
         Notes:
-            - Only checks for thoughts if {{thoughts}} appears in prompt template
-            - Tries each dialogue policy in order until first valid thought is found
-            - Returns empty string for thoughts if no policy generates valid thoughts
+            - Supports both {{policies}} template variables for backward compatibility
+            - Tries each dialogue policy in priority order until first valid content is generated
+            - Returns the first successful policy result or empty string if all policies fail
         """
-        variable_names = re.findall(r'\{\{(\w+)\}\}', prompt)
-        if 'thoughts' in variable_names:
-            thoughts_content = None
-            # Try dialogue policies in priority order until we get a valid thought
-            for dpl_instance in self.agent.dpl:
-                thoughts = await dpl_instance.generate_thoughts(self, action)
-                thoughts_content = thoughts
-            return {'thoughts': thoughts_content or ''}
-        return {}
+        variable_names = re.findall(r'\{\{(\w+)\}\}', prompt)        
+        needs_policies = 'policies' in variable_names
+        
+        if not needs_policies:
+            return {}
+            
+        # Try dialogue policy to generate content
+        if self.agent.dpl:
+            try:
+                policy_content = await self.agent.dpl.generate_thoughts(self, action)
+                if policy_content and policy_content.strip():
+                    return {'policies': policy_content}
+            except Exception as e:
+                logger.warning(f"Policy generation failed for {self.agent.dpl.__class__.__name__}: {e}")
+                
+        # No policy generated valid content
+        return {'policies': ''}
 
 
     def observe(self, name, action):
@@ -412,4 +461,4 @@ class DST:
         return '\n'.join(messages)
 
     def thoughts(self, action: Action = None):
-        return self.agent.dpl.generate_thought(self, action)
+        return self.agent.dpl.generate_thoughts(self, action)

@@ -1,6 +1,6 @@
 """Main LLM class for high-level language model operations."""
 
-from typing import List, Dict, Text, Optional, Any
+from typing import List, Dict, Text, Optional, Any, Union
 
 from .factory import LLMClientFactory
 
@@ -38,7 +38,9 @@ class LLM:
             tool_choice: Optional tool choice specification
             
         Returns:
-            Dict containing the response from the language model
+            Dict: Always returns a dictionary with the following structure:
+            - "content": str - The generated text content
+            - "tool_calls": List[Dict] (optional) - List of tool calls if tools were used
         """
         return await self.client.generate_chat(
             messages, 

@@ -2,7 +2,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Dict, Text, Optional, Any
+from typing import List, Dict, Text, Optional, Any, Union
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,8 @@ class LLMClient(ABC):
             tool_choice: Optional tool choice specification
             
         Returns:
-            Dict containing the response
+            Dict: Always returns a dictionary with the following structure:
+            - "content": str - The generated text content
+            - "tool_calls": List[Dict] (optional) - List of tool calls if tools were used
         """
         pass

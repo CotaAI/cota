@@ -2,7 +2,7 @@
 
 import aiohttp
 import logging
-from typing import List, Dict, Text, Optional, Any
+from typing import List, Dict, Text, Optional, Any, Union
 
 from .base import LLMClient
 
@@ -59,7 +59,16 @@ class CustomHttpClient(LLMClient):
         async with self.session.post(self.base_url, json=data, headers=headers) as response:
             response.raise_for_status()
             response_data = await response.json()
-            return response_data
+            
+            # Ensure consistent return format - if response is a string, wrap it in a dict
+            if isinstance(response_data, str):
+                return {"content": response_data}
+            elif isinstance(response_data, dict) and "content" not in response_data:
+                # If it's a dict but doesn't have content field, assume the whole response is content
+                return {"content": str(response_data)}
+            else:
+                # If it's already a dict with content field, return as is
+                return response_data
 
     async def __aenter__(self):
         return self
