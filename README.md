@@ -30,11 +30,6 @@ COTA (Chain of Thought Agent) 是一个基于大语言模型的智能体平台�
 - **📝 标注式策略学习**: 通过标注policies中的thought，训练可靠的对话策略（DPL）
 - **🎯 简单易用**: 低代码配置，快速构建生产级智能体
 
-### 📄 许可证
-
-#### 代码许可
-代码使用 `MIT License` 发布，允许商业使用和修改。
-
 ---
 
 ## 🚀 快速开始
@@ -42,75 +37,133 @@ COTA (Chain of Thought Agent) 是一个基于大语言模型的智能体平台�
 ### 环境要求
 
 - **Python 3.12+** 
-- **Poetry** (推荐) 或 pip
-- **Git** 用于代码管理
+- **pip** 包管理器
 
 ### 🔧 安装
 
-#### 方法1: 通过Poetry安装 (推荐)
+#### 方法1: 通过pip安装 (推荐)
 
 ```bash
-# 1. 克隆仓库
-git clone https://github.com/CotaAI/cota.git
-cd cota
+# 1. 安装Python 3.12+
+# Ubuntu/Debian:
+sudo apt update && sudo apt install python3.12 python3.12-venv python3.12-pip
+
+# macOS (使用Homebrew):
+brew install python@3.12
+
+# Windows: 访问 https://www.python.org/downloads/ 下载安装
+
+# 2. 创建虚拟环境
+python3.12 -m venv cota-env
+source cota-env/bin/activate  # Linux/macOS
+# 或 cota-env\Scripts\activate  # Windows
+
+# 3. 安装COTA
+pip install cota
+
+# 4. 验证安装
+cota --version
+```
+
+#### 方法2: 从源码安装 (使用Poetry)
+
+```bash
+# 1. 安装Python 3.12+ (同上)
 
 # 2. 安装Poetry
 pip install poetry
 
-# 3. 安装依赖
+# 3. 克隆仓库并安装
+git clone https://github.com/CotaAI/cota.git
+cd cota
 poetry install
 
 # 4. 激活虚拟环境
 poetry shell
-```
 
-#### 方法2: 通过pip安装
-
-```bash
-# 1. 创建虚拟环境
-python3 -m venv ./venv
-source ./venv/bin/activate  # Linux/macOS
-# 或 .\venv\Scripts\activate  # Windows
-
-# 2. 克隆仓库
-git clone https://github.com/CotaAI/cota.git
-cd cota
-
-# 3. 安装依赖
-pip install -r requirements.txt
-pip install -e .
+# 5. 验证安装
+cota --version
 ```
 
 ### ⚡ 快速体验
 
-> 确保你在项目根目录下执行以下命令
+> 确保你已按照上述方法安装COTA并激活虚拟环境
 
 #### 1. 初始化项目
 ```bash
-# 创建示例机器人配置
+# 创建示例智能体项目
 cota init
-cd cota_projects/simplebot
-
-# 配置API密钥
-cp endpoints.yml.example endpoints.yml
-# 编辑 endpoints.yml，添加你的LLM API密钥
 ```
 
-#### 2. 启动命令行对话
+执行后会在当前目录创建 `cota_projects` 文件夹，包含示例配置：
+
+```
+cota_projects/
+├── simplebot/          # 简单对话机器人
+│   ├── agent.yml       # 智能体配置
+│   └── endpoints.yml  # LLM配置示例
+└── taskbot/           # 任务型机器人
+    ├── agents/
+    ├── task.yml
+    └── endpoints.yml
+```
+
+#### 2. 配置智能体
 ```bash
-# 启动交互式命令行
-cota shell --config=.
-
-# 或启动Web服务
-cota run --channel=socket.io --port=5005
+# 进入simplebot目录
+cd cota_projects/simplebot
 ```
 
-#### 3. 启动Web界面
+编辑 `endpoints.yml`，配置你的LLM API：
+
+```yaml
+llms:
+  rag-glm-4:
+    type: openai
+    model: glm-4                    # 使用的模型名称
+    key: your_api_key_here          # 替换为你的API密钥
+    apibase: https://open.bigmodel.cn/api/paas/v4/
+```
+
+#### 3. 启动对话测试
+```bash
+# 启动调试模式命令行对话
+cota shell --debug
+
+# 或启动普通命令行对话
+cota shell --config=.
+```
+
+#### 4. 启动服务上线 (可选)
 ```bash
 # 启动WebSocket服务
 cota run --channel=websocket --host=localhost --port=5005
+```
 
-# 访问 http://localhost:5005 开始对话
+### 📝 配置说明
+
+`agent.yml` 是智能体的核心配置文件：
+
+```yaml
+system:
+  description: 你是一个智能助手，你需要认真负责的回答帮用户解决问题
+
+dialogue:
+  mode: agent                    # 对话模式
+  use_proxy_user: true          # 启用代理用户模拟
+  max_proxy_step: 30            # 最大对话轮数
+  max_tokens: 500               # LLM响应最大token数
+
+policies:                       # 决策策略配置
+  - type: trigger              # 触发式策略
+  - type: llm                  # LLM策略
+    config:
+      llms:
+        - name: rag-glm-4      # 默认LLM
+        - name: rag-utter      # BotUtter专用LLM
+          action: BotUtter
+        - name: rag-selector   # Selector专用LLM
+          action: Selector
 ```
 
 ## 📚 文档和教程
@@ -135,9 +188,7 @@ cota run --channel=websocket --host=localhost --port=5005
 ## 📞 联系我们
 
 > GitHub Issues 和 Pull Requests 随时欢迎！
-
-#### 正式咨询
-有关项目和商业合作的正式咨询，请联系：**690714362@qq.com**
+有关项目咨询，请联系：**690714362@qq.com**
 
 #### 社区讨论
 ##### 1. GitHub Discussions
@@ -150,9 +201,5 @@ cota run --channel=websocket --host=localhost --port=5005
 ---
 
 **⭐ 如果COTA对你有帮助，请给我们一个Star！**
-
-**⭐ If COTA helps you, please give us a Star!**
-
-![Visitor Count](https://komarev.com/ghpvc/?username=CotaAI&repo=cota&color=blue&style=flat-square)
 
 </div>
