@@ -57,14 +57,7 @@ class Processor:
             await self.save_tracker(self.dst)
             return
 
-        if self.agent.dialogue.get('mode') == 'direct':
-            bot_action = self.agent.build_action('BotUtter')
-            await bot_action.run(self.agent, self.dst)
-            self.dst.update(bot_action)
-            if channel:
-                await self.execute_channel_effects(bot_action, message.session_id, channel)
-        else: 
-            await self._handle_bot_actions(message.session_id, channel)
+        await self._handle_bot_actions(message.session_id, channel)
         await self.save_tracker(self.dst)
 
     # TODO: Check if this is reasonable
@@ -77,8 +70,8 @@ class Processor:
         self.dst = await self.get_tracker(message.session_id)
         # user = message.metadata.get('user') or self.agent.user
 
-        max_proxy_user_step = self.agent.dialogue.get('max_proxy_user_step')                
-        for i in range(max_proxy_user_step):
+        max_proxy_step = self.agent.dialogue.get('max_proxy_step')                
+        for i in range(max_proxy_step):
             action_config = self.agent.actions.get('UserUtter', {})
             action = Action.build_from_name(
                 name='UserUtter',
@@ -98,14 +91,7 @@ class Processor:
                 logger.debug(f"Conversation ending - Final DST state: \n {self.dst.current_state()}")
                 return 
 
-            if self.agent.dialogue.get('mode') == 'direct':
-                bot_action = self.agent.build_action('BotUtter')
-                await bot_action.run(self.agent, self.dst)
-                self.dst.update(bot_action)
-                if channel:
-                    await self.execute_channel_effects(bot_action, message.session_id, channel)
-            else:
-                await self._handle_bot_actions(message.session_id, channel)
+            await self._handle_bot_actions(message.session_id, channel)
         await self.save_tracker(self.dst)
 
 

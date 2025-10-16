@@ -123,7 +123,7 @@ async def task(args):
 def init(args):
     # Define the directory and files to be created
     project_dir = "cota_projects"
-    template_dir = "bots"  # Replace with the actual directory name
+    template_dir = "bots"
 
     # Create the project directory
     if not os.path.exists(project_dir):
@@ -132,18 +132,31 @@ def init(args):
     else:
         print(f"Directory {project_dir} already exists.")
 
-    # Copy the contents of the template directory
     src_dir = os.path.join(os.path.dirname(__file__), template_dir)
-    if os.path.exists(src_dir):
-        for item in os.listdir(src_dir):
+    src_dir = os.path.abspath(src_dir)
+    
+    if src_dir and os.path.exists(src_dir):
+        print(f"Found template directory: {src_dir}")
+        for item in os.listdir(src_dir): 
             src_item = os.path.join(src_dir, item)
             dst_item = os.path.join(project_dir, item)
-            if os.path.isdir(src_item):
-                shutil.copytree(src_item, dst_item)
-            else:
-                shutil.copy2(src_item, dst_item)
+            try:
+                if os.path.isdir(src_item):
+                    if os.path.exists(dst_item):
+                        shutil.rmtree(dst_item)
+                    shutil.copytree(src_item, dst_item)
+                    print(f"Copied directory: {item}")
+                else:
+                    shutil.copy2(src_item, dst_item)
+                    print(f"Copied file: {item}")
+            except Exception as e:
+                print(f"Error copying {item}: {str(e)}")
+        print(f"Project template created in: {os.path.abspath(project_dir)}")
     else:
-        print(f"Source directory {src_dir} does not exist.")
+        print(f"Template directory not found. Searched in:")
+        for possible_dir in possible_src_dirs:
+            print(f"  - {os.path.abspath(possible_dir)}")
+        print("Creating empty project directory only.")
 
 def configure_logging(log_level=logging.INFO):
     """Configure logging with the specified level"""

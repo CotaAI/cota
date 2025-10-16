@@ -1,0 +1,89 @@
+base_store:
+      #type: SQL
+      type: Memory
+      dialect: mysql+pymysql  # the dialect used to interact with the db
+      host: localhost
+      #host: rm-cn-zxu39mntt0021avo.rwlb.rds.aliyuncs.com
+      port: 3306
+      db: petcare_dev  # path to your db
+      username: petcare # username used for authentication
+      password: petpetdaydayup#123 # password used for authentication
+      #db: mysql  # path to your db
+      #username: root # username used for authentication
+      #password: 12345678 # password used for authentication
+
+
+channel:
+      type: redis
+      host: localhost # Redis server host
+      port: 6379 # Redis server port
+      db: 0 # Redis database number
+      password: your_redis_password # Redis password, if any
+
+
+llms:
+  deepseek-chat:
+    type: openai
+    model: deepseek-chat
+    key: sk-4e34bb4805b8446abdfe0bd9d1a357be # deepseek
+    apibase: https://api.deepseek.com/v1
+
+  qwen-max:
+    type: openai
+    model: qwen-max
+    key: sk-7cac88fbb9224fa2b59dbb687d3ee353  # aliyun dashscope
+    apibase: https://dashscope.aliyuncs.com/compatible-mode/v1
+
+  rag-glm-4:
+    type: openai-rag
+    model: glm-4
+    key: b14c465894ea36ec1fd7439da500b061.bvzuQrDVYknGCSQH
+    apibase: https://open.bigmodel.cn/api/paas/v4/
+    knowledge_id: 1853628378662457344
+    rag_prompt: |
+      从文档
+      '''
+      {{knowledge}}
+      '''
+      中找问题
+      '''
+      {{question}}
+      '''
+      的答案，找到答案就仅使用文档语句回答问题，找不到答案就用自身知识回答并且告诉用户该信息不是来自文档。
+      不要复述问题，直接开始回答。
+
+  rag-utter:
+    type: openai-rag
+    model: glm-4
+    key: b14c465894ea36ec1fd7439da500b061.bvzuQrDVYknGCSQH
+    apibase: https://open.bigmodel.cn/api/paas/v4/
+    knowledge_id: 1978432563303292928
+    rag_prompt: |
+      从文档
+      '''
+      {{knowledge}}
+      '''
+      中找问题
+      '''
+      {{question}}
+      '''
+      的答案，找到答案就仅使用文档语句回答问题，找不到答案就用自身知识回答并且告诉用户该信息不是来自文档。
+      不要复述问题，直接开始回答。
+
+  rag-selector:
+    type: openai-rag
+    model: glm-4
+    key: b14c465894ea36ec1fd7439da500b061.bvzuQrDVYknGCSQH
+    apibase: https://open.bigmodel.cn/api/paas/v4/
+    knowledge_id: 1978432639408955392
+    rag_prompt: |
+      从文档
+      '''
+      {{knowledge}}
+      '''
+      中找问题
+      '''
+      {{question}}
+      '''
+      的答案，找到答案就仅使用文档语句回答问题，找不到答案就用自身知识回答并且告诉用户该信息不是来自文档。
+      不要复述问题，直接开始回答。
