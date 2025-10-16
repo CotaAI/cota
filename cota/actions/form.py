@@ -111,9 +111,9 @@ class Form(Action):
             prompt_template = self.updater.get("prompt","")
             if not prompt_template:
                 return
-            thoughts_dict = await dst.format_thoughts(prompt_template, self)
-            rag_dict = await dst.format_rag(prompt_template, self)
-            prompt = dst.format_prompt(prompt_template, self, {**rag_dict, **thoughts_dict})
+            knowledge_dict = await dst.format_knowledge(prompt_template, self)
+            thoughts_dict = await dst.format_policies(prompt_template, self)
+            prompt = dst.format_prompt(prompt_template, self, {**knowledge_dict, **thoughts_dict})
 
             llm_name = self.updater.get("llm", None)
             update_result = await agent.llm_instance(llm_name).generate_chat(
@@ -121,14 +121,16 @@ class Form(Action):
                 max_tokens = agent.dialogue.get('max_tokens', DEFAULT_DIALOGUE_MAX_TOKENS),
                 response_format = {'type': 'json_object'}
             )
+            # Extract content from result
+            content = update_result["content"]
             try:
-                update_json = json.loads(update_result)
+                update_json = json.loads(content)
                 if len(update_json) > 0:
                     update_existing_keys(self.slots, update_json)
             except json.JSONDecodeError:
-                logger.error(f"Failed to parse JSON response from {self.name} updater: {update_result}")
+                logger.error(f"Failed to parse JSON response from {self.name} updater: {content}")
                 try:
-                    update_json = extract_json_from_string(update_result)
+                    update_json = extract_json_from_string(content)
                     if len(update_json) > 0:
                         update_existing_keys(self.slots, update_json)
                 except Exception as e:

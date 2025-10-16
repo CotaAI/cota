@@ -1,4 +1,5 @@
 import logging
+import json
 from cota.actions.action import Action
 from cota.message.message import Message
 from typing import Text, Optional, Dict, List, Any
@@ -15,7 +16,6 @@ class UserUtter(Action):
     def apply_to(self, dst: DST) -> None:
         """Apply user utterance to dialogue state tracker"""
         dst.actions.append(self)
-        dst.slots = self.extract_slots()
         dst.formless_actions.append(self)
         dst.latest_action = self
         dst.latest_query = self
@@ -37,9 +37,9 @@ class UserUtter(Action):
             user: Optional[Dict] = None,
     ):
         """Execute user utterance action with LLM processing"""
-        rag_dict = await dst.format_thoughts(self.prompt, self)
-        thoughts_dict = await dst.format_rag(self.prompt, self)
-        prompt = dst.format_prompt(self.prompt, self, {**rag_dict, **thoughts_dict})
+        knowledge_dict = await dst.format_knowledge(self.prompt, self)
+        thoughts_dict = await dst.format_policies(self.prompt, self)
+        prompt = dst.format_prompt(self.prompt, self, {**knowledge_dict, **thoughts_dict})
 
         if user and user.get('description'):
             messages = [{"role": "system", "content": user.get('description')},{"role":"user", "content": prompt}]
@@ -48,21 +48,41 @@ class UserUtter(Action):
 
         result = await agent.llm_instance(self.llm).generate_chat(
             messages = messages,
-            max_tokens = agent.dialogue.get('max_tokens', DEFAULT_DIALOGUE_MAX_TOKENS)
+            max_tokens = agent.dialogue.get('max_tokens', DEFAULT_DIALOGUE_MAX_TOKENS),
+            response_format={'type': 'json_object'}
         )
 
+        # Parse JSON response from LLM
+        content = result["content"]
+        try:
+            json_result = json.loads(content)
+            text_content = json_result.get('text', '')
+            thought_content = json_result.get('thought', '')
+            state_content = json_result.get('state', 'continue')
+            
+            logger.debug(f"Parsed JSON result: {json_result}")
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse JSON response from user: {content}")
+            # Fallback to original text if JSON parsing fails
+            text_content = content
+            thought_content = ''
+            state_content = 'continue'
+
+        # Create message with text content
         message = Message(
             sender='user',
-            text=result
+            text=text_content
         )
-        self.result.append(message.as_dict())
+        
+        # Create message dict and add thought and state at the same level as text
+        message_dict = message.as_dict()
+        if thought_content:
+            message_dict['thought'] = thought_content
+        if state_content:
+            message_dict['state'] = state_content
+            
+        self.result.append(message_dict)
+        
         logger.debug(f"Query proxy user: {user}")
         logger.debug(f"Query prompt: {prompt}")
         logger.debug(f"Query result: {self.result}")
-
-    def extract_slots(self):
-        """Extract slots from action results"""
-        result = {}
-        for d in [result.get('metadata',{}).get('slots',{}) for result in self.result]:
-            result.update(d)
-        return result

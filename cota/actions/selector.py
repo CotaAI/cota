@@ -71,9 +71,9 @@ class Selector(Action):
         # System prompt
         system_prompt = DEFAULT_SELECTOR_INSTRUCTION
         # Enhanced prompt
-        rag_dict = await dst.format_thoughts(self.prompt, self)
-        thoughts_dict = await dst.format_rag(self.prompt, self)
-        prompt = dst.format_prompt(self.prompt, self, {**rag_dict, **thoughts_dict})
+        knowledge_dict = await dst.format_knowledge(self.prompt, self)
+        thoughts_dict = await dst.format_policies(self.prompt, self)
+        prompt = dst.format_prompt(self.prompt, self, {**knowledge_dict, **thoughts_dict})
 
         select_result = await agent.llm_instance(self.llm).generate_chat(
             messages=[
@@ -83,10 +83,12 @@ class Selector(Action):
             max_tokens=agent.dialogue.get('max_tokens', DEFAULT_DIALOGUE_MAX_TOKENS),
             response_format = {'type': 'json_object'}
         )
+        # Extract content from result
+        content = select_result["content"]
         try:
-            select_result = json.loads(select_result)
+            select_result = json.loads(content)
         except json.JSONDecodeError:
-            logger.error(f"Failed to parse JSON response from selector: {select_result}")
+            logger.error(f"Failed to parse JSON response from selector: {content}")
 
         logger.debug(f"Selector result before: {select_result}")
         

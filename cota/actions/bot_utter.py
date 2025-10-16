@@ -63,9 +63,9 @@ class BotUtter(Action):
             agent: Optional["Agent"] = None,
             dst: Optional[DST] = None,
     ):
-        thoughts_dict = await dst.format_thoughts(self.prompt, self)
-        rag_dict = await dst.format_rag(self.prompt, self)
-        prompt = dst.format_prompt(self.prompt, self, {**rag_dict, **thoughts_dict})
+        knowledge_dict = await dst.format_knowledge(self.prompt, self)
+        thoughts_dict = await dst.format_policies(self.prompt, self)
+        prompt = dst.format_prompt(self.prompt, self, {**knowledge_dict, **thoughts_dict})
 
         messages = [
             {
@@ -85,17 +85,18 @@ class BotUtter(Action):
             response_format={'type': 'json_object'}
         )
 
-        # Parse JSON response
+        # Parse JSON response from content field
+        content = result["content"]
         try:
-            json_result = json.loads(result)
+            json_result = json.loads(content)
             text_content = json_result.get('text', '')
             thought_content = json_result.get('thought', '')
             
             logger.debug(f"Parsed JSON result: {json_result}")
         except json.JSONDecodeError:
-            logger.error(f"Failed to parse JSON response from bot: {result}")
+            logger.error(f"Failed to parse JSON response from bot: {content}")
             # Fallback to original text if JSON parsing fails
-            text_content = result
+            text_content = content
             thought_content = ''
 
         # Create message with text content

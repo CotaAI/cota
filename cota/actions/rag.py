@@ -5,8 +5,7 @@ from cota.actions.bot_utter import BotUtter
 from cota.message.message import Message
 from cota.dst import DST
 from cota.constant import (
-    DEFAULT_DIALOGUE_MAX_TOKENS,
-    RAG_SUMMARY_PROMPT
+    DEFAULT_DIALOGUE_MAX_TOKENS
 )
 
 logger = logging.getLogger(__name__)
@@ -20,9 +19,9 @@ class RAG(BotUtter):
         """
         run RAG Action
         """
-        thoughts_dict = await dst.format_thoughts(self.prompt, self)
-        rag_dict = await dst.format_rag(self.prompt, self)
-        prompt = dst.format_prompt(self.prompt, self, {**rag_dict, **thoughts_dict})
+        knowledge_dict = await dst.format_knowledge(self.prompt, self)
+        thoughts_dict = await dst.format_policies(self.prompt, self)
+        prompt = dst.format_prompt(self.prompt, self, {**knowledge_dict, **thoughts_dict})
 
         # Try exact match first, then case-insensitive match for 'BotUtter'
         parent_config = agent.actions.get('BotUtter')
@@ -42,7 +41,7 @@ class RAG(BotUtter):
             max_tokens=agent.dialogue.get('max_tokens', DEFAULT_DIALOGUE_MAX_TOKENS)
         )
 
-        message = Message(sender='bot', text=result)
+        message = Message(sender='bot', text=result["content"])
 
         if self.result and self.result[-1].get('text') is None:
             self.result[-1].update(
