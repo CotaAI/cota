@@ -1,8 +1,26 @@
 [tool.poetry]
 name = "cota"
-version = "0.1.0"
-description = ""
+version = "1.0.6"
+description = "Chain of Thought Agent Platform for Industrial-Grade Dialogue Systems"
 authors = ["MingGuangShao <690714362@qq.com>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/CotaAI/cota"
+repository = "https://github.com/CotaAI/cota"
+documentation = "https://cotaai.github.io/cota/"
+keywords = ["chatbot", "dialogue", "agent", "llm", "chain-of-thought"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+packages = [
+    {include = "cota"}
+]
 
 [tool.poetry.dependencies]
 python = ">=3.12"
@@ -26,9 +44,10 @@ dashscope = ">=1.20.0"
 setuptools = "^70.1.1"
 pyyaml = "^6.0.1"
 pymysql = "^1.1.1"
-faiss-cpu = "^1.8.0.post1"
 asyncio = "^3.4.3"
-[tool.poetry.dev-dependencies]
+httpx = ">=0.27.0,<0.28.0"
+[tool.poetry.group.dev.dependencies]
+
 
 [tool.poetry.scripts]
 cota = "cota.__main__:main"
@@ -40,4 +59,4 @@ build-backend = "poetry.core.masonry.api"
 [[tool.poetry.source]]
 name = "aliyun"
 url = "http://mirrors.aliyun.com/pypi/simple"
-priority = "default"
+priority = "primary"

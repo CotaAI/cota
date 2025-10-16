@@ -7,9 +7,8 @@ from cota.llm import LLM
 
 def test_create_client_openai():
     config = {
-        'type': 'api',
         'model': 'deepseek-chat',
-        'apitype': 'openai',
+        'type': 'openai',
         'key': 'sk-4e34bb4805b8446abdfe0bd9d1a357be',
         'apibase': 'https://api.deepseek.com/v1'
     }
@@ -21,9 +20,8 @@ def test_create_client_openai():
 '''
 def test_generate_text():
     config = {
-        'type': 'api',
         'model': 'deepseek-chat',
-        'apitype': 'openai',
+        'type': 'openai',
         'key': 'sk-4e34bb4805b8446abdfe0bd9d1a357be',
         'apibase': 'https://api.deepseek.com/v1'
     }
@@ -35,9 +33,8 @@ def test_generate_text():
 
 def test_generate_chat():
     config = {
-        'type': 'api',
         'model': 'deepseek-chat',
-        'apitype': 'openai',
+        'type': 'openai',
         'key': 'sk-4e34bb4805b8446abdfe0bd9d1a357be',
         'apibase': 'https://api.deepseek.com/v1'
     }

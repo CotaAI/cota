@@ -1,0 +1,20 @@
+# Include the README and LICENSE
+include README.md
+include LICENSE
+
+# Include all YAML configuration files
+recursive-include cota *.yml *.yaml
+
+# Include bots configuration examples
+recursive-include bots *.yml *.yaml *.example *.md
+
+# Include documentation
+recursive-include docs *.md *.toml *.css *.js
+
+# Exclude cache files and logs  
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+recursive-exclude * *.log
+recursive-exclude * *~
+recursive-exclude * .git*
+recursive-exclude * .DS_Store
