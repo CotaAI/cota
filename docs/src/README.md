@@ -19,8 +19,8 @@ COTA 是一个强大的生成式多对话平台，专为构建智能对话机器
 
 如果你是第一次使用 COTA，建议从以下步骤开始：
 
-1. [安装和环境准备](installation/env_1.md)
-2. [安装 COTA](installation/install_2.md)  
+1. [安装和环境准备](installation/env.md)
+2. [安装 COTA](installation/install.md)  
 3. [快速开始教程](tutorial/quick_start.md)
 
 ## 📚 文档导航
