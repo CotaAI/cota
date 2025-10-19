@@ -136,8 +136,11 @@ def init(args):
     src_dir = os.path.abspath(src_dir)
     
     if src_dir and os.path.exists(src_dir):
-        print(f"Found template directory: {src_dir}")
-        for item in os.listdir(src_dir): 
+        for item in os.listdir(src_dir):
+            if item.startswith('.'):
+                print(f"Skipped hidden file: {item}")
+                continue
+                
             src_item = os.path.join(src_dir, item)
             dst_item = os.path.join(project_dir, item)
             try:
@@ -153,9 +156,7 @@ def init(args):
                 print(f"Error copying {item}: {str(e)}")
         print(f"Project template created in: {os.path.abspath(project_dir)}")
     else:
-        print(f"Template directory not found. Searched in:")
-        for possible_dir in possible_src_dirs:
-            print(f"  - {os.path.abspath(possible_dir)}")
+        print(f"Template directory not found at: {src_dir}")
         print("Creating empty project directory only.")
 
 def configure_logging(log_level=logging.INFO):
