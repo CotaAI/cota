@@ -89,21 +89,23 @@ prompt: |
 
 ## 📁 项目结构
 
-### TaskBot目录结构
+### Task项目目录结构
 
 ```
-taskbot/
+multi_agent_task/
 ├── task.yml              # 任务配置文件
 ├── endpoints.yml         # 端点配置文件
 └── agents/              # 代理目录
-    ├── agent01/         # 代理1 (如：医生角色)
+    ├── doctor_agent/    # 代理1 (如：医生角色)
     │   ├── agent.yml    # 代理配置
     │   └── endpoints.yml # 代理端点配置
-    ├── agent02/         # 代理2 (如：用户角色)
+    ├── patient_agent/   # 代理2 (如：患者角色)
     │   ├── agent.yml    # 代理配置
     │   └── endpoints.yml # 代理端点配置
     └── ...
 ```
+
+**注意**：Task功能目前处于开发阶段，主要用于复杂的多Agent协作场景。对于简单的单Agent应用，建议直接使用Agent模式。
 
 ### 配置文件详解
 
@@ -148,49 +150,75 @@ plans:
 # 代理基本信息
 system:
   name: doctor_agent
-  description: "你是一名宠物医生，需要认真负责地回答用户问题"
+  description: "你是一名专业的宠物医生，需要认真负责地回答用户问题"
 
-# 代理配置
-config:
-  mode: agent
-  max_bot_step: 20
-  use_proxy_user: true
-  max_proxy_user_step: 20
-  max_tokens: 500
+# 对话配置
+dialogue:
+  use_proxy_user: true   # 启用代理用户模式用于多Agent交互
+  max_proxy_step: 20     # 代理模式下的最大步骤数
+  max_tokens: 500        # LLM生成最大令牌数
 
 # 对话策略
 policies:
-  - name: rag
-    llm: qwen-max
-    prompt: |
-      你需要根据当前任务，以及你拥有的Action，给出thought。
-      当前任务：{{task_description}}
-      你的Action列表：{{action_descriptions}}
-      请务必参考已有的示例：{{thoughts}}
-      历史对话：{{history_actions}}
-      请直接输出：thought:<你的输出>
+  - type: trigger
+  - type: match
+  - type: llm
+    config:
+      llms:
+        - name: qwen-max
+          action: BotUtter
+        - name: deepseek-chat
 
 # 动作定义
 actions:
   UserUtter:
     description: "用户向医生的提问"
+    prompt: |
+      你是一个需要医疗帮助的宠物主人，向专业的宠物医生咨询问题。
+      
+      **历史对话：**
+      {{history_messages}}
+      
+      **输出格式：**
+      ```json
+      {
+        "thought": "你的内心想法",
+        "text": "你要说的话", 
+        "state": "continue/stop"
+      }
+      ```
     
   BotUtter:
-    description: "回复用户的提问"
+    description: "专业医生回复用户"
     prompt: |
-      根据任务描述和历史对话，生成回答。
-      任务描述：{{task_description}}
-      历史对话：{{history_messages}}
-      输出尽量简短，不超过20个字：<你的回答>
+      你是专业的宠物医生，需要根据对话历史提供专业建议。
+      
+      **任务描述：**
+      {{task_description}}
+      
+      **对话历史：**
+      {{history_actions_with_thoughts}}
+      
+      **输出格式：**
+      ```json
+      {"thought": "<专业分析>", "text": "<医疗建议>"}
+      ```
       
   Selector:
     description: "选择合适的Actions"
     prompt: |
-      根据历史Action序列，选择最合适的Action。
-      Action列表：{{bot_action_names_for_selector}}
-      Action描述：{{bot_action_descriptions_for_selector}}
-      历史Action序列：{{history_actions}}
-      输出格式：<Action>
+      根据当前对话状态选择下一个最合适的Action。
+      
+      **可用Actions：**
+      {{action_descriptions}}
+      
+      **对话状态：**
+      {{history_actions_with_thoughts}}
+      
+      **输出格式：**
+      ```json
+      {"thought": "<分析过程>", "action": "<动作名称>"}
+      ```
 ```
 
 ## ⚙️ 核心API

@@ -9,9 +9,8 @@
 # 教程
 - [快速开始](tutorial/quick_start.md)
 - [最佳实践]()
-  - [实践1](tutorial/best_practices/practice_1.md)
-  - [实践2]()
-  - [实践3]()
+  - [实践1：天气查询机器人](tutorial/best_practices/practice_1.md)
+  - [实践2：宠物问诊-用户代理](tutorial/best_practices/practice_2.md)
 
 # 配置说明
 - [配置总览](configuration/overview.md)
@@ -20,11 +19,11 @@
 - [Policy配置](configuration/policy.md)
 
 # 上线部署
-- [部署指南](deployment/guide.md)
-- [API接口](deployment/api.md)
-- [命令行工具](deployment/cli.md)
-- [配置管理](deployment/configuration.md)
-- [故障排除](deployment/troubleshooting.md)
+- [部署指南]()
+- [API接口]()
+- [命令行工具]()
+- [配置管理]()
+- [故障排除]()
 
 # 基础概念
 - [Channel](concepts/channel.md)
@@ -34,10 +33,4 @@
 - [Agent](concepts/agent.md)
 - [LLM](concepts/llm.md)
 - [DPL](concepts/dpl.md)
-- [Task](concepts/task.md)
-
-# 架构设计
-- [架构总览](architecture/overview.md)
-- [核心组件](architecture/components.md)
-- [数据流设计](architecture/data-flow.md)
-- [设计原则](architecture/design-principles.md)
+- [Task]()

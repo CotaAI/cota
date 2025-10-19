@@ -31,7 +31,7 @@ COTA支持三种不同类型的DPL策略：
 ```yaml
 # 配置示例
 policies:
-  - name: trigger
+  - type: trigger
 ```
 
 **应用场景**:
@@ -50,7 +50,7 @@ policies:
 ```yaml
 # 配置示例  
 policies:
-  - name: match
+  - type: match
 ```
 
 **应用场景**:
@@ -58,20 +58,25 @@ policies:
 - 复杂决策场景
 - 教学和解释性对话
 
-### 3. LLMDPL - 基于LLM知识检索策略
+### 3. LLMDPL - 基于LLM推理策略
 
 **特点**:
-- 结合大语言模型和检索增强生成
-- 动态生成个性化的思考内容
+- 基于大语言模型进行动态推理
 - 支持按动作类型配置不同的LLM
+- 提供灵活的思维链生成能力
 
 **工作原理**:
 ```yaml
 # 配置示例
 policies:
-  - name: rag
-    llm: deepseek-chat  # 或配置为字典格式支持不同动作类型
-    max_thoughts: 5
+  - type: llm
+    config:
+      llms:
+        - name: deepseek-chat    # 默认LLM
+        - name: qwen-max         # BotUtter专用LLM
+          action: BotUtter
+        - name: glm-4           # Selector专用LLM
+          action: Selector
 ```
 
 **应用场景**:
@@ -123,11 +128,12 @@ bot_policy/
 ```yaml
 # agent.yml
 policies:
-  - name: trigger        # 启用触发式策略
-  - name: match         # 启用匹配式策略  
-  - name: rag           # 启用RAG策略
-    llm: deepseek-chat
-    max_thoughts: 5
+  - type: trigger        # 启用触发式策略
+  - type: match         # 启用匹配式策略  
+  - type: llm           # 启用LLM推理策略
+    config:
+      llms:
+        - name: deepseek-chat
 ```
 
 ### 2. 多策略组合
@@ -136,13 +142,16 @@ policies:
 
 ```yaml
 policies:
-  - name: trigger       # 首先尝试触发式匹配
-  - name: match        # 其次尝试模式匹配
-  - name: rag          # 最后使用RAG生成
-    llm: 
-      BotUtter: qwen-max      # 对BotUtter使用qwen-max
-      QueryAction: glm-4      # 对QueryAction使用glm-4  
-      default: deepseek-chat   # 其他动作使用默认LLM
+  - type: trigger       # 首先尝试触发式匹配
+  - type: match        # 其次尝试模式匹配
+  - type: llm          # 最后使用LLM推理
+    config:
+      llms:
+        - name: qwen-max         # BotUtter专用LLM
+          action: BotUtter
+        - name: glm-4           # Selector专用LLM
+          action: Selector  
+        - name: deepseek-chat    # 默认LLM
 ```
 
 ### 3. 动作特定配置
@@ -151,11 +160,14 @@ policies:
 
 ```yaml
 policies:
-  - name: rag
-    llm:
-      BotUtter: qwen-max        # 回复类动作使用通义千问
-      FormAction: deepseek-chat # 表单类动作使用DeepSeek
-      default: glm-4            # 默认使用ChatGLM
+  - type: llm
+    config:
+      llms:
+        - name: qwen-max         # 回复类动作使用通义千问
+          action: BotUtter
+        - name: deepseek-chat    # 表单类动作使用DeepSeek
+          action: FormAction
+        - name: glm-4           # 默认使用ChatGLM
 ```
 
 ## 🔄 工作流程
