@@ -69,5 +69,12 @@ class Cmdline(Channel):
 
     async def _send_message(self, recipient_id: Text, response: Any) -> None:
         """Sends a message to the recipient using the bot event."""
-        if response.get('sender') != 'user':
-            print('Bot: ', response.get('text'))
+        sender = response.get('sender', 'unknown')
+        text = response.get('text', '')
+        
+        if sender == 'user':
+            print('User: ', text)
+        elif sender == 'bot':
+            print('Bot: ', text)
+        else:
+            print(f'{sender.title()}: ', text)
