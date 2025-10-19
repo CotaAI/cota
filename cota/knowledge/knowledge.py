@@ -81,24 +81,30 @@ class KnowledgeFactory:
     """Factory for creating Knowledge instances."""
     
     @staticmethod
-    def create(knowledge_configs: List[Dict[str, Any]], path: Text = None) -> Knowledge:
+    def create(knowledge_configs: List[Dict[str, Any]], path: Text = None) -> Optional[Knowledge]:
         """Create single Knowledge object based on configuration.
-        Returns CompositeKnowledge for multiple configs or single Knowledge for one config.
+        Returns CompositeKnowledge for multiple configs, single Knowledge for one config,
+        or None if no configurations provided.
         
         Args:
-            knowledge_configs: List of knowledge configuration dictionaries
+            knowledge_configs: List of knowledge configuration dictionaries (can be empty)
             path: Base path for knowledge resources
             
         Returns:
-            Knowledge: Single Knowledge object (may be CompositeKnowledge containing multiple strategies)
+            Optional[Knowledge]: Single Knowledge object, CompositeKnowledge, or None if no valid config
         """
         if not knowledge_configs:
-            raise ValueError("No knowledge configurations provided")
+            logger.info("No knowledge configurations provided, knowledge will be disabled")
+            return None
         
         # If only one config, return single Knowledge instance
         if len(knowledge_configs) == 1:
             config = knowledge_configs[0]
-            return KnowledgeFactory._create_single_knowledge(config, path)
+            try:
+                return KnowledgeFactory._create_single_knowledge(config, path)
+            except Exception as e:
+                logger.info("Knowledge will be disabled due to configuration error")
+                return None
         
         # Multiple configs: create CompositeKnowledge
         strategies = []
@@ -107,25 +113,36 @@ class KnowledgeFactory:
                 strategy = KnowledgeFactory._create_single_knowledge(config, path)
                 strategies.append(strategy)
             except Exception as e:
-                logger.error(f"Failed to create knowledge strategy: {e}")
+                logger.error(f"Failed to create knowledge strategy from config {config}: {e}")
                 continue
         
         if not strategies:
-            raise ValueError("Failed to create any knowledge strategies")
+            logger.warning("Failed to create any knowledge strategies, knowledge will be disabled")
+            return None
         
         return CompositeKnowledge(strategies)
     
     @staticmethod
     def _create_single_knowledge(config: Dict[str, Any], path: Text = None) -> Knowledge:
         """Create single Knowledge strategy instance."""
+        if not config or not isinstance(config, dict):
+            raise ValueError(f"Invalid knowledge config (not a dict): {config}")
+            
         knowledge_type = config.get('type')
         
         if not knowledge_type:
             raise ValueError(f"Invalid knowledge config (missing type): {config}")
         
         if knowledge_type == 'llm':
-            from cota.knowledge.llm_knowledge import LLMKnowledge
-            llm_config = config.get('config', config)
-            return LLMKnowledge(config=llm_config)
+            try:
+                from cota.knowledge.llm_knowledge import LLMKnowledge
+                llm_config = config.get('config', config)
+                if not llm_config:
+                    raise ValueError("LLM knowledge config is empty")
+                return LLMKnowledge(config=llm_config)
+            except ImportError as e:
+                raise ValueError(f"LLMKnowledge not available: {e}")
+            except Exception as e:
+                raise ValueError(f"Failed to create LLMKnowledge: {e}")
         else:
             raise ValueError(f"Unknown knowledge type: {knowledge_type}")
