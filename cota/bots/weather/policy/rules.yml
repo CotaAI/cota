@@ -1,0 +1,21 @@
+triggers:
+  - title: 转人工
+    actions:
+      - name: UserUtter
+        result: 
+          - 转人工
+          - 人工客服
+          - 人工
+          - 人工服务
+          - 人工支持
+          - 人工咨询
+          - 人工解答
+          - 人工帮助
+          - 人工指导
+          - 人工建议
+          - 人工推荐
+          - 人工指导
+          - 人工建议
+          - 人工推荐
+      - name: RenGong
+        result: 成功

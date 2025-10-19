@@ -94,13 +94,6 @@ Action描述为:
 """
 
 DEFAULT_FORM_PROMPT = """
-当前正在执行{{current_form_name}}, 其描述为{{current_form_description}}, 将结果返给用户。
-
-结果为:
-{{current_form_execute_result}}
-"""
-DEFAULT_FORM_UPDATER_DESCRIPTION = """更新状态"""
-DEFAULT_FORM_UPDATER_PROMPT = """
 当前正在执行{{current_form_name}}， 其描述为{{current_form_description}}。根据对话内容及Action序列，结合当前slot的状态，填充或重置slot的值。
 
 历史Action序列为:
@@ -115,9 +108,8 @@ Action的描述为:
 slots的含义为:
 {{current_form_slot_descriptions}}
 
-填充或重置slot的值, 保持slots格式输出json字符串。 
+填充或重置slot的值, 保持slots格式输出json字符串。
 """
-DEFAULT_FORM_UPDATER = {'description': DEFAULT_FORM_UPDATER_DESCRIPTION, 'prompt': DEFAULT_FORM_UPDATER_PROMPT}
 
 DEFAULT_HTTP_CLIENT_CONFIG = {
     "timeout": 10,
@@ -128,17 +120,13 @@ DEFAULT_HTTP_CLIENT_CONFIG = {
 DEFAULT_FORM_CONFIG = {
     "type": "form",
     "description": "",
-    "prompt": "",
+    "prompt": DEFAULT_FORM_PROMPT,
     "slots": {},
     "executer": {
         "url": "",
         "method": "get",
         "mock": False,
         "output": []
-    },
-    "updater": {
-        "prompt": "",
-        "llm": None
     }
 }
 
@@ -158,7 +146,7 @@ DEFAULT_CONFIG = {
     'user_proxy': DEFAULT_USER,
     'actions':{
         'UserUtter': {
-            'description': DEFAULT_QUERY_DESCRIPTION,
+            'description': '用户输入 - 此Action代表用户的输入消息，仅用于记录对话历史，Selector不应选择此Action',
             'prompt': DEFAULT_QUERY_PROMPT
         },
         'BotUtter': {

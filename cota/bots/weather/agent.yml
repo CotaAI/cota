@@ -1,0 +1,120 @@
+system:
+  description: 你是一个智能助手，你需要认真负责的回答帮用户解决问题;要求回答的尽量精准和谨慎
+
+dialogue:
+  use_proxy_user: false  # 是否启用代理用户模式，当为true时，使用llm代理用户向bot提问
+  max_proxy_step: 30     # 代理模式下的最大步骤数，控制对话的最大轮次
+  max_tokens: 500
+
+policies:
+  - type: trigger
+  - type: match #使用match dpl生成思考过程
+
+
+actions:
+  BotUtter:
+    description: "回复用户"
+    prompt: |
+      你是一个智能助手，需要根据当前对话历史生成合适的回复。
+
+      **任务描述：**
+      {{task_description}}
+
+      **输出格式要求：**
+      你必须严格按照以下JSON格式响应，不要有任何其他内容：
+      ```json
+      {"thought": "<你的推理过程>", "text": "<你的回复内容>"}
+      ```
+
+      **=============== 学习参考资料 ===============**
+      （以下是思维模式参考，帮助你理解如何分析和思考，但不是真实对话内容）
+      {{policies}}
+      **============== 学习参考资料结束 ==============**
+
+      **=============== 实际对话历史 ===============**
+      （以下是真实的对话历史，请基于此内容生成回复）
+      {{history_actions_with_thoughts}}
+      **============== 实际对话历史结束 ==============**
+
+      请分析上述实际对话历史，参考学习资料中的思维模式，生成合适的JSON格式回复：
+
+
+  Selector:
+    description: "选择合适的Actions"
+    prompt: |
+      你是一个智能对话助手，需要根据当前对话状态选择下一个最合适的Action。
+
+      **输出格式要求：**
+      你必须严格按照以下JSON格式响应，不要有任何其他内容：
+      ```json
+      {"thought": "<你的推理过程>", "action": "<工具名称>"}
+      ```
+
+      **可用的Action工具：**
+      {{action_descriptions}}
+
+      **=============== 决策参考模式 ===============**
+      （以下是决策思维参考，帮助你理解如何选择Action，但不是真实对话内容）
+      {{policies}}
+      **============== 决策参考模式结束 ==============**
+
+      **=============== 当前对话状态 ===============**
+      （以下是真实的Action执行历史，请基于此状态选择下一个Action）
+      {{history_actions_with_thoughts}}
+      **============== 当前对话状态结束 ==============**
+
+      请分析当前对话状态，参考决策模式，选择最合适的下一个Action并输出JSON格式结果：
+
+  
+  Weather:
+    description: "查询天气"
+    prompt: |
+      当前正在执行{{current_form_name}}， 其描述为{{current_form_description}}。根据对话内容及Action序列，结合当前slot的状态，填充或重置slot的值。
+      
+      历史Action序列为:
+      {{history_actions_with_thoughts}}
+
+      Action的描述为:
+      {{action_descriptions}}
+
+      当前slots为:
+      {{current_form_slot_states}}
+
+      slots的含义为:
+      {{current_form_slot_descriptions}}
+      
+      填充或重置slot的值, 保持slots格式输出json字符串。
+
+    slots:
+      city:
+        description: 城市，注意：接口只支持输入单个城市
+        prompt: |
+          当前正在执行Action {{current_form_name}}, 其描述为 {{current_form_description}}。
+          接下来需要询问用户，需要查询哪个城市的天气。
+          
+          你必须严格按照以下JSON格式响应，不要有任何其他内容：
+          {"text": "<你的回复内容>"}}
+
+      time:
+        description: 时间
+        prompt: |
+          当前正在执行Action {{current_form_name}}, 其描述为 {{current_form_description}}。
+          接下来需要询问用户，需要查询哪天的天气。
+
+          你必须严格按照以下JSON格式响应，不要有任何其他内容：
+          {"text": "<你的回复内容>"}}
+
+
+    executer:
+      url: http://rap2api.taobao.org/app/mock/319677/Weather
+      methold: GET
+      output: [<text>, 接口异常]
+      mock: false
+
+  RenGong:
+    description: "转人工"
+    executer:
+      url: http://rap2api.taobao.org/app/mock/319677/Rengong
+      methold: GET
+      output: [成功,失败]
+      mock: true
