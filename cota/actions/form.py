@@ -28,8 +28,7 @@ class Form(Action):
             result: Optional[List] = None,
             slots: Optional[Dict] = None,
             state: Optional[Text] = None,
-            executer: Optional[Dict] = None,
-            updater: Optional[Dict] = None
+            executer: Optional[Dict] = None
     ) -> None:
         super().__init__(
             name=name,
@@ -44,7 +43,6 @@ class Form(Action):
         self.slots = slots or {}
         self.state = state
         self.executer = executer or {}
-        self.updater = updater or {}
 
     @staticmethod
     def resolve_by_type(
@@ -107,16 +105,18 @@ class Form(Action):
         return d
 
     async def update(self, agent, dst):
+        prompt = None
+        update_result = None
+        
         try:
-            prompt_template = self.updater.get("prompt","")
+            prompt_template = self.prompt
             if not prompt_template:
                 return
             knowledge_dict = await dst.format_knowledge(prompt_template, self)
             thoughts_dict = await dst.format_policies(prompt_template, self)
             prompt = dst.format_prompt(prompt_template, self, {**knowledge_dict, **thoughts_dict})
 
-            llm_name = self.updater.get("llm", None)
-            update_result = await agent.llm_instance(llm_name).generate_chat(
+            update_result = await agent.llm_instance(self.llm).generate_chat(
                 messages = [{"role": "system", "content": DEFAULT_FORM_UPDATER_INSTRUCTION},{"role":"user", "content": prompt}],
                 max_tokens = agent.dialogue.get('max_tokens', DEFAULT_DIALOGUE_MAX_TOKENS),
                 response_format = {'type': 'json_object'}
@@ -128,18 +128,18 @@ class Form(Action):
                 if len(update_json) > 0:
                     update_existing_keys(self.slots, update_json)
             except json.JSONDecodeError:
-                logger.error(f"Failed to parse JSON response from {self.name} updater: {content}")
+                logger.error(f"Failed to parse JSON response from {self.name} slot updater: {content}")
                 try:
                     update_json = extract_json_from_string(content)
                     if len(update_json) > 0:
                         update_existing_keys(self.slots, update_json)
                 except Exception as e:
-                    logger.error(f"Failed to parse JSON response from {self.name} updater: {e}")
+                    logger.error(f"Failed to parse JSON response from {self.name} slot updater: {e}")
         except Exception as e:
             logger.error(f"Failed to update {self.name}: {e}")
 
-        logger.debug( f"{self.name} updater prompt: {prompt}" )
-        logger.debug( f"{self.name} updater result: {update_result}" )
+        logger.debug( f"{self.name} slot update prompt: {prompt}" )
+        logger.debug( f"{self.name} slot update result: {update_result}" )
         logger.debug( f"{self.name} slots after update: {self.slots}")
 
     async def execute(self, agent, data: Dict[Text, Any]) -> Tuple[Text, Dict]:

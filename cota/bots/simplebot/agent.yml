@@ -2,7 +2,7 @@ system:
   description: 你是一个智能助手，你需要认真负责的回答帮用户解决问题;要求回答的尽量精准和谨慎
 
 dialogue:
-  use_proxy_user: true
+  use_proxy_user: false
   max_proxy_step: 30
   max_tokens: 500
 
@@ -90,7 +90,7 @@ actions:
       根据已有知识检索出来的内容，结合任务描述和历史对话，生成回答
 
       检索内容:
-      {{rag}}
+      {{knowledge}}
 
       任务描述:
       {{task_description}}
@@ -128,35 +128,22 @@ actions:
 
   Calculate:
     description: "计算器功能"
-    prompt: |      
-      当前正在执行{{current_form_name}}, 其描述为{{current_form_description}}，将计算结果返给用户。
-      请将计算结果{{current_form_execute_result}}返回,注意：不要自己计算，使用计算器返回的结果, 不要有多余回答。
+    prompt: |
+      当前正在执行{{current_form_name}}， 其描述为{{current_form_description}}。根据对话内容及Action序列，结合当前slot的状态，填充或重置slot的值。
+      
+      历史Action序列为:
+      {{history_actions}}
 
-      你必须严格按照以下JSON格式响应，不要有任何其他内容：
-      {"text": "<你的回复内容>"}}
+      Action的描述为:
+      {{action_descriptions}}
 
+      当前slots为:
+      {{current_form_slot_states}}
 
-    updater:
-      description: "更新状态"
-      prompt: |
-        当前正在执行{{current_form_name}}， 其描述为{{current_form_description}}。根据对话内容及Action序列，结合当前slot的状态，填充或重置slot的值。
-        
-        历史Action序列为:
-        {{history_actions}}
-
-        Action的描述为:
-        {{action_descriptions}}
-
-        当前slots为:
-        {{current_form_slot_states}}
-
-        slots的含义为:
-        {{current_form_slot_descriptions}}
-        
-        填充或重置slot的值, 保持slots格式输出json字符串。
-
-        你必须严格按照以下JSON格式响应，不要有任何其他内容：
-        {"text": "<你的回复内容>"}}
+      slots的含义为:
+      {{current_form_slot_descriptions}}
+      
+      填充或重置slot的值, 保持slots格式输出json字符串。
 
 
     slots:
@@ -179,35 +166,21 @@ actions:
   Weather:
     description: "查询天气"
     prompt: |
-      当前正在执行{{current_form_name}}, 其描述为{{current_form_description}}。请将结果返给用户。
+      当前正在执行{{current_form_name}}， 其描述为{{current_form_description}}。根据对话内容及Action序列，结合当前slot的状态，填充或重置slot的值。
+      
+      历史Action序列为:
+      {{history_actions_with_thoughts}}
 
-      你必须严格按照以下JSON格式响应，不要有任何其他内容：
-      {"text": "<你的回复内容>"}}
+      Action的描述为:
+      {{action_descriptions}}
 
-      结果为
-      {{current_form_execute_result}}
+      当前slots为:
+      {{current_form_slot_states}}
 
-      以下是一些指导
-      {{policies}}
-
-    updater:
-      description: "更新状态"
-      prompt: |
-        当前正在执行{{current_form_name}}， 其描述为{{current_form_description}}。根据对话内容及Action序列，结合当前slot的状态，填充或重置slot的值。
-        
-        历史Action序列为:
-        {{history_actions_with_thoughts}}
-
-        Action的描述为:
-        {{action_descriptions}}
-
-        当前slots为:
-        {{current_form_slot_states}}
-
-        slots的含义为:
-        {{current_form_slot_descriptions}}
-        
-        填充或重置slot的值, 保持slots格式输出json字符串。
+      slots的含义为:
+      {{current_form_slot_descriptions}}
+      
+      填充或重置slot的值, 保持slots格式输出json字符串。
 
     slots:
       city:
