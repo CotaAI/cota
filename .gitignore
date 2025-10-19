@@ -9,8 +9,6 @@ dist
 **/*.faiss
 **/*.pkl
 
-# 敏感配置文件
-cota/bots/**/endpoints.yml
 .env
 *.env
 config.yml
@@ -22,7 +20,3 @@ credentials.json
 # Policy生成的文件
 **/policy/*_dpl_*.md
 **/policy/llm_dpl_*.md
-
-# 保留示例文件
-!*.env.example
-!config.yml.example

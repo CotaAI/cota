@@ -1,0 +1,27 @@
+base_store:
+  type: Memory
+  
+  # SQL数据库存储示例 (生产环境推荐)
+  # type: SQL
+  # dialect: mysql+pymysql     # 支持: mysql+pymysql, postgresql+psycopg2, sqlite
+  # host: localhost            # 数据库主机地址
+  # port: 3306                # 数据库端口
+  # db: cota_chatbot          # 数据库名称
+  # username: your_db_user    # 数据库用户名
+  # password: "***"           # 数据库密码
+
+
+channel:
+      type: redis
+      host: localhost # Redis server host
+      port: 6379 # Redis server port
+      db: 0 # Redis database number
+      password: "your-redis-password" # Redis密码（如有）
+
+
+llms:
+  deepseek: # 模型名称，用于在agent.yml中引用，可以自定义
+    type: openai
+    model: deepseek-chat
+    key: sk-4e34bb4805b8446abdfe0bd9d1a357be # deepseek的api key，请在对应平台获取，该key仅用于测试，请勿大量调用
+    apibase: https://api.deepseek.com/v1 # deepseek的api base url
