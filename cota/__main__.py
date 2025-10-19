@@ -138,7 +138,6 @@ def init(args):
     if src_dir and os.path.exists(src_dir):
         for item in os.listdir(src_dir):
             if item.startswith('.'):
-                print(f"Skipped hidden file: {item}")
                 continue
                 
             src_item = os.path.join(src_dir, item)
