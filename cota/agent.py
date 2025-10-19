@@ -207,8 +207,7 @@ class Agent:
             params.update({
                 "slots": kwargs.get("slots") or {key: '' for key in action_config.get("slots", {})},
                 "state": kwargs.get("state"),
-                "executer": action_config.get("executer"),
-                "updater": action_config.get("updater")
+                "executer": action_config.get("executer")
             })
             return Form.build_from_name(**params)
 
@@ -271,7 +270,6 @@ class Agent:
                 )]
             else:
                 # break current form and execute the new action
-                # TODO: Output two actions here, the previous break and this new one
                 return [
                     self.build_action(
                         action_name=dst.current_form.name,
@@ -329,38 +327,6 @@ class Agent:
             action_info.append((action_name, action_params))
         return action_info
 
-    def _should_response(self, dst):
-        latest_action = dst.latest_action
-        if isinstance(latest_action, Form) and latest_action.state == 'end':
-            description = latest_action.description
-            prompt = latest_action.prompt
-            llm = latest_action.llm
-            if latest_action.result:
-                # Safely access the first result item using unpacking
-                try:
-                    [first_result, *_] = latest_action.result
-                    metadata = first_result.get("metadata", {})
-                except ValueError:
-                    # Handle empty result list
-                    metadata = {}
-                response = Action.build_from_name(
-                    name = 'BotUtter',
-                    description = description,
-                    prompt = prompt,
-                    llm = llm,
-                    result = [{'metadata': metadata}],
-                    sender_id = self.name
-                )
-            else:
-                response = Action.build_from_name(
-                    name = 'BotUtter',
-                    description = description,
-                    prompt = prompt,
-                    llm = llm,
-                    sender_id = self.name
-                )
-            return True, response
-        return False, None
 
     def llm_instance(self, llm_name:Optional[Text] = None) -> LLM:
         if llm_name is None:

@@ -116,9 +116,18 @@ async def shell(args):
     await cmdline_channel.on_connect()
 
 async def task(args):
-    task = Task.load_from_path(path=args.config)
-    print("Task loaded.")
-    await task.run()
+    """Task功能暂未完成，将在下个版本中提供"""
+    print("🚧 Task功能正在开发中，将在下个版本提供！")
+    print("📋 当前可用功能:")
+    print("   • cota run    - 启动对话代理")
+    print("   • cota shell  - 启动交互式命令行")
+    print("   • cota init   - 初始化项目")
+    print("   • cota server - 启动API服务器")
+    
+    # TODO: 在下个版本中实现以下功能
+    # task = Task.load_from_path(path=args.config)
+    # print("Task loaded.")
+    # await task.run()
 
 def init(args):
     # Define the directory and files to be created

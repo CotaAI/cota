@@ -3,17 +3,14 @@ import sys
 import re
 import json
 import logging
-import concurrent.futures
-import asyncio
 from pathlib import Path
 
-from typing import Optional, Text, List, Dict
-from cota.store import Store, MemoryStore, SQLStore
+from typing import Optional, Text, Dict
+from cota.store import Store
 from cota.agent import Agent
 from cota.llm import LLM
 from cota.message.message import Message
 from cota.utils.io import read_yaml_from_path
-from cota.utils.parser import parser_text_with_slots
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +20,12 @@ class Task:
             description: Optional[Text] = None,
             prompt: Optional[Text] = None,
             agents: Optional[Dict] = None,
-            plans: Optional[List[Dict]] = None,
-            llm: Optional[Text] = None
+            llm: Optional[LLM] = None
     ) -> None:
         self.description = description
         self.prompt = prompt
         self.agents = agents
-        self.plans = plans
-        self.llm = llm
+        self.llm = llm  # 直接存储LLM实例
 
     @classmethod
     def load_from_path(cls, path:Text) -> 'Task':
@@ -42,11 +37,19 @@ class Task:
 
         description = task_config.get("description")
         prompt = task_config.get("prompt")
-        plans = task_config.get("plans")
+        llm_name = task_config.get("llm")
 
-        llm = LLM(endpoints_config.get('llm', {}))
-        # TODO: Move this logic to init
-        # plans = cls.generate_plans(task_config, llm)
+        llm = None
+        if llm_name:
+            llms_config = endpoints_config.get('llms', {})
+            llm_config = llms_config.get(llm_name)
+            if llm_config is None:
+                raise ValueError(f"LLM '{llm_name}' specified in task.yml not found in endpoints.yml")
+            logger.debug(f"Initializing task LLM: {llm_name}")
+            llm = LLM(llm_config)
+        else:
+            logger.warning("No LLM specified in task.yml")
+            
         store = Store.create(endpoints_config.get('base_store', {}))
         agents = cls.load_agents(path, store)
         logger.debug(f"Task Config: \n {task_config}")
@@ -55,7 +58,6 @@ class Task:
             description = description,
             prompt = prompt,
             agents = agents,
-            plans = plans,
             llm = llm
         )
 
@@ -69,21 +71,17 @@ class Task:
             agents[agent.name] = agent
         return agents
 
-    async def run(self):
-        from cota.utils.common import is_dag
-        if self.plans:
-            logger.debug(f"Use a DAG plans from Config")
-            if is_dag(self.plans) == False:
-                logging.error("Error: The generated plans are not a DAG. Exiting the program.")
-                sys.exit(1)
-            else:
-                await self.run_with_plan()
+    def get_llm(self) -> LLM:
+        if self.llm is None:
+            raise ValueError("No LLM configured for this task. Please specify 'llm' field in task.yml")
+        return self.llm
 
-        elif self.prompt:
-            logger.debug(f"Generating a DAG plans through LLM...")
+    async def run(self):
+        if self.prompt:
+            logger.debug(f"Generating tasks through LLM...")
             await self.run_with_llm()
         else:
-            logging.INFO("A plan can be generated through configuration or using an LLM.")
+            logger.error("No prompt provided for task generation.")
             sys.exit(1)
 
 
@@ -99,68 +97,14 @@ class Task:
         agent = self.agents.get(task.get('agent'))
         await agent.processor.handle_session('test_001')
 
-    async def run_with_plan(self, max_concurrent_tasks:int = 5):
-        # Initialize all tasks to 'pending'
-        for plan in self.plans:
-            plan['status'] = 'pending'
 
-        all_tasks = {task['name']: task for task in self.plans}
-        task_status ={task['name']: task['status'] for task in self.plans}
 
-        semaphore = asyncio.Semaphore(max_concurrent_tasks)
-        async def execute_task_with_semaphore(task):
-            async with semaphore:
-                await self.execute_task_with_plan(task)
-
-        while 'pending' in task_status.values():
-            ready_tasks = []
-            for task_name, status in task_status.items():
-                if status == 'pending':
-                    dependencies = all_tasks.get(task_name).get('dependencies', [])
-                    if all(task_status[dep] == 'completed' for dep in dependencies):
-                        ready_tasks.append(task_name)
-
-            if ready_tasks:
-                tasks = []
-                for task_name in ready_tasks:
-                    tasks.append(execute_task_with_semaphore(all_tasks[task_name]))
-                try:
-                    await asyncio.gather(*tasks)
-                except Exception as e:
-                    logger.error(f"Error executing tasks: {e}")
-                    raise
-                for task_name in ready_tasks:
-                    task_status[task_name] = 'completed'
-                    logger.debug(f"Task {task_name} completed")
-
-        print("all_tasks: ", all_tasks)
-
-    async def execute_task_with_plan(self, task):
-        logger.debug(f"Executing {task['name']}")
-        agent = self.agents.get(task.get('agent'))
-
-        query = '/start'
-        slots = {}
-        startquery = task.get('startquery')
-        if startquery:
-            slots, query = parser_text_with_slots(startquery)
-
-        await agent.processor.handle_message(
-            Message(
-                receiver="bot",
-                text= query,
-                metadata = {
-                    'slots': slots
-                }
-            )
-        )
-        logger.debug(f"Completed {task['name']}")
-
-    async def generate_plans(self) -> List[Dict]:
+    async def generate_plans(self) -> Dict:
         logger.debug(f"Generating a DAG plans through LLM...")
         prompt = self.format_prompt(self.prompt)
 
-        result = await self.llm.generate_chat(
+        llm = self.get_llm()
+        result = await llm.generate_chat(
             messages = [{"role": "system", "content": "You are a task planner, good at breaking down tasks into DAG execution flows"},{"role":"user", "content": prompt}],
             max_tokens = 1000,
             response_format = {'type': 'json_object'}
@@ -212,5 +156,3 @@ class Task:
         logger.debug(f"History Message {result}")
         return result
     
-    def current_plan(self) -> Text:
-        return json.dumps(self.plans)

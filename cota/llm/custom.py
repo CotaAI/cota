@@ -75,7 +75,6 @@ class CustomHttpClient(LLMClient):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.session.close()
-
     def __del__(self):
         if hasattr(self, 'session') and self.session and not self.session.closed:
             # Schedule session cleanup if event loop is available
@@ -86,3 +85,4 @@ class CustomHttpClient(LLMClient):
                     loop.create_task(self.session.close())
             except:
                 pass
+

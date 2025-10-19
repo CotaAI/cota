@@ -73,10 +73,12 @@ class Processor:
         max_proxy_step = self.agent.dialogue.get('max_proxy_step')                
         for i in range(max_proxy_step):
             action_config = self.agent.actions.get('UserUtter', {})
+            # Use default values when UserUtter is not configured in agent.yml
+            from cota.constant import DEFAULT_QUERY_DESCRIPTION, DEFAULT_QUERY_PROMPT
             action = Action.build_from_name(
                 name='UserUtter',
-                description=action_config.get("description", ''),
-                prompt=action_config.get("prompt", '')
+                description=action_config.get("description", DEFAULT_QUERY_DESCRIPTION),
+                prompt=action_config.get("prompt", DEFAULT_QUERY_PROMPT)
             )
             # await action.run(self.agent, self.dst, user=user)
             await action.run(self.agent, self.dst)
@@ -94,7 +96,6 @@ class Processor:
             await self._handle_bot_actions(message.session_id, channel)
         await self.save_tracker(self.dst)
 
-
     async def _handle_bot_actions(self, session_id: Text, channel: Optional[Channel] = None):
         while True:
             bot_actions = await self.agent.generate_actions(self.dst)
@@ -109,6 +110,7 @@ class Processor:
                     return
             if len(bot_actions) > 1 and isinstance(bot_actions[-1], Form) and isinstance(bot_actions[-2], BotUtter):
                 break
+
     async def get_tracker(
             self, session_id: Text
     ) -> Optional[DST]:
