@@ -34,7 +34,7 @@
 
 ### COTA可以做什么 ✅
 
-COTA采用**标注式策略学习 (Annotated Policy Learning)**，将领域知识以思维链的形式注入：
+COTA采用**标注式策略学习**，将领域知识以思维链的形式注入：
 
 ```
 1. 用户编写对话示例 → 标注思维过程 (thought)
@@ -42,7 +42,7 @@ COTA采用**标注式策略学习 (Annotated Policy Learning)**，将领域知�
 3. 新对话触发 → 检索相似思维 → 执行可靠决策
 ```
 
-**无需学习Agent分复杂概念，只需编辑对话！**，COTA自动学习业务策略，构建可靠的领域AI助理。
+**无需学习Agent复杂概念，只需编辑对话！**，COTA自动学习业务策略，构建可靠的领域AI助理。如果你会写对话，就会用COTA!
 
 
 ```yaml
@@ -97,12 +97,6 @@ policies:
 ---
 
 ## 🚀 快速开始
-
-### 30秒了解Cota的核心优势
-
-> 💡 **零学习成本**：如果你会写对话，就会用COTA  
-> 💡 **低成本融合**：通过思维链标注，将领域知识注入通用LLM  
-> 💡 **可靠执行**：基于DST框架，确保业务逻辑准确执行  
 
 ### 环境要求
 
@@ -209,76 +203,6 @@ cota shell --config=.
 # 启动WebSocket服务
 cota run --channel=websocket --host=localhost --port=5005
 ```
-
-### 📝 配置说明：极简配置
-
-COTA只需要3个配置即可工作：
-
-```yaml
-# agent.yml - 智能体配置
-system:
-  description: 你是专业的天气查询助手
-
-dialogue:
-  max_tokens: 500
-  use_proxy_user: false
-
-# 关键：定义决策策略
-policies:
-  - type: trigger        # 基于规则触发（如：转人工）
-  - type: match         # 基于思维链学习（标注式学习）
-```
-
-```yaml
-# policy/data.yml - 对话策略示例
-policies:
-  - title: "复杂查天气"
-    actions:
-      - name: UserUtter
-        result: "成都和重庆天气咋样"
-      - name: Selector
-        thought: "需要查询两个城市天气并比较"  # 👈 标注决策思维
-        result: Weather
-      - name: Weather
-        result: <成都天气结果>
-      - name: Selector
-        thought: "已查成都，继续查重庆"      # 👈 AI学习多步骤推理
-        result: Weather
-      - name: Weather
-        result: <重庆天气结果>
-      - name: BotUtter
-        thought: "比较结果并给出建议"
-        result: "成都晴20℃，建议去成都"
-```
-
-**就这么简单！** 无需理解Agent架构、状态机、图形编排。🚀
-
----
-
-## 💼 适用场景
-
-COTA特别适合以下场景：
-
-| 场景 | 传统方式痛点 | COTA解决方案 |
-|------|------------|-------------|
-| **行业知识问答** | 需要微调模型，成本高周期长 | 编写对话示例即可，低成本快速上线 |
-| **多轮复杂对话** | 需要设计状态机，开发复杂 | 编写带思维链的对话，自动学习策略 |
-| **智能客服/助手** | 需要大量训练数据，调整困难 | 标注几条对话思维，即可生成专业回复 |
-| **任务型对话** | 需要复杂的NLP pipeline | 通过Form定义任务，自动多轮采集 |
-
-### 实际案例
-
-**场景1：智能天气助手** - 见 `cota/bots/weather/`
-- 处理多城市查询、天气比较等复杂场景
-- 标注Selector思维（如"需要先查成都，再查重庆，然后比较"）
-- AI自动学会多步骤查询和比较推理流程
-
-**场景2：宠物问诊助手** - 见 `cota/bots/pet/`
-- 定义症状收集、建议给出等action
-- 标注思维过程（如"需要了解持续时间判断紧急程度"）
-- 构建专业的问诊流程
-
----
 
 ## 📚 完整文档
 
