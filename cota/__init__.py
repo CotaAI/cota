@@ -23,7 +23,7 @@ Basic usage:
     ```
 """
 
-__version__ = "1.0.9"  # same as pyproject.toml
+__version__ = "1.1.0"  # same as pyproject.toml
 
 # Core classes for library usage
 from cota.agent import Agent
