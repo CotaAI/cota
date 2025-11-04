@@ -211,7 +211,6 @@ class Agent:
             })
             return Form.build_from_name(**params)
 
-
         # Add any additional kwargs that might be specific to other action types
         params.update(kwargs)
         return Action.build_from_name(**params)
@@ -259,12 +258,10 @@ class Agent:
 
         action_infos = self._extract_action_info(selector)
         if action_infos:
-            # Only take the first action as we only support single action
             action_name, action_params = action_infos[0]
             if dst.current_form.name == action_name:
                 return [self.build_action(
                     action_name=dst.current_form.name,
-                    #slots=copy.deepcopy(dst.current_form.slots),
                     slots=action_params.get('slots', {}),
                     state="continue"
                 )]
@@ -277,8 +274,7 @@ class Agent:
                         state="break"
                     ),
                     self.build_action(
-                        action_name=action_name,
-                        # slots=action_params.get('slots', {}), # TODO: Allow all actions to have slots parameter, some are empty, or fill slots when it's a form
+                        action_name=action_name
                     )
                 ]
         else:

@@ -29,6 +29,20 @@ class Executor(ABC):
         """
         pass
     
+    def as_dict(self) -> Dict[Text, Any]:
+        """Convert executor information to dictionary
+        
+        Subclasses can override this method to provide executor-specific information.
+        
+        Returns:
+            Dict containing executor type and configuration information
+        """
+        executor_type = self.__class__.__name__.replace("Executor", "").lower()
+        return {
+            "type": executor_type,
+            "config": self.config.copy() if self.config else {}
+        }
+    
     @classmethod
     def create(cls, executor_type: Text, config: Dict[Text, Any]) -> "Executor":
         """Create executor instance
@@ -44,12 +58,14 @@ class Executor(ABC):
         from .script import ScriptExecutor
         from .python import PythonExecutor
         from .plugin import PluginExecutor
+        from .mcp import MCPExecutor
         
         executor_map = {
             "http": HttpExecutor,
             "script": ScriptExecutor,
             "python": PythonExecutor,
-            "plugin": PluginExecutor
+            "plugin": PluginExecutor,
+            "mcp": MCPExecutor
         }
         
         executor_class = executor_map.get(executor_type)

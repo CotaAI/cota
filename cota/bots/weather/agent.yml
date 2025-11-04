@@ -96,7 +96,7 @@ actions:
           {"text": "<你的回复内容>"}}
 
       time:
-        description: 时间
+        description: 时间，当用户没有显示指定时间时，默认值为“明天”
         prompt: |
           当前正在执行Action {{current_form_name}}, 其描述为 {{current_form_description}}。
           接下来需要询问用户，需要查询哪天的天气。
