@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class HttpConfig:
     """HTTP client configuration"""
     max_retries: int = 3
-    timeout: int = 10
+    timeout: int = 300  # 5 minutes
     base_url: str = ""
     default_headers: Dict[str, str] = None
     
