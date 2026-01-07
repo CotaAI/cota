@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cota"
-version = "1.1.0"
+version = "1.1.1"
 description = "Chain of Thought Agent Platform for Industrial-Grade Dialogue Systems"
 authors = ["MingGuangShao <690714362@qq.com>"]
 license = "MIT"
