@@ -1,61 +1,128 @@
-# Cota
+<div align="center">
 
-**Bot 开发与部署平台，让懂业务的开发者更容易做出自己的机器人，并交付给自己或他人使用。**
+<h1>Cota</h1>
 
-用 **Skill** 定义业务能力，用 **Policy** 教 Bot 如何处理业务，再通过聊天入口或 Bot 文件夹交付。Cota 提供执行、会话管理、调试和评测能力，让你可以围绕业务持续改进机器人。
+<p><strong>Bot 开发与部署平台</strong></p>
+<p>把业务经验做成机器人，验证它的表现，再交付给自己或别人使用。</p>
 
-Cota 的交付单位是 **Bot**，包含角色、Skill、Policy、工具权限、部署配置和验证案例。个人助手、客服、群聊助手是它支持的应用场景。
+<p>
+  <a href="#快速开始">开始第一个 Bot</a> ·
+  <a href="https://cotaai.github.io/cota/">项目主页</a> ·
+  <a href="docs/src/introduction.md">使用文档</a> ·
+  <a href="bots/weather/README.md">weather 示例</a>
+</p>
 
-[快速开始](#快速开始) · [示例 Bot](bots/weather/README.md) · [完整文档](docs/src/introduction.md) · [2.0 更新](docs/releases/2.0.0.md)
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="https://raw.githubusercontent.com/CotaAI/cota/main/docs/assets/readme/cota-workflow.png">
+  <img src="https://raw.githubusercontent.com/CotaAI/cota/main/docs/assets/readme/cota-workflow.gif" width="960" alt="Cota 工作方式：用 Skill 和 Policy 定义业务，Bot 在对话中选择能力并调用工具，保留执行记录并评测，最后通过聊天入口或 Bot 文件夹交付。开发者根据记录人工修改业务案例，再验证效果。">
+</picture>
 
-## Cota 适合你吗？
+<p><sub>原理示意动画，非实时运行或实际评测结果。<a href="https://raw.githubusercontent.com/CotaAI/cota/main/docs/assets/readme/cota-workflow.png">查看静态图</a></sub></p>
 
-如果你已经知道机器人要服务什么业务，希望通过配置、Skill 和对话案例把它做出来，并愿意维护它的运行环境，Cota 适合你。
+</div>
 
-| 你想做什么 | Cota 提供什么 |
-| --- | --- |
-| 做一个自己长期使用的个人助手 | 在自己的电脑或云主机部署，保留对话与个人记忆，按配置使用部署机器上的工具 |
-| 把业务知识和接口做成客服或业务助手 | 定义业务 Skill，用对话案例指导查询、异常处理和回复，接入已有网页或应用 |
-| 给团队或社群提供一个群聊 Bot | 接入飞书或 Web 群聊，被 @ 时回应，也可启用主动参与判断 |
-| 把做好的 Bot 分享给别人 | 维护一个服务并分享聊天入口，或交付 Bot 文件夹供对方独立部署 |
-| 持续改进 Bot 的业务表现 | 查看实际执行记录，修改业务案例，用同一份验证集评测并对比版本 |
+## 为什么需要 Cota？
 
-**使用门槛：**需要能够编辑 YAML/Markdown、配置模型服务，并启动 Python 应用。业务能力主要写在 Bot 文件中，执行与会话协调由框架提供。
+让模型回答一次问题之后，还需要把业务做法、执行过程和使用入口组织起来，机器人才能长期使用。
 
-**部署方式：**Cota 是需要自行部署的开源项目。创作者分享服务入口时负责服务维护；分享文件夹时由接收方负责部署。当前提供文件配置与命令行工作流，执行协调以单进程为边界。托管平台、可视化拖拽搭建和多实例执行不在当前交付范围内。
+- **把业务经验写下来。**什么时候先问一句，什么时候查数据，遇到异常怎么处理，用业务案例指导 Bot。
+- **让改进有依据。**看真实对话和工具记录，用同一份验证集对比修改前后的结果。
+- **把成果交付出去。**维护一个聊天服务，或把角色、能力、规则、配置和验证案例放进 Bot 文件夹交付。
 
-## Cota 2.0 的核心能力
+Cota 面向懂业务、愿意编辑 YAML / Markdown 并维护运行环境的开发者。个人助手、客服和群聊助手是它的使用场景；**完整的 Bot 是交付单位**。
 
-| 能力 | 对 Bot 开发者的价值 |
-| --- | --- |
-| **Skill 组合与工具执行** | 将业务能力拆成独立 Skill，由模型按任务选择和组合。复用官方 Pi 的执行循环、Skill 加载和原生工具，通过 `http_request` 调用业务接口 |
-| **对话式业务指导 Policy** | 像编写示范对话一样描述正确做法：何时使用哪个 Skill、遇到不同结果如何继续、最终怎么回答。运营人员可以参与业务标注 |
-| **Policy 训练与推理** | 简单 Bot 可直接加载案例；案例增多后，可使用 BM25、Embedding 或模型策略准备训练产物，在每次模型请求前选取适用的业务指导 |
-| **执行记录与 Debug** | 保存真实对话、工具调用和结果，追踪 Skill 的读取。调试页面集中查看事件、当前状态和模型请求，帮助定位错误发生在哪一环 |
-| **对话评测与版本对比** | 用自然语言写回复要求，`cota eval` 通过 LLM 逐项评判，输出报告和结构化执行证据；支持重评已有记录、比较多次评测结果 |
-| **会话与应用接入** | 输入先保存，再按会话排队执行；区分会话历史与个人记忆，处理去重和跨会话并发。Web 支持断线补取历史，飞书支持持久化回复重试 |
-| **单聊、群聊与配套页面** | 提供命令行、Web HTTP/WebSocket 和飞书入口；可选 Web 聊天应用包含会话列表、历史分页、未读和阅读位置 |
-| **自定义 Channel** | 将公司 IM 或业务平台适配器作为独立 Python 包安装，配置后由 Cota 统一管理接收、执行和回复投递。接入方式见 [自定义 Channel 指南](docs/src/development/channel-plugins.md) |
+## 快速开始
 
-这些能力围绕同一个交付单位工作：**Bot**。
+### 1. 安装并初始化
 
-## 一个 Bot 包含什么？
+需要 Python 3.12+。在准备好的 Python 环境中安装已发布版本：
+
+```bash
+python -m pip install -U cota
+cota init
+cd cota_projects/weather
+```
+
+`cota init` 创建官方示例目录，并保留已有的同名 Bot。使用飞书可安装 `cota[feishu]`。带内置运行时的平台 wheel 包含固定版本 Node/Pi；具体要求见 [安装说明](docs/src/installation/install.md)。
+
+<details>
+<summary>从源码开发或使用仓库最新代码</summary>
+
+另外准备 Node.js 22.19+ 和 npm；固定 Node 版本见 `.node-version`。
+
+```bash
+git clone https://github.com/CotaAI/cota.git
+cd cota
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+npm ci --prefix cota/runtime/pi
+cota init
+cd cota_projects/weather
+```
+
+</details>
+
+### 2. 配置模型
+
+编辑 Bot 的 `endpoints.yml`，填写支持工具调用的模型服务，并保留模板中的 SQLite 配置：
+
+```yaml
+llms:
+  default:
+    type: openai
+    key: "填写模型服务密钥"
+    apibase: "填写兼容 Chat Completions 的 API 地址"
+    model: "填写支持工具调用的模型名称"
+```
+
+### 3. 开始对话，看清它怎么做
+
+```bash
+cota shell --debug
+```
+
+试着连续问两轮：
+
+> 杭州，两大一小，今天想找室内亲子活动，门票总预算三百。
+>
+> 预算改成一百，其他条件不变。
+
+终端会输出本地 Debug 页面地址，可以查看 Events、Skill 与工具目录、模型请求、DST 和投递状态。
+
+输入 `/stop` 退出 Shell，再在 Bot 目录评测：
+
+```bash
+cota eval
+```
+
+weather 自带 **30 个对话评测案例**，覆盖多轮条件变更、预算约束、业务回复和异常处理。天气查询使用外部接口，活动查询使用随示例提供的活动目录，便于复现验证。详见 [weather 示例](bots/weather/README.md)。
+
+需要浏览器聊天入口时，在 Bot 目录启动：
+
+```bash
+cota run --chat-app --host 127.0.0.1 --port 5005
+```
+
+打开 `http://127.0.0.1:5005/chat/`。对外提供服务前，按 [部署指南](docs/src/deployment/guide.md) 配置访问入口与授权。
+
+## Cota 如何把一个 Bot 做完整？
+
+### 定义：能力与正确做法一起维护
 
 ```text
 my-bot/
-├── agent.yml                 # 角色、行为、部署模式、工具权限与 Policy 策略
-├── endpoints.yml             # 模型服务、渠道和存储配置
-├── skills/                   # 业务能力说明、SOP 与所需资源
+├── agent.yml                 # 角色、行为、工具权限与 Policy 策略
+├── endpoints.yml             # 模型、存储与 Channel 配置
+├── skills/                   # 业务能力说明、SOP 与资源
 └── policy/
-    ├── data.yml              # 业务指导案例：教 Bot 怎样处理问题
-    └── eval/data.yml         # 验证案例：检查 Bot 是否做到了
+    ├── data.yml              # 业务案例：教 Bot 怎样做
+    └── eval/data.yml         # 验证案例：检查它是否做到
 ```
 
-这个目录可以跟随业务一起迭代，也可以作为交付物分享。接收方安装 Cota、配置自己的模型凭据和业务依赖，就能启动 Bot。分享服务时，使用者通过聊天入口访问，由服务维护者管理配置与更新。具体责任与准备工作见 [部署与分享](docs/src/deployment/sharing.md)。
+**Skill 描述“能做什么”，Policy 指导“这时候怎样做”。**模型结合当前对话和真实执行结果选择、组合能力。
 
-### 用业务案例指导决策
-
-例如，天气服务不可用时，希望 Bot 说明情况，而不是编造天气。在 `policy/data.yml` 中写一段示范：
+例如，天气服务没有返回有效数据时，期望 Bot 说明情况。在 `policy/data.yml` 写下：
 
 ```yaml
 policies:
@@ -68,13 +135,13 @@ policies:
           - reply: 暂时没查到北京的气温，稍后再试一下吧。
 ```
 
-这段案例描述了使用什么能力、遇到什么结果，以及怎样回复。Cota 结合当前对话与执行进展提供适用的 Policy 指导，影响后续 Skill 选择、结果处理与回复。运行时仍以本次真实数据为准。
+`result` 描述案例适用的结果条件；运行时仍以本次实际数据为准。你可以直接编写案例，也可以用 `cota annotate export` 导出真实对话草稿，人工修改后通过 `cota annotate import` 校验。
 
-你可以直接编写案例，也可以用 `cota annotate export` 导出真实对话草稿，人工修改后通过 `annotate import` 校验。标注方式见 [Skill、Trace 与 Policy](docs/src/concepts/skill-policy.md)。
+案例较多时，可选择 BM25、Embedding 或模型策略，并按需用 `cota train` 准备索引等产物。运行时结合当前对话与执行事实，在每次模型请求前选取适用指导。使用方法见 [业务标注](docs/src/concepts/skill-policy.md) 与 [Policy 训练和推理](docs/src/concepts/trainable-policy.md)。
 
-### 用验证案例检查改进效果
+### 验证：按业务要求逐项检查
 
-在 `policy/eval/data.yml` 中，用相近的对话格式写下用户问题和回复要求：
+在 `policy/eval/data.yml` 用相近的对话格式写要求：
 
 ```yaml
 policies:
@@ -87,113 +154,87 @@ policies:
             - 不擅自选择城市，也不编造天气数据。
 ```
 
-在 Bot 目录执行 `cota eval`，即可查看进度、逐项评分与执行证据。评测优先使用 `llms.evaluator`，未配置时使用默认模型；评测要求不会提供给被测 Bot。
+`cota eval` 运行 Bot，再用 LLM 按回复要求逐项评判，输出进度、评分、报告和结构化执行证据。验证要求不会提供给被测 Bot；评委优先使用 `llms.evaluator`，未配置时使用默认模型。
 
-业务改进可以按以下流程进行：
+改进流程是：
 
 ```text
-查看真实执行记录 → 修改 Skill / Policy → 按需训练 → 运行评测 → 比较结果 → 部署新版本
+查看真实记录 → 人工修改 Skill / Policy → 按需训练 → 用同一验证集评测 → 比较版本
 ```
 
-`cota train` 为训练型 Policy 准备索引等产物；`cota eval judge` 可重新评判已有执行记录，`cota eval compare` 可比较多次评测。用法见 [Policy 训练](docs/src/concepts/trainable-policy.md) 与 [评测指南](docs/src/development/evaluation.md)。
+`cota eval judge` 可以重评已有执行记录，`cota eval compare` 可以比较多次评测。LLM 评委可能误判，关键业务结果仍需复核。完整用法见 [对话评测](docs/src/development/evaluation.md) 和 [Debug](docs/src/deployment/debug.md)。
 
-## 快速开始
+### 交付：聊天入口，或 Bot 文件夹
 
-### 1. 安装
+| 交付方式 | 使用者得到什么 | 谁维护运行环境 |
+| --- | --- | --- |
+| 分享已有服务 | 网页、IM 或已有应用中的聊天入口 | 服务维护者 |
+| 分享 Bot 文件夹 | 配置、Skill、Policy、验证案例及所需资源 | 接收方安装 Cota、准备凭据与业务依赖，独立部署 |
 
-需要 Python 3.12+。从 PyPI 安装已发布版本：
+业务规则和验证案例可以随 Bot 一起交付、持续更新。具体准备工作见 [交付与分享](docs/src/deployment/sharing.md)。
 
-```bash
-python -m pip install -U cota
-```
+## 选择你的使用方式
 
-使用飞书时安装 `cota[feishu]`。带内置运行时的平台 wheel 包含固定版本 Node/Pi，无需额外安装 Node.js 或 npm。平台要求见 [安装说明](docs/src/installation/install.md)。
+| 你要做什么 | Cota 的支持 | 从这里开始 |
+| --- | --- | --- |
+| 自己长期使用的助手 | 本机或自用云主机运行，保留对话与个人记忆，按配置使用部署环境工具 | [Agent 与部署模式](docs/src/configuration/agent.md) |
+| 客服或业务助手 | 对接业务接口，按会话保存历史、去重和排队，跨会话有限并发 | [Application 接入](docs/src/deployment/application.md) |
+| 团队或社群助手 | 被 @ 时回应，也可启用主动参与判断，使用带说话者身份的群聊上下文 | [群聊模式](docs/src/deployment/group.md) |
+| 自有网页或小程序 | HTTP/WebSocket 接入，可选聊天页面提供会话列表、历史分页和未读状态 | [Web 接入](docs/src/deployment/api.md) · [配套聊天应用](docs/src/deployment/chat-app.md) |
+| 飞书或公司内部 IM | 内置飞书；其它平台以独立 Channel 包安装、配置，复用生命周期与投递机制 | [飞书](docs/src/deployment/feishu.md) · [自定义 Channel](docs/src/development/channel-plugins.md) |
+
+身份认证、会话归属和成员授权由外围应用或平台适配器完成。Cota 负责已验证输入的执行协调、记录和回复投递。
+
+## 常见问题
 
 <details>
-<summary>从源码开发或体验仓库中的最新代码</summary>
+<summary><strong>Cota 提供托管平台或可视化搭建吗？</strong></summary>
 
-另外准备 Node.js 22.19+ 和 npm；固定 Node 版本见 `.node-version`。
-
-```bash
-git clone https://github.com/CotaAI/cota.git
-cd cota
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e '.[dev]'
-npm ci --prefix cota/runtime/pi
-```
+当前提供文件配置、命令行和自行部署的工作流。创作者分享聊天入口时维护服务，分享文件夹时由接收方独立部署。托管云平台与可视化拖拽搭建不在当前交付范围内。
 
 </details>
 
-### 2. 创建示例并配置模型
+<details>
+<summary><strong>自用助手和多人服务的工具权限怎么区分？</strong></summary>
 
-```bash
-cota init
-cd cota_projects/weather
-```
+`deploy: personal` 用于自己的电脑或自用云主机；`deploy: service` 用于对外提供服务，默认不开放部署机器的原生文件与 Shell。工作目录不构成安全沙箱。权限与执行环境见 [工具接入](docs/src/concepts/tool-adapters.md)。
 
-`cota init` 创建示例目录，保留已有的同名 Bot。编辑 `endpoints.yml` 中的模型配置，保留模板中的 SQLite 存储配置：
+</details>
 
-```yaml
-llms:
-  default:
-    type: openai
-    key: "填写模型服务密钥"
-    apibase: "填写兼容 Chat Completions 的 API 地址"
-    model: "填写支持工具调用的模型名称"
-```
+<details>
+<summary><strong>Cota 和 Pi 分别负责什么？</strong></summary>
 
-### 3. 对话、调试和评测
+官方 TypeScript Pi Agent Core 驱动模型—工具循环。Cota 负责 Bot 定义、Policy 指导、应用接入、持久化、交付与验证。DST 根据事件恢复状态，Store 保存事件与快照，Trace 用于回溯执行证据。详见 [模块地图](docs/src/concepts/modules.md) 与 [执行流程](docs/src/concepts/execution-flow.md)。
 
-在 Bot 目录执行：
+</details>
 
-```bash
-cota shell --debug       # 终端对话，终端会输出 Debug 页面地址
-cota eval                # 运行 Bot 自带的验证集
-```
+<details>
+<summary><strong>可以自动优化 Bot 吗？</strong></summary>
 
-也可以启动浏览器聊天页面：
+当前支持记录、业务标注、Policy 训练、对话评测与版本比较，由开发者据此更新 Bot。自动生成优化版本并验证、应用的 RSI 流程仍是后续方向。
 
-```bash
-cota run --chat-app --host 127.0.0.1 --port 5005
-```
+</details>
 
-打开 `http://127.0.0.1:5005/chat/` 即可使用。本地验证后，可按 [部署指南](docs/src/deployment/guide.md) 配置对外服务入口。
+<details>
+<summary><strong>可以开多个进程共同执行同一个 Bot 吗？</strong></summary>
 
-### weather 示例能验证什么？
+当前执行协调以单进程为边界。同一 Bot 的数据库使用一个执行进程；SQL revision 不能替代跨进程执行租约，也不能撤销已发生的外部副作用。部署方式见 [部署指南](docs/src/deployment/guide.md)。
 
-它组合了天气查询、活动查询和出行规划三个 Skill。你可以问：
+</details>
 
-> 杭州，两大一小，今天想找室内亲子活动，门票总预算三百。
->
-> 预算改成一百，其他条件不变。
+## 文档与开发
 
-示例附带 **30 个对话评测案例**，覆盖能力选择、多轮条件变更、预算约束和异常处理。天气查询使用外部接口，活动查询使用随示例提供的活动目录，便于复现验证。详情见 [weather 示例](bots/weather/README.md)。
+- [使用手册](docs/src/introduction.md)：按目标选择阅读路线。
+- [配置参考](docs/src/configuration/overview.md)：Agent、模型、存储与 Policy。
+- [Skill](docs/src/skills/overview.md) · [工具](docs/src/concepts/tool-adapters.md) · [自定义 Channel](docs/src/development/channel-plugins.md)：扩展业务能力和平台入口。
+- [测试指南](tests/README.md) · [能力边界与规划](docs/src/concepts/roadmap.md) · [2.0 更新](docs/releases/2.0.0.md)。
 
-## 运行与交付的边界
-
-- **自用与服务分开配置。**`deploy: personal` 用于自己的电脑或云主机；`deploy: service` 用于对外提供服务，默认不开放部署机器的原生文件与 Shell。机器工具的工作目录不构成安全沙箱。
-- **身份与业务授权属于外围应用。**Cota 接收已验证的用户和会话标识，负责执行与记录；已有登录系统和群成员体系通过接入契约对接。
-- **Policy 提供指导，评测提供证据。**Policy 不保证模型严格遵循每个步骤；LLM 评委也可能误判，关键业务结果需要复核。
-- **自动 RSI 是后续方向。**当前已具备记录、标注、训练与评测基础；自动生成优化版本、自动验证并应用尚未实现。完整自包含 Bot 安装包、分布式执行也在后续范围内。
-
-详细配置与限制见 [Agent 配置](docs/src/configuration/agent.md)、[应用接入](docs/src/deployment/application.md) 和 [能力边界与规划](docs/src/concepts/roadmap.md)。
-
-## 技术分工与开发
-
-**Pi 负责 Agent 的模型—工具执行循环；Cota 负责 Bot 的业务指导、状态持久化、应用接入、交付与验证。**
-
-Cota 使用官方 TypeScript Pi Agent Core。会话状态由 DST 根据事件恢复，Store 保存事件与快照，Trace 呈现执行证据。个人 Bot 和多人服务使用同一套状态语义，按部署需求选择持久化后端。
-
-- [定位与架构](docs/src/concepts/raas_architecture.md) · [模块地图](docs/src/concepts/modules.md) · [执行流程](docs/src/concepts/execution-flow.md)
-- [配置参考](docs/src/configuration/overview.md) · [Debug](docs/src/deployment/debug.md) · [Web 接入](docs/src/deployment/api.md)
-- [自定义 Channel 接入与开发](docs/src/development/channel-plugins.md)
-- [测试指南](tests/README.md) · [发布流程](docs/releases/README.md)
-
-在源码开发环境中运行完整检查：
+从源码开发时运行：
 
 ```bash
 python scripts/check.py --coverage
 ```
 
 检查语法、静态规则、Python/JavaScript 回归与覆盖率。框架测试使用可控模型响应；业务效果使用自己的验证集和模型服务评测。
+
+[MIT License](LICENSE)
