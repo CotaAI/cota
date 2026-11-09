@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cota · Debug</title><link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">C</span><strong>Cota</strong><span class="badge">DEBUG</span></div>
+  <span id="bot-name">连接中</span><span class="readonly">只读查看</span>
+  <div class="connection"><span id="connection-dot" class="dot"></span><span id="connection">正在连接</span></div>
+  <button id="pause">暂停刷新</button>
+</header>
+<div id="error" role="alert" hidden></div>
+<div class="workspace">
+  <aside class="sidebar">
+    <div class="section-label">当前 Shell 会话</div>
+    <div id="session" class="session">—</div>
+    <nav class="tabs" aria-label="Debug views" role="tablist" aria-orientation="vertical">
+      <button id="tab-events" role="tab" aria-selected="true" aria-controls="events-panel" class="tab selected">Events</button>
+      <button id="tab-skills" role="tab" aria-selected="false" aria-controls="detail-panel" class="tab">Skills &amp; Tools</button>
+      <button id="tab-requests" role="tab" aria-selected="false" aria-controls="detail-panel" class="tab">Model Requests</button>
+      <button id="tab-dst" role="tab" aria-selected="false" aria-controls="detail-panel" class="tab">DST</button>
+    </nav>
+    <div class="store-info"><span id="store">—</span><span id="cursor">已读取至 #0</span><small id="log-path"></small></div>
+  </aside>
+  <main id="events-panel" class="main" role="tabpanel" aria-labelledby="tab-events">
+    <div class="toolbar"><h2>Events</h2></div>
+    <div class="filter-bar"><input id="search" type="search" placeholder="筛选事件类型、工具、Skill 或消息摘要" aria-label="筛选事件"><span id="count"></span></div>
+    <div id="run-info" class="run-info">在 Shell 中发送消息，这里会同步显示执行过程。</div>
+    <div id="events" class="events"></div>
+    <button id="more" hidden>显示更早事件</button>
+  </main>
+  <section id="detail-panel" class="detail" aria-label="记录详情">
+    <div class="detail-heading"><h2 id="detail-title">记录详情</h2><div class="detail-actions"><button id="expand-detail" aria-expanded="false">放大详情</button><button id="copy" hidden>复制 JSON</button></div></div>
+    <div id="detail-body" class="detail-body"><div class="empty"><span class="empty-icon">⌘</span><h3>从一次调用开始排查</h3><p>选择事件查看执行事实；模型请求记录中可查看完整 prompt 和 Policy 引导。</p><p>页面只读取数据，不会调用模型或执行工具。</p></div></div>
+  </section>
+</div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

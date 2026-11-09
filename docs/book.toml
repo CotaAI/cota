@@ -1,7 +1,7 @@
 [book]
-title = "COTA Documentation"
+title = "Cota · Bot 开发与部署平台"
 authors = ["CotaAI Team"]
-description = "COTA - chain of thought agent 对话平台文档"
+description = "Cota 使用与开发手册：Bot 定义、Skill、Policy、Pi 执行、持久化与应用交付"
 src = "src"
 language = "zh"
 
@@ -16,7 +16,7 @@ additional-js = ["theme/custom.js"]
 no-section-label = false
 git-repository-url = "https://github.com/CotaAI/cota"
 git-repository-icon = "fa-github"
-edit-url-template = "https://github.com/CotaAI/cota/edit/main/docs/{path}"
+edit-url-template = "https://github.com/CotaAI/cota/edit/main/docs/src/{path}"
 site-url = "https://cotaai.github.io/cota/"
 cname = "cotaai.github.io"
 
@@ -42,7 +42,6 @@ level = 0
 
 [preprocessor.index]
 
-[preprocessor.katex]
 
 # Mermaid支持 - 通过JavaScript实现
 [output.html.playground]

@@ -1,462 +1,98 @@
-# 标注数据配置详解
+# Policy 配置
 
-标注数据是COTA智能体的"学习材料"，通过提供带思维链的对话示例和触发规则，训练智能体学习对话策略、决策模式和自动响应机制。这些数据直接影响智能体的表现质量和交互能力。
+Bot 自动加载 `policy/` 目录下的 `.yml` / `.yaml` 文件。文件直接使用运营编写的格式：
 
-## 🎯 标注数据的作用与价值
-
-**核心价值**：
-- **策略学习**：通过完整对话流程示例，让智能体学习复杂的对话处理策略
-- **思维训练**：通过思维链标注，训练智能体的推理和决策能力
-- **快速响应**：通过触发规则，实现对特定输入的即时准确响应
-- **质量保证**：通过精心设计的标注数据，确保智能体输出的一致性和准确性
-
-**对COTA运行的影响**：
-- **DPL策略生成**：`DPL`系统根据标注数据生成思维链和动作预测
-- **触发匹配**：`TriggerDPL`基于触发规则进行快速模式匹配
-- **响应质量**：标注数据的质量直接决定智能体的回答质量
-- **行为一致性**：规范化的标注确保智能体行为的可预测性
-
-## 📁 配置文件位置
-
-标注数据配置位于机器人项目的`policy/`目录下：
-
-```
-your_bot/                    # 机器人项目根目录
-├── agent.yml              # 智能体配置
-├── endpoints.yml           # 服务连接配置
-└── policy/                 # 标注数据目录 ⭐
-    ├── data.yml           # 对话策略数据（Policy配置）
-    ├── rules.yml          # 触发规则数据（Trigger配置）  
-    └── *.md               # RAG知识库文件（可选）
-```
-
-**加载机制**：
-- `Agent.load_from_path()`方法会自动扫描`policy/`目录
-- `DPLFactory.create()`负责加载和解析标注数据
-- `MatchDPL`和`TriggerDPL`分别处理策略数据和触发规则
-
-## 📋 配置项概览
-
-| 配置文件 | 对应组件 | 主要作用 | 数据格式 |
-|----------|----------|----------|----------|
-| `policy/data.yml` | `MatchDPL` | 对话策略学习，生成思维链 | 完整对话流程+思考过程 |
-| `policy/rules.yml` | `TriggerDPL` | 快速触发响应，精确匹配 | 关键词匹配+预定义动作 |
-
-## 🧠 Policy配置 - 对话策略学习数据
-
-**作用**：提供完整的对话流程示例，训练智能体的推理能力和对话策略。
-
-### 配置结构
-
-```yaml
-# policy/data.yml
-policies:                    # 策略数据列表
-  - title: "策略标题"        # 策略名称，用于识别
-    actions:                 # 完整动作序列
-      - name: UserUtter      # 用户输入动作
-        result: "用户说的话"  # 用户输入内容
-      - name: Selector       # 动作选择器  
-        thought: "选择理由"   # 思维链：为什么选择这个动作
-        result: BotUtter     # 选择的动作名
-      - name: BotUtter       # 机器人回复动作
-        thought: "回复思考"   # 思维链：如何生成回复
-        result: "回复内容"    # 实际回复内容
-```
-
-### Policy数据类型
-
-#### 1. 基础问答策略
 ```yaml
 policies:
-  - title: "简单问答"
-    actions:
-      - name: UserUtter
-        result: "你是谁？"
-        
-      - name: Selector
-        thought: "用户询问身份，我应该简洁地介绍自己的角色和能力"
-        result: BotUtter
-        
-      - name: BotUtter
-        thought: "需要友好地介绍自己，让用户了解我能提供什么帮助"
-        result: "我是智能助手，可以帮助您解答问题、查询信息和处理各种任务。"
+  - name: 查询天气时确认城市
+    steps:
+      - user: 帮我查一下天气
+      - bot:
+          - thought: 用户需要天气服务，选择 weather。
+          - skills: [weather]
+          - thought: 缺少城市时先追问，话术保持简短。
+          - reply: 你想查询哪个城市的天气？
+      - user: 北京
+      - bot:
+          - thought: 城市已明确，继续查询，不重复询问。
+          - skills: [weather]
+          - result: 查询成功，返回北京气温 22°C，来源 wttr.in，观测时间 09:00 AM。
+          - thought: 按真实返回的数据说明温度、来源和观测时间，不能照抄案例数值。
+          - reply: 北京当前气温 22°C；来源 wttr.in，观测时间 09:00 AM。
 ```
 
-#### 2. 多轮对话策略
-```yaml
-policies:
-  - title: "天气查询多轮对话"
-    actions:
-      - name: UserUtter
-        result: "今天天气怎么样？"
-        
-      - name: Selector
-        thought: "用户询问天气，但没有指定城市，需要先获取位置信息"
-        result: Weather
-        
-      - name: Weather  # Form动作第一次执行，询问缺失信息
-        result: "请问您想查询哪个城市的天气？"
-        
-      - name: UserUtter
-        result: "北京"
-        
-      - name: Weather  # Form动作第二次执行，返回查询结果
-        result: "北京今天多云，气温18-25°C"
-        
-      - name: Selector
-        thought: "已获取天气信息，需要以用户友好的方式告知结果"
-        result: BotUtter
-        
-      - name: BotUtter
-        thought: "整合天气信息，提供完整有用的回复"
-        result: "北京今天多云，气温18-25°C，天气不错，适合出行！记得适当增减衣物。"
-```
+## 契约
 
-#### 3. 复杂业务策略
-```yaml
-policies:
-  - title: "订单查询处理"
-    actions:
-      - name: UserUtter
-        result: "我的订单什么时候到？"
-        
-      - name: Selector
-        thought: "用户询问订单状态，但没提供订单号，需要先获取订单信息"
-        result: OrderQuery
-        
-      - name: OrderQuery
-        result: "请提供您的订单号，我来帮您查询配送状态"
-        
-      - name: UserUtter
-        result: "订单号：202310151234"
-        
-      - name: OrderQuery  # 执行订单查询
-        result: "订单202310151234正在配送中，预计明天下午送达"
-        
-      - name: Selector
-        thought: "已获取订单信息，需要详细告知用户配送情况"
-        result: BotUtter
-        
-      - name: BotUtter
-        thought: "提供完整的订单状态信息，包括配送进度和预计时间"
-        result: "您的订单202310151234正在配送中，预计明天下午送达。配送员会提前联系您，请保持手机畅通。"
-```
+- 文件只有 `policies` 顶层键，值为列表。空列表表示没有案例。
+- 每条 Policy 只有 `name` 和 `steps`；名称为非空文本，在全部加载文件中唯一。
+- 每个外层步骤只有 `user` 或 `bot`。`user` 是非空文本；`bot` 是非空有序列表。
+- 每个 Bot 列表项只有 `thought`、`skills`、`result` 或 `reply` 中的一个字段。
+- `thought`、`result`、`reply` 是非空文本；`skills` 是非空且无重复的 Skill 名称列表。`result` 不接受对象、列表、数值或布尔值作为字段值。
+- 同一个 Bot 可以有多个 thought、skills、result 和 reply 列表项。同一 Skill 可以在不同列表项中再次出现。
+- 至少包含一个 Bot 步骤；只写 thought、只写 reply、Bot 主动开场、连续 Bot 步骤均可。
+- 不再接受旧的 `schema_version/cases/stage/when/guidance` 或消息范围标注格式。
 
-### Policy配置要点
+多个 thought 必须是独立列表项；不能在同一个映射内重复键。解析器会拒绝重复 YAML 键，避免内容被覆盖。未知字段、名称重复和格式错误均明确报错。
 
-**思维链设计原则**：
-- **具体化**：描述具体的推理过程，而非简单的结论
-- **逻辑性**：体现清晰的因果关系和决策依据  
-- **一致性**：保持思维模式的统一性
-- **实用性**：贴近真实的对话处理场景
+`skills` 使用 Pi 目录中的 Skill 名称。Pi 发现能力后，Cota 在首次模型请求前检查全部引用；未知名称会使该次运行失败。离线文件校验只检查格式，不重新实现 Pi 的 Skill 发现。
 
-**动作序列设计**：
-- **完整性**：从用户输入到最终回复的完整流程
-- **真实性**：模拟真实的人机对话场景
-- **多样性**：覆盖不同的对话模式和处理方式
+## thought 的运行语义
 
-## ⚡ Trigger配置 - 触发规则数据
+Cota 按原顺序渲染整个示例。每段 thought 关联同一 Bot 内后面的第一个 skills 或 reply 项，作为主要指导对象；跳过 result，因为观察结果不是 Bot 行为。没有后续行为时标为 continuation。多个连续 thought 可以指导同一个行为。它们依然是整段业务上下文的一部分，位置不构成强制执行门禁。
 
-**作用**：定义关键词触发规则，实现对特定输入的快速精确响应。
+每次 Pi 准备模型请求时，Cota 提供独立的业务指导文本，包含示例用户表达、Bot 内的判断与行为顺序，以及明确的示例边界。模型结合真实对话及工具结果判断案例是否适用、当前走到哪里。不会把 thought 伪装成模型自己的 reasoning，也不会将示例用户消息、回复加入真实历史。
 
-### 配置结构
+## result 的运行语义
+
+`result` 是可选的自然语言观察，用来描述这个案例假设遇到的结果。通常写在 skills 后、后续 thought 或行为前；它不定义 Skill 的返回类型，也不要求为每个 Skill 穷举结果。只覆盖会改变后续处理的关键分支，例如查询成功、未找到、服务异常、数据不完整。
+
+不同分支分别写成命名 Policy。需要分别表达多个 Skill 的结果时，拆成 `skills → result → thought → skills → result`，不要依赖隐式的工具调用归属。格式不强制每次 skills 都有 result，也不把顺序解释为自动执行程序。
+
+渲染时使用 `Result（示例结果条件）` 标签。模型须根据真实执行证据判断分支是否适用；读取 Skill 不代表已执行，查询失败不等于没有数据。没有实际结果或结果无法确认时，应补充查询、澄清或说明无法确认，不能用案例结果补齐事实，也不能把不同案例的结果拼成一次执行。
+
+result 保留在 Policy 和标注数据中，不生成工具消息、ToolResultEvent 或 Skill 完成事件。当前不会自动提取结果、选择结果分支或增加结果枚举；工具原始输出仍独立保存在 Trace 中。没有 result 的原有案例继续有效。
+
+没有基于案例的确定性状态机或自动分支执行。可配置 BM25、Embedding 或模型等 Policy 方法选择指导，工具继续负责权限与硬约束。Skill 读取证明获得说明，不证明业务执行完成。
+
+## 策略与训练
+
+`policy/` 保存运营案例；`agent.yml` 的 `policy.type` 配置运行方法。支持 all（默认）、bm25、embedding、model、retrieval_model、search_model、rule，以及自定义 Policy 类。
 
 ```yaml
-# policy/rules.yml
-triggers:                    # 触发规则列表
-  - title: "规则标题"        # 触发规则名称
-    actions:                 # 触发的动作序列
-      - name: UserUtter      # 用户输入匹配
-        result:              # 匹配的关键词列表
-          - "关键词1"
-          - "关键词2"
-      - name: ActionName     # 触发执行的动作
-        result: "预期结果"   # 预期的执行结果
+policy:
+  type: bm25
+  artifact: models/policy.json
+  max_policies: 4
+  max_chars: 8000
+  options:
+    top_k: 12
 ```
 
-### Trigger规则类型
+```bash
+cota train --config bots/weather
+cota train --config bots/weather --check
+```
 
-#### 1. 服务转接类
+除 all 外，先 train 再加载 Bot。案例或策略 options 更新后需要重训；产物不匹配时明确失败，不静默使用旧索引。完整生命周期、模型/向量资源和自定义类见 [可训练的 Policy](../concepts/trainable-policy.md)。
+
+## 预算和 Trace
+
+`agent.yml`：
+
 ```yaml
-triggers:
-  - title: "转人工客服"
-    actions:
-      - name: UserUtter
-        result:
-          - "转人工"
-          - "人工客服"
-          - "真人服务"
-          - "客服专员"
-          - "manual service"
-          - "human agent"
-      - name: TransferToHuman
-        result: "正在为您转接人工客服，请稍候..."
-
-  - title: "技术支持转接"
-    actions:
-      - name: UserUtter
-        result:
-          - "技术支持"
-          - "技术问题"
-          - "bug反馈"
-          - "系统故障"
-          - "technical support"
-      - name: TransferToTech
-        result: "正在为您转接技术支持专家..."
+policy:
+  max_policies: 8
+  max_chars: 12000
 ```
 
-#### 2. 业务操作类
-```yaml
-triggers:
-  - title: "退款申请"
-    actions:
-      - name: UserUtter
-        result:
-          - "退款"
-          - "退钱"
-          - "申请退款"
-          - "我要退款"
-          - "refund"
-      - name: RefundProcess
-        result: "已为您启动退款流程，请稍后填写退款信息"
+预算为正整数。只考虑其引用 Skill 全部可用的案例（不引用 Skill 的话术/原则案例同样支持）。默认 all 优先考虑涉及当前模型上下文中成功读取 Skill 的案例，其他案例随后；同组保留文件名及文件内顺序。其他策略使用当前对话和工具观察进行选择；结果不表示业务已完成。
 
-  - title: "订单查询"
-    actions:
-      - name: UserUtter
-        result:
-          - "查订单"
-          - "订单状态"
-          - "我的订单"
-          - "订单查询"
-          - "order status"
-      - name: OrderQuery
-        result: "请提供您的订单号，我来帮您查询"
-```
+每次只加入完整案例。字符预算包括统一指导说明、标题与分隔符。单条案例就超限时加载报错；组合超限时记录省略原因并继续考虑后续案例。上下文压缩后重新计算读取关联与排序，active_skill 和历史读取不能替代当前保留的成功结果。
 
-#### 3. 紧急处理类
-```yaml
-triggers:
-  - title: "紧急情况处理"
-    actions:
-      - name: UserUtter
-        result:
-          - "紧急"
-          - "urgent"
-          - "emergency"
-          - "很急"
-          - "马上处理"
-      - name: UrgentHandler
-        result: "已标记为紧急事件，将优先为您处理"
+`bot_utter.payload.llm.policy` / `tool_started.payload.llm.policy` 保存本次实际注入案例的名称/内容哈希、策略类和版本、配置与训练状态哈希、有效 read_skills，以及选择状态、步骤、证据 ID。它是实际选择的记录，不表示案例的示例结果真实发生。
 
-  - title: "投诉升级"
-    actions:
-      - name: UserUtter
-        result:
-          - "投诉"
-          - "complaint"
-          - "不满意"
-          - "差评"
-          - "要投诉"
-      - name: ComplaintEscalation
-        result: "您的意见很重要，已升级至客服主管处理"
-```
+Debug 模式下，独立模型诊断的 preparation 保存完整选择理由、thought、预算省略项、缓存命中与耗时；最终 request 保存实际 system prompt 和工具声明。完整案例不重复写入每个核心事件。
 
-### Trigger配置要点
+Trace 中的位置从 0 开始，仅供开发和审核；运营不用填写索引。
 
-**关键词选择原则**：
-- **准确性**：确保关键词能准确表达用户意图
-- **覆盖性**：包含同义词、近义词和常见表达
-- **排他性**：避免与其他规则产生冲突
-- **多语言**：根据需要支持多语言关键词
-
-**匹配策略**：
-- **精确匹配**：用户输入完全等于关键词
-- **包含匹配**：用户输入包含关键词
-- **优先级控制**：通过规则顺序控制匹配优先级
-
-## 🔄 Policy与Trigger协同工作
-
-### 工作机制
-1. **Trigger优先**：系统首先检查是否有触发规则匹配
-2. **Policy补充**：未匹配触发规则时，使用Policy数据进行策略推理
-3. **思维融合**：Policy的思维链为所有动作提供推理参考
-
-### 数据协同设计
-```yaml
-# policy/rules.yml - 快速响应
-triggers:
-  - title: "快速退款"
-    actions:
-      - name: UserUtter
-        result: ["我要退款"]
-      - name: RefundProcess
-        result: "启动退款"
-
-# policy/data.yml - 详细处理流程  
-policies:
-  - title: "退款详细流程"
-    actions:
-      - name: UserUtter
-        result: "退款遇到问题怎么办？"
-      - name: Selector
-        thought: "用户在退款过程中遇到问题，需要提供详细的解决方案和后续流程指导"
-        result: BotUtter
-      - name: BotUtter
-        thought: "提供全面的退款问题解决方案，包括常见问题和联系方式"
-        result: "退款遇到问题时，您可以：1)检查银行卡信息是否正确 2)等待3-5个工作日 3)联系客服核实状态。如需进一步帮助，我可以为您转接专人处理。"
-```
-
-## 🎨 数据标注最佳实践
-
-### 1. 分层数据设计
-```yaml
-# 第一层：基础交互（高频场景）
-policies:
-  - title: "基础-问候"
-  - title: "基础-告别"
-  - title: "基础-感谢"
-
-# 第二层：功能操作（核心业务）
-policies:
-  - title: "功能-天气查询"
-  - title: "功能-订单查询"
-  - title: "功能-信息修改"
-
-# 第三层：复杂处理（异常情况）
-policies:
-  - title: "复杂-多条件查询"
-  - title: "复杂-异常处理"
-  - title: "复杂-升级转接"
-```
-
-### 2. 思维链质量标准
-```yaml
-# ✅ 高质量思维链
-- name: Selector
-  thought: "用户询问天气但未指定城市和时间，我需要先收集这两个必要信息才能提供准确的天气预报。优先询问城市，因为这是最基本的查询条件。"
-  result: Weather
-
-# ❌ 低质量思维链  
-- name: Selector
-  thought: "选择天气"  # 过于简单，缺乏推理过程
-  result: Weather
-```
-
-### 3. 数据覆盖策略
-```yaml
-# 覆盖用户表达的多样性
-policies:
-  - title: "问候-正式场合"
-    actions:
-      - name: UserUtter
-        result: "您好，请问能帮我..."
-        
-  - title: "问候-日常对话"  
-    actions:
-      - name: UserUtter
-        result: "嗨，我想要..."
-        
-  - title: "问候-简短表达"
-    actions:
-      - name: UserUtter
-        result: "你好"
-```
-
-## 📊 数据质量评估
-
-### 质量指标
-- **完整性**：动作序列是否完整，覆盖完整对话流程
-- **逻辑性**：思维链是否具有清晰的推理逻辑
-- **一致性**：相似场景的处理方式是否一致
-- **实用性**：是否贴近真实使用场景
-
-### 测试验证
-```yaml
-# 在数据中添加测试用例
-test_cases:
-  - input: "我要退款"
-    expected_trigger: "退款申请"
-    expected_actions: ["UserUtter", "RefundProcess"]
-    
-  - input: "天气怎么样"
-    expected_policy: "天气查询"
-    expected_thought_quality: "high"  # 思维链质量要求
-```
-
-## 📚 完整配置示例
-
-### 客服机器人数据配置
-
-**policy/data.yml**:
-```yaml
-policies:
-  - title: "智能客服问候"
-    actions:
-      - name: UserUtter
-        result: "你好，我需要帮助"
-      - name: Selector
-        thought: "用户寻求帮助，我应该热情地回应并了解具体需求"
-        result: BotUtter
-      - name: BotUtter
-        thought: "作为客服助手，我需要表现出专业和友好，同时引导用户说明问题"
-        result: "您好！我是智能客服助手，很高兴为您服务。请告诉我您遇到了什么问题，我会尽力帮助您解决。"
-
-  - title: "订单状态查询"
-    actions:
-      - name: UserUtter
-        result: "我的订单什么时候能到？"
-      - name: Selector
-        thought: "用户询问订单配送时间，但没有提供订单号，我需要先获取订单信息"
-        result: OrderQuery
-      - name: OrderQuery
-        result: "请提供您的订单号，我来帮您查询具体的配送状态"
-      - name: UserUtter
-        result: "202310151234"
-      - name: OrderQuery
-        result: "订单202310151234预计明天下午送达，当前状态：运输中"
-      - name: Selector
-        thought: "已获取订单信息，需要完整地告知用户配送情况和注意事项"
-        result: BotUtter
-      - name: BotUtter
-        thought: "提供详细的配送信息，让用户了解时间安排，并提醒相关注意事项"
-        result: "您的订单202310151234预计明天下午送达，目前正在运输途中。配送员会在送达前30分钟联系您，请保持手机畅通哦！"
-```
-
-**policy/rules.yml**:
-```yaml
-triggers:
-  - title: "转人工客服"
-    actions:
-      - name: UserUtter
-        result:
-          - "转人工"
-          - "人工客服"  
-          - "真人服务"
-          - "manual service"
-      - name: TransferToHuman
-        result: "正在为您转接人工客服，请稍候..."
-
-  - title: "退款快速处理"
-    actions:
-      - name: UserUtter
-        result:
-          - "我要退款"
-          - "申请退款"
-          - "退款"
-          - "refund"
-      - name: RefundProcess
-        result: "已为您启动退款流程"
-
-  - title: "紧急情况"
-    actions:
-      - name: UserUtter
-        result:
-          - "紧急"
-          - "urgent"
-          - "很急"
-          - "马上处理"
-      - name: UrgentHandler
-        result: "已标记为紧急事件，将优先处理"
-```
-
-通过精心设计的标注数据，COTA智能体能够学习到丰富的对话策略和处理模式，为用户提供更智能、更人性化的交互体验。建议从核心业务场景开始标注，逐步扩展覆盖面和复杂度。
+文件更新后需重新加载 Agent；训练型策略先重新 train。all 在目录不存在时为空 Policy；修改文件不会自动影响已经加载的实例。完整填写和导出流程见 [对话标注与 Policy](../concepts/skill-policy.md)。

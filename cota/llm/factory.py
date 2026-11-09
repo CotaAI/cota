@@ -1,10 +1,21 @@
 """LLM client factory for creating appropriate client instances."""
 
 from typing import Dict
+import re
 
 from .base import LLMClient
 from .openai import OpenAIClient, OpenAIRAGClient
 from .custom import CustomHttpClient
+
+
+def endpoint_value(config, key):
+    """Read a literal model setting; never substitute process credentials."""
+    value = config.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f'请在 endpoints.yml 中填写模型服务的 {key}')
+    if re.fullmatch(r'\$\{[^{}]+\}', value):
+        raise ValueError(f'endpoints.yml 的 {key} 不支持环境变量引用，请直接填写实际值')
+    return value
 
 
 class LLMClientFactory:
@@ -25,26 +36,29 @@ class LLMClientFactory:
         """
         client_type = config.get('type', 'openai')
         
-        # Extract common parameters
-        api_key = config['key']
-        base_url = config['apibase']
-        model = config['model']
+        api_key = endpoint_value(config, 'key')
+        base_url = endpoint_value(config, 'apibase')
+        model = endpoint_value(config, 'model')
         
         if client_type == 'openai':
+            thinking = config.get('thinking')
             return OpenAIClient(
                 api_key=api_key,
                 base_url=base_url,
-                model=model
+                model=model,
+                thinking=thinking
             )
         elif client_type == 'openai-rag':
             knowledge_id = config['knowledge_id']
             rag_prompt = config.get('rag_prompt')
+            thinking = config.get('thinking')
             return OpenAIRAGClient(
                 api_key=api_key,
                 base_url=base_url,
                 model=model,
                 knowledge_id=knowledge_id,
-                rag_prompt=rag_prompt
+                rag_prompt=rag_prompt,
+                thinking=thinking
             )
         elif client_type == 'custom':
             extra_config = {

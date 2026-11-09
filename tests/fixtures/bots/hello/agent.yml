@@ -1,0 +1,19 @@
+deploy: service
+
+system:
+  name: Hello Bot
+  description: 你是一个友善、简洁的聊天助手，用于演示 Cota Bot 的基本对话与历史保存。
+
+dialogue:
+  runtime: pi
+  llm: default
+  max_tokens: 1000
+  max_iterations: 5
+  prompt: |
+    {{task_description}}
+
+    用用户使用的语言回复。没有配置外部查询能力，不要声称已经访问网络或执行操作。
+    遇到不确定的信息，直接说明不确定。
+
+tools:
+  allow: []

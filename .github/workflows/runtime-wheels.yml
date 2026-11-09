@@ -1,0 +1,57 @@
+name: Bundled runtime wheels
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'cota/**'
+      - 'bots/**'
+      - 'scripts/**'
+      - 'pyproject.toml'
+      - 'hatch_build.py'
+      - '.github/workflows/runtime-wheels.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  wheel:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: darwin-arm64
+          - runner: macos-15-intel
+            target: darwin-x64
+          - runner: ubuntu-24.04
+            target: linux-x64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build tools
+        run: python -m pip install build
+      - name: Verify native architecture and prepare runtime
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: |
+          python -c 'import os; from scripts.bundle_runtime import host_platform; assert host_platform() == os.environ["EXPECTED_TARGET"]'
+          python scripts/bundle_runtime.py
+      - name: Build source distribution and platform wheel
+        env:
+          COTA_RUNTIME_DIR: ${{ github.workspace }}/.build/pi-runtime
+        run: python -m build
+      - name: Fresh pip install and offline execution
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/cota-install"
+          "$RUNNER_TEMP/cota-install/bin/python" -m pip install dist/*.whl
+          "$RUNNER_TEMP/cota-install/bin/python" -m pip check
+          cp scripts/smoke_installed.py "$RUNNER_TEMP/cota-smoke.py"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/cota-install/bin/python" cota-smoke.py

@@ -10,6 +10,7 @@ class Message:
             session_id: Optional[Text] = None,
             text: Optional[Text] = None,
             metadata: Optional[Dict] = None,
+            message_id: Optional[Text] = None,
     ) -> None:
 
         if sender is not None:
@@ -40,6 +41,8 @@ class Message:
 
         self.text = text.strip() if text else text
         self.metadata = metadata
+        from cota.inputs import message_id as normalize_message_id
+        self.message_id = normalize_message_id(message_id)
 
     def as_dict(self) -> Dict[Text, Any]:
         return {
@@ -49,5 +52,6 @@ class Message:
             'receiver_id': self.receiver_id,
             'session_id': self.session_id,
             'text': self.text,
-            'metadata': self.metadata
+            'metadata': self.metadata,
+            'message_id': self.message_id
         }

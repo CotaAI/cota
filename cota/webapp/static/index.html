@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Cota · 聊天</title>
+  <link rel="stylesheet" href="/chat/style.css">
+  <script src="/cota.js" defer></script>
+  <script src="/chat/app.js" defer></script>
+</head>
+<body>
+  <header class="brand"><span class="brand-mark" aria-hidden="true">c</span><strong id="brand-name">Cota</strong><span class="brand-caption">一起聊聊</span></header>
+  <div id="notice" role="status" aria-live="polite"></div>
+  <button id="invite-retry" class="secondary invite-retry" type="button" hidden>重试加入邀请中的群聊</button>
+  <main id="login" class="login">
+    <div class="login-card">
+      <div class="eyebrow">欢迎来到聊天空间</div>
+      <h1>从一个名字开始。</h1>
+      <p>给自己取个昵称，就可以与 Bot 开始对话。</p>
+      <form id="login-form">
+        <label for="nickname">你的昵称</label>
+        <input id="nickname" name="nickname" placeholder="大家怎么称呼你？" required maxlength="60" autocomplete="nickname">
+        <button id="login-submit" class="primary" type="submit">进入聊天 <span aria-hidden="true">→</span></button>
+      </form>
+      <p class="fine-print">访客身份保存在此浏览器。退出、清除浏览器数据或凭据过期后，旧身份无法找回。</p>
+    </div>
+  </main>
+  <main id="workspace" class="workspace" hidden>
+    <aside class="sidebar" aria-label="会话">
+      <div class="sidebar-heading"><h2>我的会话</h2><button id="refresh-list" class="subtle" type="button">刷新</button></div>
+      <button id="new-chat" class="primary" type="button">＋ 新建会话</button>
+      <button id="join-open" class="secondary" type="button" hidden>通过邀请加入</button>
+      <nav id="conversation-list" aria-label="会话列表"></nav>
+      <p id="empty-list" class="muted">还没有会话。创建一个，开始聊聊吧。</p>
+      <button id="load-more" class="subtle" type="button" hidden>加载更多</button>
+      <div class="identity"><span id="identity-name"></span><button id="signout" class="subtle" type="button">退出访客</button></div>
+    </aside>
+    <section class="chat" aria-label="聊天内容">
+      <header class="room-header"><div><h1 id="room-title">开始一段对话</h1><span id="connection" class="connection" role="status"></span></div><div id="room-actions" hidden><button id="members" class="subtle" type="button">成员</button><button id="share" class="secondary" type="button">邀请</button><button id="leave" class="subtle" type="button">退出群聊</button></div></header>
+      <div id="invite-panel" class="invite-panel" hidden>
+        <label for="invite-link">分享邀请链接</label><div class="inline"><input id="invite-link" readonly><button id="copy-invite" class="secondary" type="button">复制</button></div><small id="invite-help"></small>
+      </div>
+      <div id="empty-room" class="empty-room"><span class="empty-symbol" aria-hidden="true">✳</span><h2>想聊点什么？</h2><p>选择左侧会话，或新建一段对话。</p></div>
+      <button id="older-messages" class="subtle" type="button" hidden>加载更早消息</button>
+      <div id="messages" class="messages" role="log" aria-label="聊天消息" aria-live="polite" aria-relevant="additions"></div>
+      <form id="composer" class="composer" hidden>
+        <div id="quote" class="quote" hidden><span id="quote-text"></span><button id="cancel-quote" class="subtle" type="button" aria-label="取消引用">×</button></div>
+        <div class="compose-row"><textarea id="draft" aria-label="消息" placeholder="写下你的消息…" rows="2" maxlength="32768"></textarea><button id="send" class="primary" type="submit">发送 <span aria-hidden="true">↑</span></button></div>
+        <div class="compose-options"><label id="mention-wrap" class="mention-control" hidden><input id="mention" type="checkbox"><span id="mention-label">@Bot</span></label><small id="mode-help"></small></div>
+      </form>
+    </section>
+  </main>
+  <dialog id="create-dialog"><form id="create-form"><h2>新建会话</h2><label for="chat-title">会话名称</label><input id="chat-title" placeholder="例如：周末计划" required maxlength="100"><div class="dialog-actions"><button type="button" class="subtle" data-close="create-dialog">取消</button><button type="submit" class="primary">创建</button></div></form></dialog>
+  <dialog id="join-dialog"><form id="join-form"><h2>加入群聊</h2><label for="join-value">邀请链接或邀请码</label><input id="join-value" required autocomplete="off" placeholder="粘贴别人分享的邀请链接"><div class="dialog-actions"><button type="button" class="subtle" data-close="join-dialog">取消</button><button type="submit" class="primary">加入</button></div></form></dialog>
+  <dialog id="members-dialog"><h2>会话成员</h2><ul id="member-list"></ul><div class="dialog-actions"><button type="button" class="primary" data-close="members-dialog">完成</button></div></dialog>
+</body>
+</html>

@@ -1,113 +1,53 @@
-# 安装COTA
-Ubuntu / macOS / Windows
+# 安装 Cota
 
-可以选择通过pip安装（推荐）或通过源代码安装。
+先区分当前源码开发和安装发布包。本手册按仓库当前实现编写，不假定任意已有 PyPI 版本都包含这些功能。
 
-- **pip安装**：适合大多数用户，简单快捷
-- **源代码安装**：适合开发者或需要最新开发版本的用户
+## 当前源码开发
 
-> **提醒**
->
-> 请确保准备好虚拟环境，以下操作建议在虚拟环境中进行
+在仓库根目录和 Python 3.12+ 虚拟环境中执行：
 
+```bash
+python -m pip install -e '.[dev]'
+npm ci --prefix cota/runtime/pi
+cota --version
+cota --help
+```
 
-## 通过pip安装（推荐）
+需要飞书时安装可选依赖：
 
-Pip是Python的包管理工具，可以方便地安装和管理Python包。这是最简单快捷的安装方式，推荐大多数用户使用。以下是通过pip安装COTA的步骤：
+```bash
+python -m pip install -e '.[dev,feishu]'
+```
 
-1. **确保你已经安装了Python和pip**：
-    - 你可以通过运行以下命令来检查是否安装了Python和pip：
-      ```bash
-      python3 --version
-      pip3 --version
-      ```
-    - 如果没有安装，请先安装Python和pip。
-    - 同时确保pip更新到最新的版本
-      ```bash
-      pip3 install -U pip
-      ```
+Node.js 至少 22.19，固定开发版本见 `.node-version`。npm 根据已提交的 lockfile 安装固定 Pi 依赖。
+editable 安装不自动构建发布包内的运行环境；不要省略源码的 Node/Pi 准备步骤。
+使用 uv 的开发者也可用 `uv sync --extra dev --extra feishu --locked` 安装锁定的 Python 环境，然后安装 npm 依赖。
 
-2. **使用pip安装COTA**：
-    - 打开终端或命令提示符，运行以下命令：
-      ```bash
-      pip3 install cota
-      ```
-    - 安装过程中会自动下载并安装所需的依赖包。
+## 安装带运行时的发布包
 
-3. **验证安装**：
-    - 安装完成后，你可以通过运行以下命令来验证COTA是否安装成功：
-      ```bash
-      cota --version
-      ```
-    - 如果显示版本号，说明安装成功！
+本版以 GitHub 源码发布，不附加安装包。以下 pip 方式仅适用于已经单独发布到 PyPI 的版本，不代表本版 2.0 已上传：
 
-4. **开始使用**：
-    - 创建你的第一个智能体项目：
-      ```bash
-      cota init
-      ```
-    - 进入项目目录并配置：
-      ```bash
-      cd cota_projects/simplebot
-      # 编辑 endpoints.yml 配置你的LLM API密钥
-      ```
-    - 启动对话测试：
-      ```bash
-      cota shell --debug
-      ```
+```bash
+python -m pip install cota
+# 飞书为可选能力
+python -m pip install 'cota[feishu]'
+```
 
-## 通过源代码安装
+wheel 内包含 Cota 与固定版本 Node/Pi，无需在首次对话时下载执行引擎。
+一条 pip 解决的是框架安装，不包括模型服务密钥、外部 MCP 服务、浏览器等业务工具，也不替你创建服务器。
 
-如果你需要最新的开发版本、想要参与开发或自定义安装，可以通过源代码安装COTA。以下是通过源代码安装COTA的步骤：
+发布构建当前覆盖 macOS 11+ 的 arm64/x86_64、Linux glibc 2.28+ 的 arm64/x86_64。
+每个平台的实际产物由 `.github/workflows/runtime-wheels.yml` 在目标环境构建和做安装冒烟验证。
+Windows、Alpine 暂无自带运行时的 wheel；普通 `pip install .` 也不能替代带 runtime 的发布构建。
+具体构建入口见 [Pi 运行机制](../concepts/pi-runtime.md)。
 
-1. **安装Poetry**：
-    - Poetry是一个依赖管理和打包工具，可以帮助你更方便地管理Python项目。首先，你需要安装Poetry。
-    
-      方式1：通过pip安装Poetry（推荐）：
-      ```bash
-      pip3 install poetry
-      ```
-      方式2：同样也可直接安装
-      ```bash
-      curl -sSL https://install.python-poetry.org | python3 -
-      ```
-    - 安装完成后，你可以通过运行以下命令来验证Poetry是否安装成功：
-      ```bash
-      poetry --version
-      ```
+## 初始化 Bot
 
-2. **克隆COTA的源代码仓库**：
-    - 打开终端或命令提示符，运行以下命令来克隆COTA的源代码仓库：
-      ```bash
-      git clone https://github.com/CotaAI/cota.git
-      ```
+```bash
+cota init
+```
 
-3. **进入源代码目录**：
-    - 进入克隆下来的COTA源代码目录：
-      ```bash
-      cd cota
-      ```
+它在当前目录创建 `cota_projects/`，其中仅包含 weather 示例。已有同名目录不会覆盖。
+官方模板在仓库根目录 `bots/` 维护；wheel 打包时收录，不再在 Python 主代码里手工维护另一套示例。
 
-4. **使用Poetry安装依赖**：
-    - 使用Poetry来安装COTA所需的依赖包。运行以下命令：
-      ```bash
-      poetry install
-      ```
-
-5. **激活虚拟环境**：
-    - 激活Poetry创建的虚拟环境：
-      ```bash
-      poetry shell
-      ```
-
-6. **验证安装**：
-    - 安装完成后，你可以通过运行以下命令来验证COTA是否安装成功：
-      ```bash
-      cota --version
-      ```
-
-7. **开始使用**：
-    - 创建你的第一个智能体项目：
-      ```bash
-      cota init
-      ```
+填写所选 Bot 的 endpoints.yml，再按 [快速开始](../tutorial/quick_start.md) 启动。

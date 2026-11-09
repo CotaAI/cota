@@ -1,0 +1,14 @@
+# 相对 SQLite 路径以 Bot 目录为基准，重启后仍保留历史。
+base_store:
+  type: sql
+  dialect: sqlite
+  db: workspace/sessions.db
+
+# 直接填写模型服务的密钥、API 地址和模型名称，无需设置环境变量。
+# 支持 OpenAI 兼容的 Chat Completions API，模型需支持工具调用。
+llms:
+  default:
+    type: openai
+    key: ""
+    apibase: ""
+    model: ""

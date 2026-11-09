@@ -1,296 +1,124 @@
-<div align="center">
+# Cota
 
-# COTA
-**Chain of Thought Agent Platform for Industrial-Grade Dialogue Systems**
+**Bot 开发与部署平台：定义业务能力与规则，交付可使用、可追踪、可持续改进的机器人。**
 
-*Simple configuration, reliable performance*
+Cota 帮助不需要掌握完整 Agent 工程体系的开发者，把业务知识、工具和对话规则组织为一个 Bot，供自己使用或分享给他人。个人助手、客服、群聊助手是同一框架上的不同应用场景。
 
-[![License](https://img.shields.io/github/license/CotaAI/cota?style=for-the-badge)](https://github.com/CotaAI/cota/blob/main/LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.12+-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![Documentation](https://img.shields.io/badge/Documentation-Available-green?style=for-the-badge)](https://cotaai.github.io/cota/)
-[![知乎专栏](https://img.shields.io/badge/知乎专栏-智能体框架-blue?style=for-the-badge)](https://www.zhihu.com/column/c_1804161563009093633)
+交付单位是 **Bot**：除了 Skill，还包含角色与行为配置、工具权限、Policy、模型服务和存储配置。创作者可以维护一个服务并分享聊天入口，也可以分享 Bot 文件夹，由使用者自行部署。Skill 是其中可复用的业务能力说明，单独分享 Skill 不会交付运行环境、工具权限和持续服务。
 
-[![GitHub Stars](https://img.shields.io/github/stars/CotaAI/cota?style=for-the-badge&logo=github)](https://github.com/CotaAI/cota/stargazers)
-[![GitHub Issues](https://img.shields.io/github/issues/CotaAI/cota?style=for-the-badge)](https://github.com/CotaAI/cota/issues)
+## 核心分工
 
-
-**[简体中文](#简体中文)** | **[Documentation](https://cotaai.github.io/cota/)** | **[知乎专栏](https://www.zhihu.com/column/c_1804161563009093633)**
-
-</div>
-
----
-
-通用大模型在特定业务场景中面临**诸多痛点**：
-
-1. **领域知识融合难**
-   通用LLM缺乏垂直领域专业能力，如何低成本注入领域知识？
-
-2. **业务逻辑执行不可靠**
-   复杂业务流程无法准确执行，AI决策缺乏可追溯性
-
-3. **开发成本高** 
-   传统Agent框架概念复杂（状态机、图编排），需要深度理解AI系统
-
-
-### COTA可以做什么 ✅
-
-COTA采用**标注式策略学习**，将领域知识以思维链的形式注入：
-
-```
-1. 用户编写对话示例 → 标注思维过程 (thought)
-2. COTA学习思维模式 → 构建决策策略 (DPL)
-3. 新对话触发 → 检索相似思维 → 执行可靠决策
+```text
+用户 / 外围应用 / 可选聊天页面
+  → Channel + Application：接入、授权适配、去重、顺序和投递
+  → Processor + DST / Store：记录输入、恢复状态、保存执行事实
+  → Pi Agent Core：模型调用、工具调用、多步循环
+       ↕ Cota：模型适配、Policy 指导、工具能力与持久化确认
 ```
 
-**无需学习Agent复杂概念，只需编辑对话！**，COTA自动学习业务策略，构建可靠的领域AI助理。如果你会写对话，就会用COTA!
+- **Skill** 定义业务能力和 SOP；模型选择、读取和组合它们，资源加载复用 Pi 的实现。
+- **Tool** 提供真实能力。唯一内置自定义工具是 Node 中的 `http_request`；机器操作使用 Pi 官方八个原生工具，按执行环境与可用依赖提供。Skill 文本和 Policy 示例不自动注册工具，也不授予权限。
+- **Trace** 从事件和运行记录呈现实际发生了什么；DST 通过事件恢复状态，Store 保存事件和快照。
+- **Policy** 来自业务流程标注，每次模型请求前结合当前上下文提供指导，改善 Skill 选择、组合、异常处理与回复。
+- **Eval** 随 Bot 交付 `policy/eval` 对话验证，用 LLM 逐条评判回复，保存执行证据、报告与版本对比；见[评测指南](docs/src/development/evaluation.md)。
+- **应用层** 协调会话和回复。已有应用管理自己的身份与群成员；没有现成前端时，可以启用独立的 Web 聊天应用。
 
+使用官方 TypeScript Pi Agent Core，不接入 Pi AgentSession。会话历史与上下文恢复由 Cota 管理，不依赖 Pi 的本地会话文件。
 
-```yaml
-# 无需理解Agent概念，只需编写带思维链的对话示例
-policies:
-  - title: "复杂查天气"
-    actions:
-      - name: UserUtter
-        result: "成都和重庆天气咋样哪个好"
-      - name: Selector
-        thought: "用户询问两个城市天气，需要先查成都，再查重庆，然后比较"
-        result: Weather
-      - name: Weather
-        result: <成都天气结果>
-      - name: Selector
-        thought: "已拿到成都天气，还需要查询重庆天气"
-        result: Weather
-      - name: Weather
-        result: <重庆天气结果>
-      - name: BotUtter
-        thought: "比较两个城市天气，告诉用户哪个更适合旅游"
-        result: "成都晴20℃，重庆阴18℃，建议去成都"
-```
-### 🧠 核心特性
+## 从当前源码开始
 
-- **📝 零代码配置**: 通过YAML编写对话示例即可定义业务策略，无需复杂的编程知识
-- **🧩 思维链驱动**: 基于Chain of Thought机制，让AI具备类人逻辑推理能力
-- **🎓 标注式学习**: 通过标注对话中的`thought`字段，自动学习可靠对话策略（DPL）
-- **🏗️ 经典框架**: 遵循领域成熟的Dialogue State Tracker (DST) 架构，稳定可靠
-- **🔧 工业级可用**: 内置多轮对话、Form填写、Action执行等生产级能力
-
-### 🎯 核心优势
-
-| 特性 | 传统Agent框架 | COTA |
-|------|--------------|------|
-| **学习成本** | 需要理解状态机、图编排 | ✅ 只需要写对话 |
-| **开发周期** | 需要设计复杂系统 | ✅ 标注思维链即可 |
-| **领域知识融合** | 需要微调模型 | ✅ 编写对话示例 |
-| **可追溯性** | 黑盒决策 | ✅ 思维链可追踪 |
-| **可靠性** | 需要大量测试 | ✅ 基于DST框架，稳定可靠 |
-
----
-
-**三类开发者优先选择 COTA：**
-
-| 开发者类型 | 选择理由 |
-|---------|---------|
-| **业务开发者** | 无需学习Agent框架，用熟悉的对话编写业务逻辑 |
-| **领域专家** | 只需编辑对话示例，不写代码也能构建AI助手 |
-| **AI工程师** | 实现思维链到策略的自动化学习，保障可追溯性 |
-
----
-
-## 🚀 快速开始
-
-### 环境要求
-
-- **Python 3.12+** 
-- **pip** 包管理器
-
-### 🔧 安装
-
-#### 方法1: 通过pip安装 (推荐)
+本版 **2.0.0 以 GitHub 源码发布**，不附加大型安装包，也不发布 PyPI。源码开发需要 Python 3.12+、Node.js 22.19+ 和 npm：
 
 ```bash
-# 1. 安装Python 3.12+
-# Ubuntu/Debian:
-sudo apt update && sudo apt install python3.12 python3.12-venv python3.12-pip
-
-# macOS (使用Homebrew):
-brew install python@3.12
-
-# Windows: 访问 https://www.python.org/downloads/ 下载安装
-
-# 2. 创建虚拟环境
-python3.12 -m venv cota-env
-source cota-env/bin/activate  # Linux/macOS
-# 或 cota-env\Scripts\activate  # Windows
-
-# 3. 安装COTA
-pip install cota
-
-# 4. 验证安装
-cota --version
-```
-
-#### 方法2: 从源码安装 (使用Poetry)
-
-```bash
-# 1. 安装Python 3.12+ (同上)
-
-# 2. 安装Poetry
-pip install poetry
-
-# 3. 克隆仓库并安装
-git clone https://github.com/CotaAI/cota.git
-cd cota
-poetry install
-
-# 4. 激活虚拟环境
-poetry shell
-
-# 5. 验证安装
-cota --version
-```
-
-### ⚡ 快速体验
-
-> 确保你已按照上述方法安装COTA并激活虚拟环境
-
-#### 1. 初始化项目
-```bash
-# 创建示例智能体项目
+# 在仓库根目录，激活你的 Python 虚拟环境后
+python -m pip install -e '.[dev]'
+npm ci --prefix cota/runtime/pi
 cota init
 ```
 
-执行后会在当前目录创建 `cota_projects` 文件夹，包含示例配置：
-
-```
-cota_projects/
-├── simplebot/          # 简单对话机器人
-│   ├── agent.yml       # 智能体配置
-│   └── endpoints.yml  # LLM配置示例
-└── taskbot/           # 任务型机器人
-    ├── agents/
-    ├── task.yml
-    └── endpoints.yml
-```
-
-#### 2. 配置智能体
-```bash
-# 进入simplebot目录
-cd cota_projects/simplebot
-```
-
-编辑 `endpoints.yml`，配置你的LLM API：
+`cota init` 在当前目录创建 `cota_projects/weather`，不会覆盖已有 Bot。
+编辑所选 Bot 的 `endpoints.yml`，直接填写模型服务配置：
 
 ```yaml
 llms:
-  rag-glm-4:
+  default:
     type: openai
-    model: glm-4                    # 使用的模型名称
-    key: your_api_key_here          # 替换为你的API密钥
-    apibase: https://open.bigmodel.cn/api/paas/v4/
+    key: "填写模型服务密钥"
+    apibase: "填写兼容 Chat Completions 的 API 地址"
+    model: "填写模型名称"
 ```
 
-#### 3. 启动对话测试
-```bash
-# 启动调试模式命令行对话
-cota shell --debug
-
-# 或启动普通命令行对话
-cota shell --config=.
-```
-
-#### 4. 启动服务上线 (可选)
-```bash
-# 启动WebSocket服务
-cota run --channel=websocket --host=localhost --port=5005
-```
-
-## 📚 完整文档
-
-- **[📖 完整文档](https://cotaai.github.io/cota/)** - 详细使用指南和API文档
-- **[📝 知乎专栏](https://www.zhihu.com/column/c_1804161563009093633)** - 智能体框架深度解析和实践案例
-- **[🚀 5分钟快速入门](https://cotaai.github.io/cota/tutorial/quick_start.html)** - 从零开始构建你的第一个AI助手
-- **[⚙️ 配置详解](https://cotaai.github.io/cota/configuration/)** - 了解agent.yml、endpoints.yml配置
-- **[🎓 DPL策略学习](https://cotaai.github.io/cota/concepts/dpl/)** - 学习如何通过标注思维链构建可靠策略
-- **[🏗️ 架构原理](https://cotaai.github.io/cota/)** - DST、Action、Channel等核心概念
-- **[🚀 生产部署](https://cotaai.github.io/cota/deployment/)** - 部署到生产环境的最佳实践
-
-## 🤝 贡献指南
-
-我们欢迎所有形式的贡献！
-
-1. **Fork** 本仓库
-2. 创建你的特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交你的更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启一个 **Pull Request**
-
-
-## English
-
-<details>
-<summary><b>Click to expand English version</b></summary>
-
-### Problem & Solution
-
-**The Challenge You Face:**
-
-General LLMs struggle with three critical issues in domain-specific scenarios:
-
-1. **Domain Knowledge Integration is Difficult** ❌  
-   How to low-cost inject domain expertise into general LLMs?
-
-2. **Unreliable Business Logic Execution** ❌  
-   Complex business processes cannot be accurately executed
-
-3. **High Development Cost** ❌  
-   Traditional Agent frameworks require deep understanding of AI systems
-
-**COTA's Solution** ✅
-
-**Transform domain knowledge into chain of thought, making AI think like experts**
-
-Just edit dialogue text with annotated thought processes, and COTA automatically learns business strategies to build reliable domain AI assistants.
-
-### Key Features
-
-- **📝 Zero-Code Configuration**: Define business strategies by writing dialogue examples in YAML
-- **🧩 Chain of Thought Driven**: Based on CoT mechanism for human-like reasoning
-- **🎓 Annotated Learning**: Automatically learn dialogue policies (DPL) by annotating `thought` field
-- **🏗️ Classic Framework**: Built on proven Dialogue State Tracker (DST) architecture
-- **🔧 Production-Ready**: Multi-turn dialogue, Form filling, Action execution
-
-### Quick Start
+不需要 `COTA_API_KEY`。保留模板中的 SQLite 存储配置，然后启动：
 
 ```bash
-# Install
-pip install cota
-
-# Initialize
-cota init
-
-# Start
-cota shell --debug
+cota shell --config cota_projects/weather --debug
+# 或使用浏览器聊天入口
+cota run --config cota_projects/weather --chat-app --host 127.0.0.1 --port 5005
 ```
 
-**Learn More**: [📖 Documentation](https://cotaai.github.io/cota/)
+聊天页面在 `http://127.0.0.1:5005/chat/`；shell 的 Debug 页面地址由终端输出。
+唯一分发的示例 `weather` 组合当前天气与预报、活动查询、出行规划三个 Skill，并附带30个对话评测案例。
 
-</details>
+在 `agent.yml` 中用 `deploy: personal` 表示自己使用（本机或个人云服务器），用 `deploy: service` 表示对外提供服务。模板及省略配置时均为 service，不开放机器原生文件和 Shell。personal 默认复用 Pi 工具操作部署机器，起始目录为 Bot 下的 `files/`；它不是沙箱。模式与执行环境配置见 [Agent 配置](docs/src/configuration/agent.md)。
 
----
+保留将固定版本 Node/Pi 构建进平台 wheel 的能力，用于本地或 CI 安装验证；生成物不提交 Git，也不随本版上传。模型凭据、外部工具及 Bot 特有依赖由部署者配置。安装方式与构建说明见 [安装说明](docs/src/installation/install.md)，本版变更见 [2.0.0 发布说明](docs/releases/2.0.0.md)。
 
-## 📞 联系我们
+## 像编写对话一样标注业务流程
 
-> GitHub Issues 和 Pull Requests 随时欢迎！  
-> 项目咨询：**690714362@qq.com**
+```yaml
+policies:
+  - name: 天气查询失败时说明限制
+    steps:
+      - user: 北京现在多少度？
+      - bot:
+          - thought: 需要实时数据，使用天气能力。
+          - skills: [weather]
+          - result: 主服务和备用服务都没有返回有效天气数据。
+          - thought: 明确说明暂时无法确认，不猜测温度。
+          - reply: 暂时未能查询到天气，我还不能确认当前温度。
+```
 
-**社区讨论**: [GitHub Discussions](https://github.com/CotaAI/cota/discussions)
+保存到 Bot 的 `policy/`。`thought` 是人工编写的业务判断，`result` 是案例结果条件；它们都不是真实执行事实或模型隐藏推理。默认 `all` 策略直接加载案例；BM25、Embedding、模型判断等策略先用 `cota train --config BOT` 构建产物，再由运行时加载。修改文件后重新加载 Agent，不自动热更新。
 
----
+真实对话也可通过 `cota annotate export` 导出，人工改写后 `annotate import` 校验成相同格式；不会把标注写回执行事件。
 
-<div align="center">
+## 验证 Bot 的实际回答
 
-**⭐ 如果COta对你有帮助，请给我们一个Star！这将是对我们最好的鼓励！⭐**
+配置好 weather 的模型后，在 Bot 目录直接执行：
 
-Made with ❤️ by [CotaAI](https://github.com/CotaAI)
+```bash
+cd cota_projects/weather
+cota eval
+```
 
-</div>
+默认读取 `policy/eval/`，优先用 `llms.evaluator` 评判，未配置时用 `llms.default`。终端显示案例、轮次、执行/评判阶段和等待进度；结果保存在 `workspace/evaluations/<run_id>/`，包含报告、结构化评分和执行证据。`--debug` 额外保存被测 Bot 的模型请求，不是开启进度的开关。
+
+用 `cota eval judge` 重评已有 Trace，用 `cota eval compare` 对比版本。评委也可能误判，关键项应核对实际回复和工具正文。命令、文件格式和对比规则见[评测指南](docs/src/development/evaluation.md)。
+
+## 当前交付能力
+
+| 场景 | 当前入口 |
+| --- | --- |
+| 本地个人 Bot | `cota shell`、SQLite、Pi 原生机器工具 |
+| 网页或已有应用中的聊天 | Web Channel 的 HTTP + WebSocket，外围身份授权，统一 Application |
+| 没有现成聊天界面 | `cota run --chat-app`，访客身份、会话列表、单聊/群聊、邀请 |
+| 飞书单聊与群聊 | 官方 SDK 接入，事件去重与持久化回复投递 |
+| 群聊中的 Bot | 普通消息先保存；被 @ 回复，或启用有节流和失效检查的主动参与判断 |
+| 交付 Bot 文件夹 | 配置、Skill、Policy、可选训练产物及依赖说明；接收方独立配置和启动 |
+
+当前执行协调以单进程为边界，工具进程不等于安全 sandbox。自动 RSI、完整自包含 Bot 安装包和分布式执行尚未实现，见 [能力边界与规划](docs/src/concepts/roadmap.md)。
+
+## 文档与开发
+
+- [手册入口](docs/src/introduction.md) · [快速开始](docs/src/tutorial/quick_start.md)
+- [定位与架构](docs/src/concepts/raas_architecture.md) · [模块地图](docs/src/concepts/modules.md) · [执行流程](docs/src/concepts/execution-flow.md)
+- [Skill、Trace 与 Policy](docs/src/concepts/skill-policy.md) · [Policy 训练与推理](docs/src/concepts/trainable-policy.md)
+- [配置参考](docs/src/configuration/overview.md) · [Debug](docs/src/deployment/debug.md)
+- [应用接入](docs/src/deployment/application.md) · [部署与分享](docs/src/deployment/sharing.md)
+- [示例 Bot](bots/README.md) · [测试指南](tests/README.md)
+
+```bash
+python scripts/check.py --coverage
+```
+
+检查 Python/JavaScript/Shell 语法、Ruff、Python 与 JavaScript 回归并生成覆盖率。测试使用可控模型响应，不需要模型密钥；真实模型效果仍需业务评测。发布与测试工作流见 `.github/workflows/`。

@@ -1,7 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
-from pathlib import Path
-from typing import Text, List, Union, Optional, Dict, Any
+from typing import Text, List, Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +17,7 @@ class Knowledge(ABC):
         
         Args:
             query: The search query
-            context: Additional context information (DST, action, etc.)
+            context: Additional context information (DST, agent, etc.)
             
         Returns:
             Retrieved knowledge as string
@@ -97,31 +96,10 @@ class KnowledgeFactory:
             logger.info("No knowledge configurations provided, knowledge will be disabled")
             return None
         
-        # If only one config, return single Knowledge instance
-        if len(knowledge_configs) == 1:
-            config = knowledge_configs[0]
-            try:
-                return KnowledgeFactory._create_single_knowledge(config, path)
-            except Exception as e:
-                logger.info("Knowledge will be disabled due to configuration error")
-                return None
-        
-        # Multiple configs: create CompositeKnowledge
-        strategies = []
-        for config in knowledge_configs:
-            try:
-                strategy = KnowledgeFactory._create_single_knowledge(config, path)
-                strategies.append(strategy)
-            except Exception as e:
-                logger.error(f"Failed to create knowledge strategy from config {config}: {e}")
-                continue
-        
-        if not strategies:
-            logger.warning("Failed to create any knowledge strategies, knowledge will be disabled")
-            return None
-        
-        return CompositeKnowledge(strategies)
-    
+        strategies = [KnowledgeFactory._create_single_knowledge(config, path)
+                      for config in knowledge_configs]
+        return strategies[0] if len(strategies) == 1 else CompositeKnowledge(strategies)
+
     @staticmethod
     def _create_single_knowledge(config: Dict[str, Any], path: Text = None) -> Knowledge:
         """Create single Knowledge strategy instance."""
@@ -136,7 +114,7 @@ class KnowledgeFactory:
         if knowledge_type == 'llm':
             try:
                 from cota.knowledge.llm_knowledge import LLMKnowledge
-                llm_config = config.get('config', config)
+                llm_config = config
                 if not llm_config:
                     raise ValueError("LLM knowledge config is empty")
                 return LLMKnowledge(config=llm_config)

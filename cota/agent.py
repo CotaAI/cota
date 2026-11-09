@@ -1,363 +1,198 @@
-import json
+"""Agent — the top-level configuration and resource holder.
+
+Loads agent.yml, initializes LLMs, ToolRegistry, Pi Skill resource paths, Policy,
+Knowledge, and Store. Provides a Processor for message handling.
+"""
+
 import os
-import copy
 import logging
-from typing import Text, List, Union, Optional, Dict, Tuple
-from cota.actions.action import Action
-from cota.actions.form import Form
-from cota.actions.user_utter import UserUtter
-from cota.actions.executors.base import Executor
-from cota.dst import DST
+import asyncio
+from typing import Text, Optional, Dict
+
 from cota.utils.io import read_yaml_from_path
 from cota.processor import Processor
-from cota.store import Store, MemoryStore, SQLStore
+from cota.store import Store
 from cota.llm import LLM
-from cota.dpl.dpl import DPL, DPLFactory
+from cota.policy import Policy, AllPolicy, PolicyServices, load_policy
+from cota.config import validate_bot_config
 from cota.knowledge.knowledge import KnowledgeFactory, Knowledge
-from cota.utils.http import HttpClientManager, HttpConfig
-from cota.utils.common import (
-    first_empty_key,
-    merge_dicts,
-    hash_str
-)
+from cota.utils.common import merge_dicts
 
-from cota.constant import (
-    DEFAULT_CONFIG,
-    DEFAULT_FORM_CONFIG,
-    DEFAULT_HTTP_CLIENT_CONFIG
-)
+from cota.executor.tools import ToolRegistry
+from cota.executor.user_memory import create_user_memory
+from cota.constant import DEFAULT_CONFIG
+from cota.runtime.pi_runtime import validate_runtime_selection
+from cota.executor.environment import DEFAULT_DEPLOY, ExecutionEnvironment
 
 logger = logging.getLogger(__name__)
 
+
 class Agent:
     def __init__(
-            self,
-            name: Optional[Text] = None,
-            description: Optional[Text] = None,
-            actions: Optional[Dict] = None,
-            llms: Optional[Dict[Text, LLM]] = None,
-            dpl: Optional[DPL] = None,
-            store: Optional[Store] = None,
-            dialogue: Optional[Dict] = None,
-            user_proxy: Optional[Dict] = None,
-            knowledge: Optional[Knowledge] = None
+        self,
+        name: Optional[Text] = None,
+        description: Optional[Text] = None,
+        llms: Optional[Dict[Text, LLM]] = None,
+        policy: Optional[Policy] = None,
+        store: Optional[Store] = None,
+        dialogue: Optional[Dict] = None,
+        user_proxy: Optional[Dict] = None,
+        knowledge: Optional[Knowledge] = None,
+        environment: Optional[ExecutionEnvironment] = None,
+        deploy: str = DEFAULT_DEPLOY,
     ) -> None:
         self.name = name
         self.description = description
-        self.actions = actions
+        self.skill_paths = []
         self.llms = llms
-        self.dpl = dpl
+        self.policy = policy or AllPolicy()
+        self.policy_services = PolicyServices(model=self.llm_instance)
         self.store = store
-        self.dialogue = dialogue
+        self.dialogue = dialogue or {}
+        validate_runtime_selection(self.dialogue)
         self.user_proxy = user_proxy
         self.knowledge = knowledge
+        self.deploy = deploy
+        self.environment = environment if environment is not None else ExecutionEnvironment.for_deployment(
+            deploy, {}, base_path=os.getcwd())
+        if not isinstance(self.environment, ExecutionEnvironment):
+            raise TypeError('environment must be an ExecutionEnvironment')
+        self.environment.validate_deployment(deploy)
         self.processor = Processor(agent=self, store=self.store)
-        self._executors = {}  # Dictionary to store executor instances
+
+        self.config_path: Optional[Text] = None
+        self.workspace_path: Optional[Text] = None
+
+        self.user_memory = None
+        self._tool_registry: Optional[ToolRegistry] = None
 
     @classmethod
-    def load_from_path(cls, path: Text, store: Optional[Store] = None) -> "Agent":
-        """
-        Load agent configuration from the specified path and create an Agent instance.
-        
-        Args:
-            path (Text): Path to the agent configuration directory
-            store (Optional[Store]): Optional store instance, will create one if not provided
-            
-        Returns:
-            Agent: Configured agent instance
-        """
+    def load_from_path(
+        cls,
+        path: Text,
+        store: Optional[Store] = None,
+    ) -> "Agent":
         logger.debug(f"Loading agent config from path: {path}")
 
-        # Load and merge configuration files
-        agent_config = read_yaml_from_path(os.path.join(path, 'agent.yml'))
-        endpoints_config = read_yaml_from_path(os.path.join(path, 'endpoints.yml'))
-        agent_config = cls.merge_agent_config(DEFAULT_CONFIG, agent_config)
+        agent_config = read_yaml_from_path(os.path.join(path, "agent.yml"))
+        endpoints_config = read_yaml_from_path(
+            os.path.join(path, "endpoints.yml")
+        )
+        agent_config = cls.merge_agent_config(agent_config)
 
-        # Extract core configuration
         system_config = agent_config.get("system", {})
         name = system_config.get("name")
-        description = system_config.get("description") 
-        actions = agent_config.get("actions", {})
+        description = system_config.get("description")
         dialogue = agent_config.get("dialogue", {})
+        validate_runtime_selection(dialogue)
         user_proxy = agent_config.get("user_proxy", {})
 
-        # Initialize or use provided store
+        # Skill-based business cases
+        policy = load_policy(path, agent_config.get("policy", {}))
+
+        # Resolve file-backed SQLite paths relative to this Bot, not the CLI's
+        # working directory. Store and user memory must use the same path.
+        store_config = endpoints_config.get("base_store", {})
+        if (store_config.get("type", "").lower() == "sql"
+                and store_config.get("dialect", "mysql+pymysql").startswith("sqlite")):
+            database = store_config.get("db", "cota.db")
+            if database != ":memory:":
+                database = os.path.abspath(os.path.join(path, database))
+                os.makedirs(os.path.dirname(database), exist_ok=True)
+                store_config["db"] = database
+
+        # Store
         if not store:
-            store_config = endpoints_config.get('base_store', {})
             store = Store.create(store_config)
 
-        # Initialize language models
+        # LLMs
         llms = {}
-        for llm_name, config in endpoints_config.get('llms', {}).items():
-            logger.debug(f"Initializing language model: {llm_name}")
+        for llm_name, config in endpoints_config.get("llms", {}).items():
+            logger.debug(f"Initializing LLM: {llm_name}")
             llms[llm_name] = LLM(config)
+            llms[llm_name].name = llm_name
 
-        # Initialize dialogue policy learning
-        policy_path = os.path.join(path, "policy")
-        dpl = DPLFactory.create(agent_config, policy_path)
-
-        # Initialize knowledge list
-        knowledge_configs = agent_config.get('knowledge', [])
+        # Knowledge
+        knowledge_configs = agent_config.get("knowledge", [])
         knowledge = KnowledgeFactory.create(knowledge_configs, path)
 
-        # Initialize executors
-        executors = cls._init_executors(actions)
+        # User memory
+        user_memory = create_user_memory(endpoints_config)
 
-        # Log final configurations for debugging
-        logger.debug(f"Endpoints configuration:\n{endpoints_config}")
-        logger.debug(f"Agent configuration:\n{agent_config}")
+        # Workspace
+        workspace_path = os.path.abspath(os.path.join(path, "workspace"))
+        os.makedirs(workspace_path, exist_ok=True)
+
+        # Python extensions; Pi native tools are supplied by the execution environment.
+        tool_registry = ToolRegistry()
+        from cota.executor.tools.registry import ToolPolicy
+        tool_config = agent_config.get('tools', {})
+        tool_registry.set_policy(ToolPolicy(
+            allow=tool_config.get('allow'), deny=tool_config.get('deny'),
+        ))
 
         agent = cls(
             name=name,
-            description=description, 
-            actions=actions,
+            description=description,
             store=store,
             llms=llms,
-            dpl=dpl,
+            policy=policy,
             dialogue=dialogue,
             user_proxy=user_proxy,
-            knowledge=knowledge
+            knowledge=knowledge,
+            deploy=agent_config.get('deploy', DEFAULT_DEPLOY),
+            environment=ExecutionEnvironment.for_deployment(
+                agent_config.get('deploy', DEFAULT_DEPLOY), agent_config.get('environment', {}), base_path=path),
         )
-        
-        agent._executors = executors
-        
+
+        agent.config_path = path
+        from cota.policy.resources import PolicyResources
+        agent.policy_services = PolicyResources(endpoints_config, model=agent.llm_instance).services()
+        agent.workspace_path = workspace_path
+        agent._tool_registry = tool_registry
+        skill_dir = os.path.abspath(os.path.join(path, 'skills'))
+        agent.skill_paths = [skill_dir] if os.path.isdir(skill_dir) else []
+        agent.user_memory = user_memory
+
         return agent
 
-    @classmethod
-    def _init_executors(cls, actions: Dict) -> Dict[Text, Executor]:
-        """Initialize executors
-        
-        Args:
-            actions: Action configuration dictionary
-            
-        Returns:
-            Dict[Text, Executor]: Executor dictionary
-        """
-        executors = {}
-        
-        for action_name, action_config in actions.items():
-            if "executer" in action_config:
-                executor_config = action_config["executer"]
-                executor_type = executor_config.get("type", "http")  # Default to http type
-                
-                try:
-                    executor = Executor.create(executor_type, executor_config)
-                    executors[action_name] = executor
-                except Exception as e:
-                    logger.error(f"Failed to initialize executor for {action_name}: {str(e)}")
-                    
-        return executors
+    # =========================================================================
+    # Accessors
+    # =========================================================================
 
-    def get_executor(self, action_name: Text) -> Optional[Executor]:
-        """Get executor for specified action
-        
-        Args:
-            action_name: Action name
-            
-        Returns:
-            Optional[Executor]: Executor instance, returns None if not exists
-        """
-        return self._executors.get(action_name)
+    def get_tool_registry(self) -> ToolRegistry:
+        if self._tool_registry is None:
+            self._tool_registry = ToolRegistry()
+        return self._tool_registry
 
-    async def cleanup(self):
-        """Clean up resources"""
-        for executor in self._executors.values():
-            if hasattr(executor, 'cleanup'):
-                await executor.cleanup()
-
-    def build_action(self, action_name: Text, **kwargs) -> "Action":
-        """
-        Builds an action based on the provided action name and optional parameters.
-
-        Args:
-            action_name (Text): The name of the action to build.
-            **kwargs: Additional parameters specific to each action type.
-
-        Returns:
-            Action: The built action instance.
-
-        Raises:
-            ValueError: If the action is not found in the configuration.
-        """
-        # Try exact match first, then case-insensitive match
-        action_config = self.actions.get(action_name)
-        if action_config is None:
-            # Try case-insensitive match
-            action_name_lower = action_name.lower()
-            for key, config in self.actions.items():
-                if key.lower() == action_name_lower:
-                    action_config = config
-                    action_name = key  # Use the actual key name from config
-                    break
-        if action_config is None:
-            raise ValueError(f"Action '{action_name}' not found in actions configuration.")
-
-        # Build parameters from config and kwargs
-        params = {
-            "name": action_name,
-            "description": kwargs.get("description") or action_config.get("description") or action_name,
-            "prompt": kwargs.get("prompt") or action_config.get("prompt"),
-            "llm": kwargs.get("llm") or action_config.get("llm"),
-            "sender_id": self.name
-        }
-
-        # Add form-specific parameters if needed
-        if action_config.get("type") == "form" or "executer" in action_config:
-            slots = {key: '' for key in action_config.get("slots", {})}
-            params.update({
-                "slots": kwargs.get("slots") or {key: '' for key in action_config.get("slots", {})},
-                "state": kwargs.get("state"),
-                "executer": action_config.get("executer")
-            })
-            return Form.build_from_name(**params)
-
-        # Add any additional kwargs that might be specific to other action types
-        params.update(kwargs)
-        return Action.build_from_name(**params)
-
-    async def generate_actions(self, dst: DST) -> List[Action]:
-        """Generate the corresponding action based on DPL"""
-        if dst.current_form:
-            return await self._handle_current_form(dst)
-
-        # First try to generate action using DPL action generator
-        if self.dpl:
-            action_names = await self.dpl.generate_actions(dst)
-            if action_names:
-                # Only take the first action as we only support single action
-                first_action_name = action_names[0]
-                return [self.build_action(first_action_name)]
-
-        # If DPL doesn't generate action, fall back to selector
-        selector = self.build_action(
-            action_name='Selector'
-        )
-        await selector.run(agent=self, dst=dst)
-        dst.update(selector)
-
-        if len(selector.result) == 0:
-            # if no action is selected, return a Response action
-            return [self.build_action('BotUtter')]
-        else:
-            # if actions are selected, take only the first action
-            action_infos = self._extract_action_info(selector)
-            if action_infos:
-                action_name, action_params = action_infos[0]
-                return [self.build_action(action_name, **action_params)]
-            else:
-                return [self.build_action('BotUtter')]
-
-    async def _handle_form_query(self, dst: DST) -> List[Action]:
-        selector = self.build_action(
-            action_name='Selector'
-        )
-        await selector.run(agent = self, dst=dst)
-        dst.update(selector)
-        if len(selector.result) == 0:
-            return [self.build_action('BotUtter')]
-
-        action_infos = self._extract_action_info(selector)
-        if action_infos:
-            action_name, action_params = action_infos[0]
-            if dst.current_form.name == action_name:
-                return [self.build_action(
-                    action_name=dst.current_form.name,
-                    slots=action_params.get('slots', {}),
-                    state="continue"
-                )]
-            else:
-                # break current form and execute the new action
-                return [
-                    self.build_action(
-                        action_name=dst.current_form.name,
-                        slots=copy.deepcopy(dst.current_form.slots),
-                        state="break"
-                    ),
-                    self.build_action(
-                        action_name=action_name
-                    )
-                ]
-        else:
-            return [self.build_action('BotUtter')]
-    
-    async def _handle_current_form(self, dst: DST) -> List[Action]:
-        if isinstance(dst.latest_action, UserUtter):
-            return await self._handle_form_query(dst)
-
-        required_slot = first_empty_key(dst.current_form.slots)
-        if not required_slot:
-            return [
-                self.build_action(
-                    action_name=dst.current_form.name,
-                    slots=copy.deepcopy(dst.current_form.slots),
-                    state="continue"
-                )]
-
-        action_config = self.actions.get(dst.current_form.name, {})
-        slots_config = action_config.get("slots", {})
-        return [ 
-                self.build_action(
-                    action_name='BotUtter',
-                    description = slots_config.get(required_slot,{}).get("description",{}),
-                    prompt = slots_config.get(required_slot,{}).get("prompt",{}),
-                    llm = slots_config.get(required_slot,{}).get("llm",None)
-                )]
-
-    def _extract_action_info(self, selector: Action) -> List[Dict]:
-        action_info = []
-        
-        for d in selector.result:
-            action_name = d.get('text')
-            metadata = d.get('metadata', {})
-            
-            # Extract only the fields that should be passed as action parameters
-            # Based on selector implementation, result now contains 'text', 'thought' and 'slots'
-            # Only 'slots' should be passed as action parameters
-            action_params = {}
-            if 'slots' in metadata and metadata['slots']:
-                action_params['slots'] = metadata['slots']
-            
-            logger.debug(f"Action: {action_name}, Original metadata: {metadata}")
-            logger.debug(f"Action: {action_name}, Extracted action params: {action_params}")
-            
-            action_info.append((action_name, action_params))
-        return action_info
-
-
-    def llm_instance(self, llm_name:Optional[Text] = None) -> LLM:
+    def llm_instance(self, llm_name: Optional[Text] = None) -> LLM:
         if llm_name is None:
-            first_llm_name, first_llm_config = next(iter(self.llms.items()))
-            return first_llm_config
-
+            _, first_llm = next(iter(self.llms.items()))
+            return first_llm
         llm_config = self.llms.get(llm_name)
         if llm_config is None:
             raise ValueError(f"LLM with name '{llm_name}' not found.")
         return llm_config
 
+    async def cleanup(self):
+        try:
+            if self._tool_registry:
+                await self._tool_registry.cleanup()
+        finally:
+            models = {id(model): model for model in (self.llms or {}).values()}
+            results = await asyncio.gather(*(model.close() for model in models.values()
+                                             if callable(getattr(model, 'close', None))), return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+
+    def create_processor(self, message_bus=None) -> Processor:
+        return Processor(agent=self, store=self.store, message_bus=message_bus)
+
     @classmethod
-    def merge_agent_config(cls, default_config, config):
-        """
-        Merges the provided config with the default config.
-        """
+    def merge_agent_config(cls, config):
         import copy
-        actions = config.get('actions', {})
-        for action_name in actions:
-            if 'executer' in actions[action_name]: 
-                default_form_config = copy.deepcopy(DEFAULT_FORM_CONFIG)
-                actions[action_name] = merge_dicts(default_form_config, actions[action_name])
+        validate_bot_config(config)
         default_config = copy.deepcopy(DEFAULT_CONFIG)
         updated_dict = merge_dicts(default_config, config)
         return updated_dict
-
-    def create_processor(self) -> Processor:
-        """
-        Creates and returns a new Processor instance.
-        
-        Returns:
-            Processor: A new processor instance initialized with this agent and its store.
-        """
-        processor = Processor(
-            agent=self,
-            store=self.store
-        )
-        return processor

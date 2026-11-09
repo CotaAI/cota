@@ -1,0 +1,54 @@
+name: Source checks and regression tests
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'feature/**', 'codex/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+          cache-dependency-path: cota/runtime/pi/package-lock.json
+      - name: Install source development dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep fd-find
+          python -m pip install -e '.[dev,feishu]'
+          npm ci --prefix cota/runtime/pi
+      - name: Check syntax, contracts, branch coverage and JavaScript
+        run: python scripts/check.py --coverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: |
+            coverage.json
+            coverage.xml
+
+  pi-powershell:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: cota/runtime/pi/package-lock.json
+      - run: npm ci --prefix cota/runtime/pi --ignore-scripts
+      - name: Verify official Pi PowerShell behavior
+        run: node --test --test-name-pattern="PowerShell native execution" cota/runtime/pi/worker.test.mjs

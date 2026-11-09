@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cota · Bot 开发与部署平台</title>
+  <meta name="description" content="定义业务 Skill 与 Policy，用 Pi 执行，保留真实 Trace，将 Bot 部署为服务或分享文件夹。">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    :root{
+      --mac-primary:#007AFF;
+      --mac-purple:#AF52DE;
+      --mac-pink:#FF2D55;
+      --mac-gradient:linear-gradient(135deg, #007AFF 0%, #5856D6 50%, #AF52DE 100%);
+      --mac-gradient-subtle:linear-gradient(135deg, rgba(0,122,255,0.15) 0%, rgba(88,86,214,0.15) 50%, rgba(175,82,222,0.15) 100%);
+      --mac-accent:#5E5CE6;
+      --text:#f5f5f7;
+      --text-secondary:#86868b;
+      --text-muted:#6e6e73;
+      --bg:#000000;
+      --bg-secondary:#1d1d1f;
+      --bg-tertiary:#2d2d2f;
+      --glass-bg:rgba(30,30,30,0.7);
+      --glass-border:rgba(255,255,255,0.1);
+      --card-bg:rgba(255,255,255,0.05);
+      --border:rgba(255,255,255,0.1)
+    }
+    html{scroll-behavior:smooth}
+    body{font-family:'SF Pro Display','SF Pro Text',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;overflow-x:hidden}
+    a{text-decoration:none;color:inherit}
+    .container{max-width:1080px;margin:0 auto;padding:0 24px}
+
+    /* macOS 风格背景 */
+    .bg-gradient{position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;overflow:hidden}
+    .bg-gradient::before{content:'';position:absolute;top:-20%;left:-20%;width:140%;height:140%;background:radial-gradient(ellipse at 20% 20%, rgba(0,122,255,0.15) 0%, transparent 50%),radial-gradient(ellipse at 80% 80%, rgba(175,82,222,0.12) 0%, transparent 50%),radial-gradient(ellipse at 50% 50%, rgba(88,86,214,0.08) 0%, transparent 60%);animation:bgFloat 25s ease-in-out infinite}
+    .bg-noise{position:absolute;top:0;left:0;width:100%;height:100%;opacity:0.03;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")}
+    @keyframes bgFloat{0%,100%{transform:translate(0,0) rotate(0deg)}25%{transform:translate(2%,2%) rotate(0.5deg)}50%{transform:translate(-1%,3%) rotate(-0.5deg)}75%{transform:translate(-2%,-1%) rotate(0.3deg)}}
+
+    /* Header - macOS 毛玻璃 */
+    header{position:fixed;top:0;left:0;right:0;z-index:100;padding:16px 0;background:var(--glass-bg);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);border-bottom:1px solid var(--glass-border)}
+    .header-inner{display:flex;align-items:center;justify-content:space-between}
+    .logo{display:flex;align-items:center;gap:12px;font-size:22px;font-weight:600;letter-spacing:-0.02em}
+    .logo-icon{width:36px;height:36px;background:var(--mac-gradient);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;box-shadow:0 4px 20px rgba(0,122,255,0.3),0 0 0 1px rgba(255,255,255,0.1) inset}
+    .nav{display:flex;gap:28px}
+    .nav a{color:var(--text-secondary);font-size:13px;font-weight:500;transition:all 0.25s ease;position:relative}
+    .nav a:hover{color:var(--text)}
+    .nav a::after{content:'';position:absolute;bottom:-6px;left:50%;width:0;height:2px;background:var(--mac-gradient);border-radius:2px;transition:all 0.25s ease;transform:translateX(-50%)}
+    .nav a:hover::after{width:100%}
+    .btn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;border-radius:20px;font-weight:500;font-size:13px;transition:all 0.3s cubic-bezier(0.4,0,0.2,1);cursor:pointer;border:none}
+    .btn-primary{background:var(--mac-gradient);color:#fff;box-shadow:0 4px 16px rgba(0,122,255,0.35),0 0 0 1px rgba(255,255,255,0.1) inset}
+    .btn-primary:hover{transform:translateY(-1.5px);box-shadow:0 8px 28px rgba(0,122,255,0.45),0 0 0 1px rgba(255,255,255,0.15) inset}
+    .btn-outline{border:1px solid rgba(255,255,255,0.15);color:var(--text);background:rgba(255,255,255,0.05)}
+    .btn-outline:hover{background:rgba(255,255,255,0.1);border-color:rgba(255,255,255,0.25)}
+
+    /* Hero */
+    .hero{padding:200px 0 140px;text-align:center;position:relative}
+    .hero-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;background:var(--card-bg);border:1px solid var(--border);border-radius:20px;font-size:12px;color:var(--text-secondary);margin-bottom:28px;animation:fadeInUp 0.8s ease}
+    .hero-badge span{background:var(--mac-gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .hero h1{font-size:72px;font-weight:700;margin-bottom:20px;line-height:1.05;letter-spacing:-0.03em;background:linear-gradient(180deg,#fff 0%,rgba(255,255,255,0.7) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;animation:fadeInUp 0.8s ease 0.1s both}
+    .hero h1 span{display:block;background:var(--mac-gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+    .hero p{font-size:21px;color:var(--text-secondary);max-width:640px;margin:0 auto 44px;letter-spacing:-0.01em;animation:fadeInUp 0.8s ease 0.2s both}
+    .hero-btns{display:flex;gap:12px;justify-content:center;animation:fadeInUp 0.8s ease 0.3s both}
+    .hero-code{background:var(--glass-bg);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--glass-border);border-radius:16px;padding:24px 32px;max-width:520px;margin:72px auto 0;text-align:left;position:relative;animation:fadeInUp 0.8s ease 0.4s both;box-shadow:0 20px 60px rgba(0,0,0,0.3)}
+    .hero-code::before{content:'TERMINAL';position:absolute;top:-10px;left:20px;background:var(--bg-secondary);padding:4px 10px;font-size:11px;color:var(--text-muted);border-radius:4px;letter-spacing:0.05em}
+    .hero-code .prompt{color:#30D158;margin-bottom:6px;font-family:'SF Mono',Monaco,monospace}
+    .hero-code code{color:var(--text);font-size:13px;line-height:1.85;font-family:'SF Mono',Monaco,monospace}
+    .hero-code .comment{color:var(--text-muted)}
+    @keyframes fadeInUp{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:translateY(0)}}
+
+    /* 特性卡片 - macOS 毛玻璃 */
+    .features{padding:140px 0}
+    .section-header{text-align:center;margin-bottom:72px}
+    .section-header h2{font-size:52px;font-weight:600;margin-bottom:12px;letter-spacing:-0.02em}
+    .section-header p{font-size:19px;color:var(--text-secondary)}
+    .features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+    .feature-card{background:var(--card-bg);border:1px solid var(--border);border-radius:24px;padding:32px;transition:all 0.4s cubic-bezier(0.4,0,0.2,1);position:relative;overflow:hidden;opacity:0;transform:translateY(30px)}
+    .feature-card.visible{opacity:1;transform:translateY(0)}
+    .feature-card::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:var(--mac-gradient);opacity:0;transition:opacity 0.3s}
+    .feature-card::after{content:'';position:absolute;top:0;left:0;width:100%;height:100%;background:var(--mac-gradient-subtle);opacity:0;transition:opacity 0.4s;z-index:-1}
+    .feature-card:hover{transform:translateY(-4px);border-color:rgba(0,122,255,0.3);box-shadow:0 24px 48px rgba(0,0,0,0.25),0 0 0 1px rgba(255,255,255,0.05) inset}
+    .feature-card:hover::before{opacity:1}
+    .feature-card:hover::after{opacity:1}
+    .feature-icon{width:52px;height:52px;background:var(--mac-gradient);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:24px;margin-bottom:18px;box-shadow:0 4px 16px rgba(0,122,255,0.25)}
+    .feature-card h3{font-size:18px;font-weight:600;margin-bottom:10px;letter-spacing:-0.01em}
+    .feature-card p{color:var(--text-secondary);font-size:14px;line-height:1.6}
+
+    /* 对比 - macOS 风格 */
+    .comparison{padding:140px 0;background:rgba(0,0,0,0.25)}
+    .comparison-table{max-width:960px;margin:0 auto;background:var(--card-bg);border:1px solid var(--border);border-radius:20px;overflow:hidden;backdrop-filter:blur(20px)}
+    .comp-row{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;padding:18px 28px;border-bottom:1px solid var(--border);transition:all 0.2s}
+    .comp-row:last-child{border-bottom:none}
+    .comp-row:hover{background:rgba(255,255,255,0.03)}
+    .comp-row.header{background:var(--mac-gradient-subtle);font-weight:600;font-size:14px}
+    .comp-row .highlight{background:var(--mac-gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:600}
+    .comp-row .dim{color:var(--text-muted);font-size:13px}
+    .comp-check{color:#30D158}
+    .comp-x{color:#FF453A}
+
+    /* 演示区 */
+    .demo{padding:140px 0}
+    .demo-grid{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center}
+    .demo-text h2{font-size:44px;font-weight:600;margin-bottom:20px;letter-spacing:-0.02em}
+    .demo-text p{color:var(--text-secondary);font-size:17px;margin-bottom:36px;line-height:1.6}
+    .demo-list{list-style:none}
+    .demo-list li{display:flex;align-items:center;gap:18px;padding:20px 0;border-bottom:1px solid var(--border)}
+    .demo-list .icon{width:44px;height:44px;background:var(--mac-gradient);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 4px 12px rgba(0,122,255,0.25)}
+    .demo-visual{background:var(--glass-bg);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:24px;padding:28px;border:1px solid var(--glass-border);position:relative;box-shadow:0 32px 64px rgba(0,0,0,0.3)}
+    .demo-chat{background:var(--bg-secondary);border-radius:14px;padding:24px}
+    .chat-msg{padding:14px 18px;border-radius:18px;margin-bottom:14px;max-width:88%;font-size:14px;line-height:1.5}
+    .chat-msg.ai{background:var(--bg-tertiary);border-bottom-left-radius:6px}
+    .chat-msg.user{background:var(--mac-gradient);color:#fff;margin-left:auto;border-bottom-right-radius:6px;box-shadow:0 4px 12px rgba(0,122,255,0.25)}
+    .chat-input{background:var(--bg-tertiary);border-radius:10px;padding:14px 18px;color:var(--text-muted);font-size:14px;margin-top:16px}
+
+    /* 快速开始 - macOS 步骤条 */
+    .quickstart{padding:140px 0}
+    .steps{display:flex;justify-content:space-between;position:relative}
+    .steps::before{content:'';position:absolute;top:32px;left:12%;right:12%;height:2px;background:var(--border)}
+    .step{text-align:center;position:relative;z-index:1}
+    .step-num{width:64px;height:64px;background:var(--bg-tertiary);border:2px solid var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:600;margin:0 auto 22px;position:relative;transition:all 0.3s}
+    .step-num::after{content:'';position:absolute;inset:-3px;border-radius:50%;background:var(--mac-gradient);opacity:0;transition:opacity 0.3s}
+    .step:hover .step-num{border-color:transparent;background:var(--mac-gradient)}
+    .step:hover .step-num::after{opacity:1}
+    .step h4{font-size:17px;font-weight:600;margin-bottom:6px}
+    .step p{font-size:13px;color:var(--text-muted)}
+
+    /* CTA - macOS 风格 */
+    .cta{padding:160px 0;background:radial-gradient(ellipse at center top,rgba(0,122,255,0.08) 0%,transparent 60%);text-align:center}
+    .cta h2{font-size:56px;font-weight:600;margin-bottom:16px;letter-spacing:-0.02em}
+    .cta p{font-size:21px;color:var(--text-secondary);margin-bottom:44px}
+    .cta-btns{display:flex;gap:14px;justify-content:center}
+
+    /* Footer */
+    footer{padding:48px 0;border-top:1px solid var(--border);text-align:center}
+    footer p{color:var(--text-muted);font-size:13px}
+    footer a{color:var(--text-secondary);transition:color 0.2s}
+    footer a:hover{color:var(--mac-primary)}
+
+    /* 响应式 */
+    @media(max-width:900px){
+      .features-grid{grid-template-columns:repeat(2,1fr)}
+      .demo-grid{grid-template-columns:1fr}
+      .steps{flex-wrap:wrap;gap:40px;justify-content:center}
+      .steps::before{display:none}
+    }
+    @media(max-width:600px){
+      .hero h1{font-size:42px}
+      .hero p{font-size:18px}
+      .nav{display:none}
+      .features-grid{grid-template-columns:1fr}
+      .comparison-table{font-size:11px}
+      .section-header h2{font-size:36px}
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-gradient">
+    <div class="bg-noise"></div>
+  </div>
+
+  <header>
+    <div class="container header-inner">
+      <a href="#" class="logo"><div class="logo-icon">C</div><span>Cota</span></a>
+      <nav class="nav">
+        <a href="#features">平台能力</a><a href="#comparison">职责分工</a>
+        <a href="#demo">业务规则</a><a href="introduction.html">使用手册</a>
+      </nav>
+      <a href="https://github.com/CotaAI/cota" class="btn btn-primary">GitHub</a>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="container">
+      <div class="hero-badge"><span>Bot Development &amp; Deployment</span></div>
+      <h1>定义业务能力<span>交付可使用的 Bot</span></h1>
+      <p>用 Skill 描述能力，用 Policy 指导行为，用 Trace 保留证据。<br>供自己使用，分享聊天入口，或交付 Bot 文件夹。</p>
+      <div class="hero-btns">
+        <a href="tutorial/quick_start.html" class="btn btn-primary">开始第一个 Bot</a>
+        <a href="concepts/raas_architecture.html" class="btn btn-outline">理解架构</a>
+      </div>
+      <div class="hero-code"><code>
+        <span class="comment"># 安装对应版本后，初始化官方模板</span><br>
+        cota init<br><br>
+        <span class="comment"># 填写 cota_projects/weather/endpoints.yml 中的模型配置</span><br>
+        cota shell --config cota_projects/weather --debug<br><br>
+        <span class="comment"># 或启用浏览器聊天页面 /chat/</span><br>
+        cota run --config cota_projects/weather --chat-app
+      </code></div>
+      <p style="font-size:14px;margin-top:24px">本页描述当前开发代码。源码与平台发布包的安装方式见 <a href="installation/install.html">安装说明</a>。</p>
+    </div>
+  </section>
+
+  <section class="features" id="features"><div class="container">
+    <div class="section-header"><h2>围绕完整 Bot 建设</h2><p>个人助手、客服和群聊助手，共用稳定的业务与执行结构。</p></div>
+    <div class="features-grid">
+      <div class="feature-card"><div class="feature-icon">🧩</div><h3>Skill 业务能力</h3><p>以 SKILL.md 编写 SOP。Pi 发现目录，模型按需读取并组合多个能力。</p></div>
+      <div class="feature-card"><div class="feature-icon">📝</div><h3>对话式 Policy</h3><p>像写对话一样描述业务判断、能力选择、结果分支和回复，降低标注门槛。</p></div>
+      <div class="feature-card"><div class="feature-icon">🔎</div><h3>训练与运行指导</h3><p>支持 BM25、Embedding、模型判断与搜索策略，每次请求结合当前事实选择业务案例。</p></div>
+      <div class="feature-card"><div class="feature-icon">⚙️</div><h3>Pi Core 执行</h3><p>官方 Agent Core 驱动模型与工具循环，Cota 提供业务指导、工具边界和持久化确认。</p></div>
+      <div class="feature-card"><div class="feature-icon">🗂️</div><h3>事件与状态恢复</h3><p>DST 从事件推导状态，Store 逐条保存事实并维护快照，Trace 用于回溯真实执行。</p></div>
+      <div class="feature-card"><div class="feature-icon">🛠️</div><h3>可追踪的工具能力</h3><p>接入 Python Tool、MCP 或独立工具进程。Skill 文本不替代实际依赖与权限。</p></div>
+      <div class="feature-card"><div class="feature-icon">💬</div><h3>单聊与群聊</h3><p>会话顺序、跨用户隔离、断线恢复；群聊可以被 @ 回应，也可启用受控的主动参与。</p></div>
+      <div class="feature-card"><div class="feature-icon">🔌</div><h3>应用入口</h3><p>命令行、Web HTTP/WebSocket 和飞书。可选聊天应用独立提供会话列表与群成员管理。</p></div>
+      <div class="feature-card"><div class="feature-icon">📋</div><h3>调试与验证</h3><p>同一页面查看 Events、Skills、Model Requests 与 DST，结合真实案例检查业务行为。</p></div>
+    </div>
+  </div></section>
+
+  <section class="comparison" id="comparison"><div class="container">
+    <div class="section-header"><h2>清晰的职责分工</h2><p>创作者定义业务，Pi 驱动执行，Cota 组织可交付的服务。</p></div>
+    <div class="comparison-table">
+      <div class="comp-row header"><div>职责</div><div>创作者 / 外围应用</div><div>Cota</div><div>Pi</div></div>
+      <div class="comp-row"><div>业务定义</div><div class="dim">Skill、Policy、工具</div><div class="highlight">加载、校验与指导</div><div class="dim">驱动模型选择与组合 Skill</div></div>
+      <div class="comp-row"><div>执行与记录</div><div class="dim">依赖与权限配置</div><div class="highlight">工具适配、事件与恢复</div><div class="dim">模型—工具循环</div></div>
+      <div class="comp-row"><div>应用接入</div><div class="dim">账号、成员、入口维护</div><div class="highlight">会话协调与投递</div><div class="dim">本轮执行</div></div>
+      <div class="comp-row"><div>持续改进</div><div class="dim">审核案例与验证效果</div><div class="highlight">Trace、标注、Policy 训练</div><div class="dim">接受更新后的指导</div></div>
+    </div>
+  </div></section>
+
+  <section class="demo" id="demo"><div class="container demo-grid">
+    <div class="demo-text"><h2>把业务规则<br>写成易读的对话</h2><p>运营可以从零编写，也可以修改真实对话草稿。案例中的结果是条件，运行时仍以真实工具数据为准。</p>
+      <ul class="demo-list">
+        <li><div class="icon">📝</div><div><strong>thought</strong><p>说明为什么选能力，怎样处理异常和组织话术。</p></div></li>
+        <li><div class="icon">🧩</div><div><strong>skills</strong><p>按稳定名称表达期望使用的业务能力。</p></div></li>
+        <li><div class="icon">🔎</div><div><strong>result</strong><p>写出会影响后续流程的示例结果条件。</p></div></li>
+        <li><div class="icon">💬</div><div><strong>reply</strong><p>提供话术示例，不复制案例数据作为当前事实。</p></div></li>
+      </ul><a href="concepts/skill-policy.html" class="btn btn-outline">查看完整标注格式</a>
+    </div>
+    <div class="demo-visual"><div class="demo-chat">
+      <p style="margin-bottom:18px;color:var(--text-secondary)">业务案例示意，非实时查询</p>
+      <div class="chat-msg user">北京现在多少度？</div>
+      <div class="chat-msg ai">业务判断：需要实时数据，使用 weather 能力。</div>
+      <div class="chat-msg ai">案例条件：主服务和备用服务都没有取得有效结果。</div>
+      <div class="chat-msg ai">话术原则：说明暂时无法确认，不编造气温。</div>
+      <div class="chat-msg ai">回复示例：暂时未能查询到天气，我还不能确认当前温度。</div>
+    </div></div>
+  </div></section>
+
+  <section class="quickstart" id="quickstart"><div class="container">
+    <div class="section-header"><h2>从一个 Bot 开始</h2><p>先验证业务行为，再选择适合的交付入口。</p></div>
+    <div class="steps">
+      <div class="step"><div class="step-num">1</div><h4>准备环境</h4><p><a href="installation/install.html">源码或平台发布包</a></p></div>
+      <div class="step"><div class="step-num">2</div><h4>初始化</h4><p>cota init</p></div>
+      <div class="step"><div class="step-num">3</div><h4>配置资源</h4><p>endpoints.yml</p></div>
+      <div class="step"><div class="step-num">4</div><h4>验证行为</h4><p>shell --debug</p></div>
+      <div class="step"><div class="step-num">5</div><h4>交付 Bot</h4><p><a href="deployment/sharing.html">服务入口或文件夹</a></p></div>
+    </div>
+  </div></section>
+
+  <section class="cta"><div class="container"><h2>可验证地改进你的 Bot</h2><p>自动 RSI 和完整 sandbox 安装包仍是后续方向。当前能力与部署边界在手册中明确说明。</p>
+    <div class="cta-btns"><a href="introduction.html" class="btn btn-primary">阅读手册</a><a href="concepts/roadmap.html" class="btn btn-outline">能力边界与规划</a></div>
+  </div></section>
+  <footer><div class="container"><p>Cota · Bot 开发与部署平台 | <a href="https://github.com/CotaAI/cota">GitHub</a></p></div></footer>
+
+  <script>
+    // 滚动动画
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+        }
+      });
+    }, { threshold: 0.1 });
+
+    document.querySelectorAll('.feature-card').forEach((card, i) => {
+      card.style.transition = `all 0.6s ease ${i * 0.1}s`;
+      observer.observe(card);
+    });
+  </script>
+</body>
+</html>

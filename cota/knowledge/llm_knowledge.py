@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any
 from cota.knowledge.knowledge import Knowledge
 from cota.constant import DEFAULT_DIALOGUE_MAX_TOKENS
 
@@ -11,33 +11,15 @@ class LLMKnowledge(Knowledge):
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        # Support both single llm and llms list configuration
-        self.llms = config.get('llms', [])
+        self.llm = config.get('llm')
+        if not isinstance(self.llm, str) or not self.llm:
+            raise ValueError('LLMKnowledge requires an llm name')
+        if 'llms' in config or 'action' in config:
+            raise ValueError('Action-specific knowledge routing was removed; use llm')
         self.prompt_template = config.get('prompt', self._default_prompt())
         self.max_tokens = config.get('max_tokens', DEFAULT_DIALOGUE_MAX_TOKENS)
         self.temperature = config.get('temperature', 0.7)
-        
-        if not self.llms:
-            raise ValueError(f"LLM configuration is required for LLMKnowledge")
-        
-        # Build action to LLM mapping and find default LLM
-        self.action_llm_map = {}
-        self.default_llm = None
-        
-        for llm_config in self.llms:
-            llm_name = llm_config.get('name')
-            action = llm_config.get('action')
-            
-            if not llm_name:
-                logger.warning(f"LLM configuration missing name: {llm_config}")
-                continue
-                
-            if action:
-                self.action_llm_map[action] = llm_name
-            else:
-                # LLM without specific action serves as default
-                self.default_llm = llm_name
-    
+
     def _default_prompt(self) -> str:
         """Default prompt template for knowledge retrieval."""
         return """根据以下查询问题，提供相关的知识信息：
@@ -48,32 +30,6 @@ class LLMKnowledge(Knowledge):
 
                 请提供准确、有用的知识信息来帮助回答这个问题。
             """
-    
-    def _select_llm(self, context: Dict[str, Any] = None) -> str:
-        """Select appropriate LLM based on context."""
-        if context:
-            # Try to get current action from context
-            current_action = context.get('current_action')
-            if current_action and hasattr(current_action, 'name'):
-                action_name = current_action.name
-            elif current_action and hasattr(current_action, '__class__'):
-                action_name = current_action.__class__.__name__
-            else:
-                action_name = None
-                
-            # Check if we have a specific LLM for this action
-            if action_name and action_name in self.action_llm_map:
-                return self.action_llm_map[action_name]
-        
-        # Use default LLM if available
-        if self.default_llm:
-            return self.default_llm
-            
-        # Fallback to first available LLM
-        if self.llms:
-            return self.llms[0].get('name')
-            
-        raise ValueError("No LLM available for knowledge retrieval")
     
     async def retrieve(self, query: str, context: Dict[str, Any] = None) -> str:
         """Use LLM to generate knowledge based on query and context."""
@@ -88,7 +44,7 @@ class LLMKnowledge(Knowledge):
             prompt = self._build_prompt(query, context)
             
             # Select appropriate LLM
-            selected_llm = self._select_llm(context)
+            selected_llm = self.llm
             
             # Call LLM
             llm_instance = agent.llm_instance(selected_llm)
@@ -124,4 +80,4 @@ class LLMKnowledge(Knowledge):
             else:
                 prompt = prompt.replace('{{history}}', "")
         
-        return prompt
+        return prompt.replace('{{history}}', '')

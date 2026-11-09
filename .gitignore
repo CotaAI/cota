@@ -16,7 +16,30 @@ secrets/
 *.key
 *.pem
 credentials.json
+node_modules/
+.build/
+cota/runtime/_vendor/
+bots/**/workspace/
+bots/**/.front_cache.html
+bots/**/.front_meta.json
+bots/**/scheduler_jobs.json
 
 # Policy生成的文件
 **/policy/*_dpl_*.md
 **/policy/llm_dpl_*.md
+
+.DS_Store
+
+# Deployment-local state, including optional Web signing key
+**/.cota/
+.coverage
+.coverage.*
+htmlcov/
+.ruff_cache/
+coverage.json
+coverage.xml
+
+# Local development and agent state
+.venv/
+.omc/
+.pytest_cache/

@@ -1,477 +1,107 @@
-# Agent配置详解
+# agent.yml
 
-Agent配置文件(`agent.yml`)是COTA智能体的核心配置文件，定义了智能体的身份、对话策略、知识管理和动作能力。它是智能体的"大脑"，决定了智能体如何思考、决策和响应用户。
+`agent.yml` 定义 Bot 的业务行为。`Agent.load_from_path()` 先调用严格 validator，再与默认值合并；未知顶层字段或未知 dialogue 字段直接报错。
 
-## 🎯 Agent配置的作用与角色
-
-**核心作用**：
-- **身份定义**：通过`system`配置智能体的角色和性格
-- **对话控制**：通过`dialogue`控制对话流程和参数
-- **策略管理**：通过`policies`定义智能体的思维和决策模式
-- **知识整合**：通过`knowledge`配置知识来源和检索策略
-- **能力扩展**：通过`actions`定义智能体可执行的具体动作
-
-**在COTA架构中的角色**：
-- 被`Agent`类加载并解析为智能体实例
-- 与`endpoints.yml`协同工作，前者定义能力，后者提供服务连接
-- 通过`Processor`类驱动整体对话流程
-
-## 📋 配置项总览
+## 最小示例
 
 ```yaml
-system:      # 智能体身份 - 定义角色和基本信息
-dialogue:    # 对话控制 - 控制对话模式和参数限制  
-policies:    # 决策策略 - 定义思维模式和决策逻辑
-knowledge:   # 知识管理 - 配置知识来源和检索策略
-actions:     # 动作定义 - 定义智能体的具体能力和行为
-```
-
-| 配置项 | 对应模块 | 核心作用 |
-|--------|----------|----------|
-| `system` | `Agent`类初始化 | 设定智能体身份和描述 |
-| `dialogue` | `Processor`对话处理 | 控制对话流程和限制 |
-| `policies` | `DPL`策略学习 | 驱动智能体思考和决策 |
-| `knowledge` | `Knowledge`知识管理 | 提供外部知识支持 |
-| `actions` | `Action`系统 | 定义智能体的具体行为 |
-
-## 🔧 详细配置说明
-
-### 1. System配置 - 智能体身份
-
-**作用**：定义智能体的基本身份信息，影响所有后续交互的语调和行为风格。
-
-```yaml
+deploy: service
 system:
-  description: "你是一个智能助手，你需要认真负责的回答帮用户解决问题"
-  name: "assistant"  # 可选
-```
-
-**配置参数**：
-
-| 参数 | 必需 | 默认值 | 说明 |
-|------|------|--------|------|
-| `description` | ✅ | - | 智能体角色描述，作为系统提示词的基础 |
-| `name` | ❌ | "agent" | 智能体名称，用于日志和多Agent场景 |
-
-### 2. Dialogue配置 - 对话控制
-
-**作用**：控制对话的基本参数和流程限制，对应`Processor`类的对话处理逻辑。
-
-```yaml
+  name: Support Bot
+  description: 你是客服助手，依据已有资料回答，不编造查询结果。
 dialogue:
-  use_proxy_user: false   # 是否启用代理用户模式
-  max_proxy_step: 20      # 代理模式下的最大步骤数
-  max_tokens: 500         # LLM生成最大令牌数
-```
-
-**配置参数**：
-
-| 参数 | 必需 | 默认值 | 说明 |
-|------|------|--------|------|
-| `use_proxy_user` | ❌ | false | 是否启用代理用户功能，用于自动化模拟用户交互 |
-| `max_proxy_step` | ❌ | 20 | 代理模式下的最大对话步数，防止无限循环 |
-| `max_tokens` | ❌ | 500 | LLM生成的最大令牌数，控制回复长度 |
-
-### 3. Policies配置 - 决策策略
-
-**作用**：配置智能体的思维模式和决策策略，对应COTA的`DPL`(Dialogue Policy Learning)系统。
-
-```yaml
-policies:
-  - type: trigger    # 触发式策略，基于规则快速响应
-  - type: match      # 匹配策略，基于标注数据进行思维链学习
-  - type: llm        # LLM策略，基于大模型推理 (三种策略中的一个或过个)
-    config:
-      llms:                   # LLM配置列表
-        - name: rag-glm-4    # 默认LLM
-        - name: rag-utter    # BotUtter动作专用LLM
-          action: BotUtter
-        - name: rag-selector  # Selector动作专用LLM
-          action: Selector
-```
-
-**策略类型说明**：
-
-| 策略类型 | 对应类 | 作用机制 |
-|----------|--------|----------|
-| `trigger` | `TriggerDPL` | 基于`policy/rules.yml`中定义的触发规则进行快速响应 |
-| `match` | `MatchDPL` | 基于`policy/data.yml`中的标注数据学习思维链推理过程 |
-| `llm` | `LLMDPL` | 基于大模型推理，支持动作级别的LLM绑定配置 |
-
-**配置说明**：
-- **trigger策略**：适用于简单、确定性的对话场景，响应速度快
-- **match策略**：适用于复杂推理场景，通过学习标注数据生成思维链
-- **llm策略**：基于大模型推理，支持为不同动作配置专用LLM
-- **策略组合**：可以同时配置多种策略，系统会根据场景选择合适的策略
-
-### 4. Knowledge配置 - 知识管理（可选）
-
-**作用**：配置智能体的知识来源和检索策略，对应`Knowledge`和`KnowledgeFactory`类。主要用于RAG（检索增强生成）功能。
-
-```yaml
-knowledge:
-  - type: llm                 # LLM类型知识源
-    config:
-      llms: 
-        - name: rag-glm-4    # 知识检索使用的LLM
-          action: BotUtter   # 绑定到BotUtter动作
-        - name: rag-glm-4
-          action: Selector   # 绑定到Selector动作
-        - name: rag-glm-4    # 默认知识LLM
-```
-
-**知识配置参数**：
-
-| 参数 | 说明 |
-|------|------|
-| `type` | 知识源类型，当前支持"llm" |
-| `config.llms` | 知识检索使用的LLM配置列表 |
-
-### 5. Actions配置 - 动作定义
-
-**作用**：定义智能体可执行的具体动作，每个动作对应一个`Action`类或其子类。
-
-#### 5.1 基础动作
-
-**UserUtter - 用户输入处理**
-```yaml
-UserUtter:
-  description: "用户的action - 用户向智能体提问"
+  runtime: pi
+  llm: default
+  max_tokens: 2000
+  max_iterations: 12
   prompt: |
-    历史对话:
-    {{history_messages}}
-    请输出对医生说的话
-    
-  breaker:  # 对话中断判断器
-    description: "判断是否跳出"
-    prompt: |
-      根据对话内容，判断对话是否满足要求
-      对话内容: {{history_messages}}
-      如果对话完整且可以结束, 输出标识符true。
-      如果对话还需要继续, 输出标识符false。
-      输出格式为: <标识符>
+    {{task_description}}
+    用户偏好：{{user_context_text}}
+    按需阅读可用 Skill。缺少必要信息时向用户追问。
+tools:
+  allow: [http_request]
+  deny: []
+policy:
+  type: all
 ```
 
-**BotUtter - 智能体回复**
+模型 `default` 在 `endpoints.yml` 定义。配置允许工具不会替代真实服务权限；不配置 Skill 也可以进行纯对话。
+
+## system 与 dialogue
+
+| 字段 | 默认 / 约束 |
+| --- | --- |
+| `system.name` | 可选文本，Bot 名称 |
+| `system.description` | 可选文本；缺省使用个人助理描述 |
+| `dialogue.runtime` | `pi`；只支持 Pi |
+| `dialogue.llm` | 省略时用 endpoints 中第一个模型 |
+| `dialogue.mode` | `direct` 或 `group`，默认 `direct` |
+| `dialogue.response` | `passive` 或 `proactive`，默认 `passive` |
+| `dialogue.prompt` | 文本模板，省略时使用默认业务指引 |
+| `dialogue.max_tokens` | 每次主模型请求上限，默认 500，正整数 |
+| `dialogue.max_iterations` | Processor 创建 runtime 时默认 30，正整数 |
+| `dialogue.run_timeout_seconds` | 整轮 Pi bridge 超时，默认 300，正有限数值 |
+| `dialogue.context_max_chars` | 请求上下文 JSON 字符预算，默认 320000，正整数 |
+| `dialogue.context_keep_turns` | 压缩保留最近用户轮次，默认 3，正整数 |
+| `dialogue.summary_max_tokens` | 摘要调用上限，默认 2000，正整数 |
+| `dialogue.pi_node` | 可选 Node 路径或可执行文件名称 |
+
+`mode` 和 `response` 的行为需结合 [群聊](../deployment/group.md) 与 Application 使用。`use_proxy_user`、`max_proxy_step`、`proxy_prompt` 和顶层 `user_proxy.description` 仍被配置校验接受，但当前带输入标识的 Processor 路径明确拒绝启用 proxy 模拟，不作为可部署对话方案。
+
+## Prompt 变量
+
+允许的变量是 `task_description`、`agent_description`、`user_context_text`、`session_summary`、`latest_user_query`、`compressed_history`、`history_messages`、`knowledge`。写法为 `{{变量名}}`，未知变量报错。
+
+`task_description` 和 `agent_description` 来自 Bot 描述；用户记忆取自 DST 已记录状态。历史消息本身已进入模型上下文，模板中重复插入完整 history 会增加长度，通常不需要。
+
+## deploy 与 environment
+
+`deploy` 使用 `personal` 或 `service`，省略时为 `service`。这是服务对象的区别，不是本机与云端的区别；不会依据 Channel 或网络监听地址自动切换。
+
+个人电脑和个人云服务器均可只配置：
+
 ```yaml
-BotUtter:
-  description: "回复用户"
-  prompt: |
-    你是一个智能助手，需要根据当前对话历史生成合适的回复。
-    
-    **任务描述：** {{task_description}}
-    **输出格式要求：**
-    你必须严格按照以下JSON格式响应，不要有任何其他内容：
-    ```json
-    {"thought": "<你的推理过程>", "text": "<你的回复内容>"}
-    ```
-    
-    **学习参考资料：** {{policies}}
-    **实际对话历史：** {{history_actions}}
-    
-    请分析上述实际对话历史，参考学习资料中的思维模式，生成合适的JSON格式回复：
+deploy: personal
 ```
 
-**Selector - 动作选择器**
+默认绑定部署机器，等价于：
+
 ```yaml
-Selector:
-  description: "选择合适的Actions"
-  prompt: |
-    你是一个智能对话助手，需要根据当前对话状态选择下一个最合适的Action。
-    
-    **输出格式要求：**
-    ```json
-    {"thought": "<你的推理过程>", "action": "<工具名称>"}
-    ```
-    
-    **可用的Action工具：** {{action_descriptions}}
-    **决策参考模式：** {{policies}}
-    **当前对话状态：** {{history_actions}}
-    
-    请分析当前对话状态，参考决策模式，选择最合适的下一个Action并输出JSON格式结果：
+deploy: personal
+environment:
+  type: machine
+  workspace: ./files
+  timeout_seconds: 60
 ```
 
-#### 5.2 Form动作 - 表单处理
+`workspace` 相对 Bot 目录解析，默认 `files`，首次执行才创建；SDK 直接 `Agent(deploy='personal')` 时相对创建 Agent 时的 cwd。`timeout_seconds` 默认 60，为正有限数值，限制单次 bash/powershell。工作目录是起始位置，不是沙箱。machine 使用部署账号的文件、进程与网络权限。个人部署可显式使用 `environment: {type: none}` 关闭业务文件与 Shell。
 
-**作用**：Form动作用于收集用户信息并执行外部API调用，对应`Form`类。
+对外提供服务配置：
 
-**核心组件**：
-- **prompt**: 统一处理槽位更新和结果返回的主要提示词
-- **slots**: 需要收集的信息槽位定义
-- **executer**: 外部服务执行器
-
-**配置示例**：
 ```yaml
-Weather:  # 天气查询Form动作
-  description: "查询天气"
-  prompt: |
-    当前正在执行{{current_form_name}}，其描述为{{current_form_description}}。
-    根据对话内容及Action序列，结合当前slot的状态，填充或重置slot的值。
-    
-    历史Action序列为:
-    {{history_actions_with_thoughts}}
-    
-    Action的描述为:
-    {{action_descriptions}}
-    
-    当前slots为:
-    {{current_form_slot_states}}
-    
-    slots的含义为:
-    {{current_form_slot_descriptions}}
-    
-    填充或重置slot的值，保持slots格式输出json字符串。
-
-  slots:  # 槽位定义
-    city:
-      description: "城市，注意：接口只支持输入单个城市"
-      prompt: |
-        当前正在执行Action {{current_form_name}}, 其描述为 {{current_form_description}}。
-        接下来需要询问用户，需要查询哪个城市的天气。
-        
-        你必须严格按照以下JSON格式响应：
-        {"text": "<你的回复内容>"}
-
-    time:
-      description: "时间"
-      prompt: |
-        当前正在执行Action {{current_form_name}}, 其描述为 {{current_form_description}}。
-        接下来需要询问用户，需要查询哪天的天气。
-
-        你必须严格按照以下JSON格式响应：
-        {"text": "<你的回复内容>"}
-
-  executer:  # 执行器配置
-    url: http://rap2api.taobao.org/app/mock/319677/Weather
-    method: GET      # HTTP方法，可选GET、POST等
-    output: ["<text>", "接口异常"]  # 预期输出格式
-    mock: false      # 是否使用模拟数据
+deploy: service
 ```
 
-**Form动作工作流程**：
-1. **槽位收集**：依次询问用户填充`slots`中定义的信息
-2. **状态更新**：通过主`prompt`智能解析用户输入并更新槽位状态
-3. **完整性检查**：当所有必需槽位填充完成后，进入执行阶段
-4. **外部调用**：通过`executer`调用外部API获取结果
-5. **结果返回**：返回执行结果给用户
+service 默认 none，只允许通过 read 阅读已发现 Skill 资源，业务扩展工具仍由 tools 配置决定。当前拒绝 machine，避免多人请求使用共享服务器权限。用户隔离环境、群组共享环境和已授权 Client 均属于后续 service 执行后端，尚未实现；device/container 等未知后端直接报错，不回退。
 
-**为什么要这样配置**：
-- **prompt**: 统一处理槽位更新逻辑，简化配置结构
-- **slots**: 结构化收集用户信息，避免信息遗漏
-- **executer**: 标准化外部服务调用，支持HTTP、模拟等多种方式
+旧 `environment.type: host`、`deploy: local/host/remote` 不再支持。`deploy` 和实际执行环境记录到 run metadata，不增加对话 Event。详见 [工具与执行环境](../concepts/tool-adapters.md)。
 
-**配了可以做什么**：
-- 实现结构化信息收集（如订单、预约、查询等）
-- 集成外部API服务（天气、计算、数据库等）
-- 提供交互式任务执行能力
+`environment.shell` 可选 `auto`（默认）、`bash`、`powershell` 或 `both`。auto 提供可用 Shell；显式指定但不可用时在主 Agent 模型循环开始前报错。Pi 1.4.0 的 PowerShell 仅支持 Windows。grep/find 分别需要预装 rg/fd（或 fdfind），缺失时省略并记录原因，不在运行时下载。
 
-#### 5.3 模板变量
+`tools.allow/deny` 只控制业务扩展；八个 Pi 原生工具由环境与依赖可用性决定，不要把它们填写在这些列表中。
 
-所有Action的`prompt`支持丰富的模板变量：
+## tools、policy 与 knowledge
 
-| 变量名 | 说明 | 适用动作 |
-|--------|------|----------|
-| `{{task_description}}` | 任务描述 | 所有动作 |
-| `{{history_messages}}` | 历史消息列表 | UserUtter |
-| `{{history_actions_with_thoughts}}` | 带思维链的历史动作序列 | BotUtter, Selector |
-| `{{policies}}` | 策略思维链参考（来自policy/data.yml） | BotUtter, Selector |
-| `{{action_descriptions}}` | 可用动作描述 | Selector |
-| `{{current_form_name}}` | 当前表单名称 | Form动作 |
-| `{{current_form_description}}` | 当前表单描述 | Form动作 |
-| `{{current_form_slot_states}}` | 当前槽位状态 | Form动作 |
-| `{{current_form_slot_descriptions}}` | 槽位描述信息 | Form动作 |
-| `{{current_form_execute_result}}` | 执行结果 | Form动作执行后 |
-| `{{knowledge}}` | 知识库检索结果 | BotUtter（当配置knowledge时） |
+`tools.allow` / `deny` 是工具名称或分组名称列表，建议直接使用 `http_request`。它是唯一内置自定义工具，使用 Pi 标准工具定义在 Node 中执行；`group:network` 和 `group:all` 可用于分组配置。省略 allow 表示允许当前启用的自定义工具，空 allow 不提供自定义工具；deny 优先。Pi 原生工具与 Skill 资源读取由 environment 决定。
 
-**重要说明**：
-- `history_actions_with_thoughts` 包含完整的动作历史和思维过程，是推理的重要依据
-- `policies` 变量提供标注数据作为思维链学习的参考模式
+未知分组在加载配置时拒绝；具体名称在应用完成工具注册后的运行入口校验，未注册或拼错的工具会在调用模型前报错。应用可在注册结束后调用 `agent.get_tool_registry().validate()` 提前检查。业务 API 凭据、身份鉴权与幂等由外围适配器或工具服务负责，Cota 不新增凭据管理配置，见 [Tool 适配](../concepts/tool-adapters.md)。
 
-## 📚 推荐配置示例
+Policy 不改变工具权限。`policy.type` 默认 `all`，其他策略的 options、训练和产物配置见 [Policy 配置](policy.md)。业务案例写入 `policy/`，不塞进 `agent.yml` 的 dialogue 字段。
 
-### 1. 简单问答助手
-```yaml
-system:
-  description: "你是一个智能问答助手，提供准确、有用的回答"
+可选 `knowledge` 是列表，当前支持 `type: llm`，并指定 `llm`、可选 `prompt`、`max_tokens`、`temperature`。知识内容通过 `{{knowledge}}` 等模板调用参与本轮准备；它不是额外 Agent。
 
-dialogue:
-  use_proxy_user: false
-  max_proxy_step: 20
-  max_tokens: 300
+可选 `channels` 为部署默认值，推荐把平台凭证放在 endpoints。模型可用工具由当前配置与执行环境决定；群聊不加载成员个人记忆，详见 [Tool 适配](../concepts/tool-adapters.md)。
 
-policies:
-  - type: trigger
-  - type: match
+实现入口：`cota/config.py`、`cota/constant.py`、`cota/agent.py`、`cota/processor.py`。
 
-actions:
-  BotUtter:
-    description: "回复用户"
-    prompt: |
-      你是一个智能助手，需要根据当前对话历史生成合适的回复。
-      
-      **任务描述：**
-      {{task_description}}
-      
-      **输出格式要求：**
-      ```json
-      {"thought": "<你的推理过程>", "text": "<你的回复内容>"}
-      ```
-      
-      **学习参考资料：**
-      {{policies}}
-      
-      **实际对话历史：**
-      {{history_actions_with_thoughts}}
-      
-  Selector:
-    description: "选择动作"
-    prompt: |
-      你是一个智能对话助手，需要根据当前对话状态选择下一个最合适的Action。
-      
-      **输出格式要求：**
-      ```json
-      {"thought": "<你的推理过程>", "action": "<工具名称>"}
-      ```
-      
-      **可用的Action工具：**
-      {{action_descriptions}}
-      
-      **当前对话状态：**
-      {{history_actions_with_thoughts}}
-```
-
-### 2. 带知识检索的客服助手
-```yaml
-system:
-  description: "你是专业的客服助手，基于知识库提供准确服务"
-
-dialogue:
-  use_proxy_user: false
-  max_proxy_step: 30
-  max_tokens: 500
-
-policies:
-  - type: trigger
-  - type: match
-
-knowledge:
-  - type: llm
-    config:
-      llms:
-        - name: rag-glm-4
-          action: BotUtter
-        - name: rag-glm-4
-          action: Selector
-        - name: rag-glm-4  # 默认知识检索LLM
-
-actions:
-  BotUtter:
-    description: "客服回复"
-    prompt: |
-      你是专业客服，需要提供准确、友好的服务。
-      
-      **任务描述：**
-      {{task_description}}
-      
-      **输出格式要求：**
-      ```json
-      {"thought": "<你的分析过程>", "text": "<你的回复内容>"}
-      ```
-      
-      **知识库信息：**
-      {{knowledge}}
-      
-      **学习参考资料：**
-      {{policies}}
-      
-      **实际对话历史：**
-      {{history_actions_with_thoughts}}
-      
-  Selector:
-    description: "动作选择器"
-    prompt: |
-      根据用户需求和知识库信息选择合适的响应动作。
-      
-      **可用动作：**
-      {{action_descriptions}}
-      
-      **当前对话状态：**
-      {{history_actions_with_thoughts}}
-      
-      **输出格式：**
-      ```json
-      {"thought": "<分析过程>", "action": "<动作名称>"}
-      ```
-```
-
-### 3. 代理模式助手（自动化对话）
-```yaml
-system:
-  description: "你是一个专业的宠物疾病问诊助手，擅长收集宠物症状信息并提供初步的诊断建议"
-
-dialogue:
-  use_proxy_user: true    # 启用代理模式
-  max_proxy_step: 30
-  max_tokens: 800
-
-policies:
-  - type: trigger
-  - type: match
-
-actions:
-  UserUtter:              # 代理模式下必须配置UserUtter
-    description: "用户的action - 宠物主人向问诊助手咨询宠物疾病"
-    prompt: |
-      你是一个关心宠物健康的主人，你的宠物可能出现了一些健康问题，你想要咨询专业的宠物问诊助手。
-      
-      **角色设定：**
-      - 你是一个关心宠物的主人
-      - 你会描述宠物的症状、行为变化等
-      - 当得到满意的建议时，你会表示感谢并结束对话
-      
-      **历史对话：**
-      {{history_messages}}
-      
-      **输出格式（严格按照JSON格式）：**
-      ```json
-      {
-        "thought": "你的内心想法和推理过程",
-        "text": "你作为宠物主人要说的话",
-        "state": "continue/stop"
-      }
-      ```
-      
-  BotUtter:
-    description: "专业宠物问诊助手回复用户"
-    prompt: |
-      你是一个专业的宠物疾病问诊助手，需要根据当前对话历史生成合适的回复。
-      
-      **输出格式要求：**
-      ```json
-      {"thought": "<你的推理过程>", "text": "<你的回复内容>"}
-      ```
-      
-      **学习参考资料：**
-      {{policies}}
-      
-      **实际对话历史：**
-      {{history_actions_with_thoughts}}
-      
-  Selector:
-    description: "选择合适的Actions"
-    prompt: |
-      你是一个专业的宠物问诊助手，需要根据当前对话状态选择下一个最合适的Action。
-      
-      **输出格式要求：**
-      ```json
-      {"thought": "<你的推理过程>", "action": "<工具名称>"}
-      ```
-      
-      **可用的Action工具：**
-      {{action_descriptions}}
-      
-      **当前对话状态：**
-      {{history_actions_with_thoughts}}
-```
-
-通过合理配置Agent，可以创建功能强大、响应准确的COTA智能体。建议从简单配置开始，逐步增加复杂功能和Form动作。
+相关文档：[Endpoints 配置](endpoints.md) · [Agent](../concepts/agent.md) · [执行流程](../concepts/execution-flow.md) · [Skill Policy](../concepts/skill-policy.md)

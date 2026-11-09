@@ -1,255 +1,103 @@
-# DST (对话状态跟踪器)
+# DST 与 Store：会话事实和恢复
 
-Dialogue State Tracker (DST) 是COTA框架中的关键组件，负责跟踪和更新对话状态。DST在多轮对话中扮演着"记忆"的角色，记录对话历史信息，帮助系统理解当前对话的上下文，并为Action提供丰富的状态变量。
+DST（Dialogue State Tracker）保存一个 `session_id` 的事件派生状态。Store 保存事实、快照、run metadata 和投递数据。Agent、模型连接、数据库连接不属于会话状态。
 
-## 🎯 核心功能
+## 事件与状态的关系
 
-### 1. 状态维护
-- **Action序列**: 维护完整的Action执行顺序和结构
-- **对话历史**: 记录用户和智能体的完整交互历史
-- **槽位状态**: 跟踪Form动作中的槽位填充状态
-- **会话持久化**: 支持跨会话的状态保存和恢复
+实时执行和历史恢复共用 `DST.apply_event()` reducer。它校验事件格式、顺序、引用和 run 状态转移；重放只推导状态，不调用工具、模型、时钟或用户记忆。
 
-### 2. 状态提供
-DST为Action的prompt提供丰富的状态变量，通过`{{}}`模板语法使用：
-- **任务信息**: `{{task_description}}`等任务相关状态
-- **对话历史**: `{{history_actions_with_thoughts}}`等历史信息
-- **当前状态**: `{{current_form_name}}`等当前执行状态
-- **知识信息**: `{{knowledge}}`等外部知识状态
+| 事件 | 状态变化 |
+| --- | --- |
+| `user_context_updated` | 在同一事件中记录身份与当时上下文；身份或内容变化时更新 `user_id` / `user_context` |
+| `user_utter` / `bot_utter` | 更新最近输入 / 回复游标，进入对话与模型上下文投影 |
+| `run_started` | 建立 `execution`，记录 run、触发输入、引擎、状态和 pending tools |
+| `run_finished` | 更新本轮执行结果，如 `completed`、`failed`、`interrupted` |
+| `tool_started` / `tool_result` | 更新当前 run 的 pending tools，投影工具调用与结果；成功 Skill 阅读更新 `active_skill` |
+| `context_compaction` | 在模型上下文投影中用摘要替换指定历史消息，不删除原始事实 |
 
-### 3. 状态恢复
-通过序列化机制，DST可以：
-- 将对话状态保存到数据库（MySQL、Redis等）
-- 在新会话中从数据库恢复历史状态
-- 支持跨会话的连续对话体验
+`state_dict()` 的核心字段为 `user_id`、`user_context`、`active_skill`、`execution`、`context_messages`，另有 `created_at`、`updated_at` 和最近用户 / Bot 事件 ID。它不包含完整事件列表、Agent 或数据库 revision；revision 是 Store 的并发元数据。
 
-## 🔧 基本结构
+`active_skill` 仅记录最近成功读取的 Skill。它不是业务意图、执行栈、权限、当前 SOP 步骤或“Skill 已完成”的判断。历史或其他 run 的工具观察可以作为 Trace 事实保留，但不能改变当前运行的 pending tools。
 
-DST的核心是Action列表，维护着整个对话的执行轨迹。通过DST中的Action序列和`agent.yml`配置，可以完整复现一个对话过程。
+## Event envelope 与 payload
 
-### 配置示例
+所有事件共用一个 envelope，业务字段放在 `payload` 中。例如一条最小用户输入事件：
 
-在`agent.yml`中使用DST状态变量的示例：
-
-```yaml
-actions:
-  BotUtter:
-    description: "回复用户的提问"
-    prompt: |
-      根据任务描述和历史对话，生成回答。
-
-      **任务描述：**
-      {{task_description}}
-
-      **对话历史：**
-      {{history_actions_with_thoughts}}
-
-      **学习参考资料：**
-      {{policies}}
-
-      **输出格式：**
-      ```json
-      {"thought": "<推理过程>", "text": "<回复内容>"}
-      ```
-
-  Selector:
-    description: "选择合适的Actions"
-    prompt: |
-      根据当前对话状态选择下一个Action。
-
-      **可用Actions：**
-      {{action_descriptions}}
-
-      **对话状态：**
-      {{history_actions_with_thoughts}}
-
-      **输出格式：**
-      ```json
-      {"thought": "<分析过程>", "action": "<动作名称>"}
-      ```
+```json
+{
+  "schema_version": 1,
+  "event_id": "input-example-001",
+  "sequence": 1,
+  "timestamp": 1793836800.0,
+  "run_id": null,
+  "type": "user_utter",
+  "source": "cota",
+  "payload": {"text": "你好"}
+}
 ```
 
+`event_id` 是稳定身份，`sequence` 是会话内从 1 开始的顺序；`run_id` 关联执行，输入可不属于某个 run。`source` 表示事实来源，例如 `cota` 或 `pi`；`timestamp` 为事件时间。真实接入还会在输入 payload 的 metadata 中保存 `message_id`、发送者和平台信息。
 
-## 📋 State变量列表
+工具参数位于 `tool_started.payload.arguments`，原生结果和状态位于 `tool_result.payload.result/status`；模型可见内容需要与原生结果区分时记录在 `payload.content`。参数转换改变了模型原提案时，开始事件另存 `payload.requested_arguments`。事件之间通过 tool call ID、run ID 和模型来源事件引用建立关系，不能随意拼接或修改已提交事实。
 
-DST提供丰富的状态变量，覆盖任务、用户、动作、历史等多个维度。所有变量使用`{{variable_name}}`模板语法。
+DST 对外返回事件、上下文和状态副本。状态更新必须经过 reducer；Store 会检查事件派生状态，拒绝绕过它修改内部字段的写入。
 
-### 🎯 任务相关状态
+## SQL 数据如何组织
 
-#### task_description
-- **描述**: Agent的任务描述，来自`agent.yml`中的`system.description`
-- **使用场景**: 为Action提供角色和任务上下文
-- **返回示例**: `"你是一名专业的宠物医生，需要认真负责地回答用户问题"`
+`Store.create()` 支持内存和 SQL 后端。内存后端适合临时运行；SQLite 或其他支持的 SQL dialect 用于跨重启保存。
 
-### 👤 用户相关状态
+| SQL 表 | 职责 |
+| --- | --- |
+| `sessions` | 会话元数据：用户索引、revision、最后 sequence、完整事件流哈希和更新时间 |
+| `events` | 一行一个事件；主键为 session + sequence，payload 为 JSON，event ID 在会话内唯一 |
+| `session_snapshots` | 每个会话的最新状态快照、覆盖到的 sequence |
+| `run_metadata` | 按 session + run 保存不可变资源来源，例如本轮可用 Skill 目录 |
+| `model_debug` | 可选模型诊断，按请求记录原始请求 / 响应等；不作为对话事实来源 |
+| `deliveries` | 指向已提交 `bot_utter` 的可变投递状态、尝试次数和重试时间 |
 
-#### history_messages
-- **描述**: 原始消息历史，包含用户和机器人的对话内容
-- **使用场景**: 主要用于UserUtter的代理模式
-- **返回示例**: 
-  ```
-  用户: 你好
-  机器人: 您好，请问有什么可以帮您的？
-  用户: 我家猫咪不吃饭
-  ```
+用户长期记忆由独立的 UserMemory 后端 / `user_memory` 表保存；它按用户而非会话组织。刷新到某次对话的内容通过 `user_context_updated` 记录，历史恢复不会重新查询实时记忆。Skill 目录元数据同样不冒充一条对话发言。
 
-#### latest_user_query
-- **描述**: 用户最近一次的输入内容
-- **使用场景**: 用于Form动作的跳出判断等
-- **返回示例**: `"我家猫咪不吃饭，怎么办？"`
+Store 使用 revision、事件前缀和执行版本校验拒绝陈旧写入，并提供进程内会话锁。回复事件和对应投递 outbox 可以在一次提交中保存；发送失败可重试投递，不需再次执行模型和工具。Channel 收到通知不等于用户已收到消息。
 
-### 🔧 动作相关状态
+## 快照保存什么
 
-#### action_descriptions
-- **描述**: 所有可用Action的描述信息（通常排除UserUtter）
-- **使用场景**: 主要用于Selector选择动作
-- **返回示例**:
-  ```
-  BotUtter: 回复用户
-  Weather: 查询天气
-  RenGong: 转人工
-  ```
+Store 在 run 结束或距上次快照达到事件间隔时建立快照。间隔默认 100，由 `base_store.snapshot_interval` 调整。快照的 `data` 包含：
 
-#### current_action_name
-- **描述**: 当前正在执行的Action名称
-- **使用场景**: Form动作中使用
-- **返回示例**: `"Weather"`
+| 字段 | 含义 |
+| --- | --- |
+| `session_id` | 所属会话 |
+| `schema_version` | DST 状态格式版本，当前 `DST.STATE_VERSION` 为 11；不同于事件 envelope 的版本 1 |
+| `last_sequence` / `last_event_id` | 快照覆盖的事件前缀末端 |
+| `events_hash` | 所覆盖事件前缀的规范 JSON 哈希 |
+| `state` | 上述 `state_dict()` 结果，包括增量投影的 `context_messages` |
+| `created_at` | 快照创建时间；不同于 `state.created_at` 的会话时间 |
+| `checksum` | 对除 checksum 外整个快照内容计算的哈希 |
 
-#### current_action_description  
-- **描述**: 当前正在执行的Action描述
-- **使用场景**: Form动作中提供上下文
-- **返回示例**: `"查询天气"`
+`context_messages` 保留模型响应与工具结果之间的稳定关联，供下一轮 Pi 初始化。当前请求的 system prompt、Skill 目录和 Policy guidance 由 `prepare` 动态加入，不作为固定指令混入历史投影。上下文压缩只改变这一投影，完整原始事件仍保留。
 
-#### latest_action_name
-- **描述**: 最近一次执行的Action名称
-- **使用场景**: 状态跟踪和条件判断
-- **返回示例**: `"Selector"`
+## 恢复与不兼容处理
 
-#### latest_action_result
-- **描述**: 最近一次Action的执行结果
-- **使用场景**: 获取上一步的执行输出
-- **返回示例**: `"Weather"`（如果上一步是Selector选择了Weather）
+`Store.load()` 一致读取会话元数据、事件、快照和 run metadata，先验证事件数量与完整事件流哈希。当前 SQL 实现仍读取并校验完整事件流；使用快照节省的是 reducer 的前缀回放，不代表数据库只读取尾部。
 
-### 📚 历史序列相关状态
+快照格式、checksum、事件前缀哈希、游标和状态校验均通过时，DST 装入快照状态，只对 `last_sequence` 之后的事件执行 reducer。没有快照、JSON 损坏、旧状态版本或其他快照校验失败时，丢弃这份缓存并全量回放事件。源事件格式、引用或完整性损坏仍会报错，不能靠忽略快照掩盖。
 
-#### history_actions_with_thoughts
-- **描述**: 带思维链的完整Action执行历史，是最重要的状态变量
-- **使用场景**: BotUtter和Selector的主要输入，提供完整对话上下文
-- **返回示例**:
-  ```json
-  [
-    {
-      "name": "UserUtter", 
-      "result": "你好",
-      "timestamp": 1760880555.173912
-    },
-    {
-      "name": "Selector",
-      "thought": "用户已打招呼，我应该回复用户以继续对话",
-      "result": "BotUtter",
-      "timestamp": 1760880555.174119
-    },
-    {
-      "name": "BotUtter",
-      "thought": "用户打招呼，我需要友好回应",
-      "result": "你好，请问有什么可以帮您？",
-      "timestamp": 1760880557.379215
-    }
-  ]
-  ```
+快照不兼容与数据库表结构不兼容是两回事。SQLStore 初始化会检查已有表缺失的列，发现不兼容时明确报错，不自动迁移旧表。快照回放能恢复派生状态，不能替代数据库 schema 迁移。
 
-#### policies
-- **描述**: 策略思维链参考数据，来自`policy/data.yml`
-- **使用场景**: 为BotUtter和Selector提供学习参考模式
-- **返回示例**: 包含历史标注数据的思维模式，用于指导当前决策
+如果已保存的 execution 仍为 `running`，新 runtime 抛出 `RunInProgress`。恢复方必须先确认旧执行者已停止，取得独占会话所有权，再重新读取最新状态，为同一个 run 追加 `run_finished`，payload 为 `{"status": "interrupted"}`，并通过 Store 提交。进程内会话锁不等于跨进程独占；不要仅因超时就宣告另一执行者已退出。
 
-### 📋 Form相关状态
+恢复只追加中断事实，不自动重放 pending tools。若工具副作用已经发生但结果未提交，需要检查外部系统再决定补偿或新任务；本地状态恢复不提供外部操作的 exactly-once 保证。
 
-#### current_form_name
-- **描述**: 当前执行的Form动作名称
-- **使用场景**: Form动作的提示词中使用
-- **返回示例**: `"Weather"`
+## 查询
 
-#### current_form_description
-- **描述**: 当前Form的描述信息
-- **使用场景**: 为用户说明当前正在执行的业务
-- **返回示例**: `"查询天气"`
+```python
+tracker = await agent.store.load("alice-demo", agent=agent)
+print(tracker.execution)
+messages = await agent.store.history("alice-demo")
+events = await agent.store.events("alice-demo", after_sequence=0, limit=100)
+```
 
-#### current_form_slot_states
-- **描述**: 当前Form的槽位状态（JSON格式）
-- **使用场景**: Form的updater逻辑中使用
-- **返回示例**:
-  ```json
-  {
-    "city": "杭州",
-    "time": null
-  }
-  ```
+这些查询用于应用或受信任的诊断代码；不存在的会话 `load()` 返回 `None`。面向用户的 Web 历史只暴露对话消息，不直接导出原始工具结果和 debug 数据。输入 `message_id` 用于去重；同一标识携带不同内容或身份会被视为冲突。
 
-#### current_form_slot_descriptions
-- **描述**: Form中各槽位的描述信息
-- **使用场景**: 帮助LLM理解槽位含义
-- **返回示例**:
-  ```
-  city: 城市，注意：接口只支持输入单个城市
-  time: 时间
-  ```
+实现入口：`cota/dst.py`、`cota/store.py`、`cota/events/event.py`、`cota/events/context.py`、`cota/snapshots.py`、`cota/delivery_store.py`。
 
-#### current_form_execute_result
-- **描述**: Form执行器的返回结果
-- **使用场景**: Form执行完成后，向用户展示结果
-- **返回示例**: `"sunny"` (天气查询的结果)
-
-### 🧠 知识相关状态
-
-#### knowledge
-- **描述**: 知识库检索结果（当配置了knowledge时可用）
-- **使用场景**: BotUtter中集成外部知识
-- **返回示例**: 
-  ```
-  根据您的问题，猫咪不吃饭可能的原因包括：
-  1. 食物问题：食物变质或不新鲜
-  2. 环境因素：换了新环境或有压力
-  3. 健康问题：可能存在口腔疾病或消化问题
-  建议先检查食物质量，观察猫咪其他行为...
-  ```
-
-## 🔄 状态生命周期
-
-DST状态变量在对话过程中动态更新：
-
-1. **会话开始**: 初始化基本状态，加载历史（如果有）
-2. **用户输入**: 更新`latest_user_query`、`history_messages`等
-3. **Action执行**: 更新`current_action_name`、action历史等
-4. **Form处理**: 更新Form相关的所有状态变量
-5. **会话结束**: 序列化状态到存储系统
-
-## 📊 最佳实践
-
-### 状态变量使用建议
-
-1. **BotUtter动作**:
-   - 必用: `{{history_actions_with_thoughts}}`、`{{task_description}}`
-   - 推荐: `{{policies}}`（思维链学习）、`{{knowledge}}`（知识库）
-
-2. **Selector动作**:
-   - 必用: `{{action_descriptions}}`、`{{history_actions_with_thoughts}}`  
-   - 推荐: `{{policies}}`（决策参考）
-
-3. **Form动作**:
-   - 必用: `{{current_form_slot_states}}`、`{{current_form_slot_descriptions}}`
-   - 推荐: `{{history_actions_with_thoughts}}`、`{{current_form_name}}`
-
-4. **UserUtter动作**（代理模式）:
-   - 必用: `{{history_messages}}`
-   - 推荐: `{{task_description}}`（角色扮演）
-
-### 性能优化
-
-- 合理使用状态变量，避免不必要的大量历史数据
-- 对于长对话，考虑历史截断策略
-- 利用缓存机制提升状态变量生成效率
-
-通过合理使用这些状态变量，可以构建出上下文丰富、逻辑清晰的对话系统。
-
-
+相关文档：[执行流程](execution-flow.md) · [Message](message.md) · [用户记忆](../components/user_memory.md) · [Endpoints 配置](../configuration/endpoints.md) · [可靠投递](../deployment/delivery.md)

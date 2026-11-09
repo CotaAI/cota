@@ -1,69 +1,38 @@
-Message用于处理和传递系统中的各种信息，其设计旨在简化信息的输入和输出，使得不同接口之间的通信更加流畅和一致。
+# Message：输入、传输和持久化标识
 
-## Message
-Message信息对象包含了发送者、接收者、会话ID、文本内容以及一些可选的元数据。通过使用这个模块，开发者可以轻松地创建和处理信息，而无需担心底层的数据结构和格式。
+Cota 区分三种对象：SDK 的 `Message`、Channel 的 `InboundMessage` / `OutboundMessage`，以及 Store 中的对话和执行事件。它们在边界上转换，不应混用身份或投递状态。
 
-### 信息创建
-Message 类提供了一个简单的方法来创建信息对象。你可以指定以下参数：
-
-sender: 信息的发送者。
-sender_id: 发送者的唯一标识。
-receiver: 信息的接收者。
-receiver_id: 接收者的唯一标识。
-session_id: 会话的唯一标识。
-text: 信息的文本内容。
-metadata: 附加的元数据。
-
-### 信息转换
-Message 类还提供了一个 as_dict 方法，可以将信息对象转换为一个字典。这个方法在需要将信息传递给其他系统或存储时非常有用。
-
-### 使用示例
-以下是一个简单的使用示例，展示了如何创建一个信息对象并将其转换为字典：
+## SDK 输入
 
 ```python
-from message import Message
+from cota.message.message import Message
 
-# 创建一个信息对象
-msg = Message(
-    sender="user",
-    sender_id="user123",
-    receiver="bot",
-    receiver_id="bot456",
-    session_id="session789",
-    text="Hello, bot!",
-    metadata={"type": "greeting"}
+message = Message(
+    sender="user", sender_id="alice", receiver="bot",
+    session_id="support-001", message_id="input-001",
+    text="请帮我查询订单", metadata={"source": "my-app"},
 )
-
-# 将信息对象转换为字典
-msg_dict = msg.as_dict()
-print(msg_dict)
-输出结果将会是一个包含所有信息参数的字典：
-
-{
-    'sender': 'user',
-    'sender_id': 'user123',
-    'receiver': 'bot',
-    'receiver_id': 'bot456',
-    'session_id': 'session789',
-    'text': 'Hello, bot!',
-    'metadata': {'type': 'greeting'}
-}
+await processor.handle_message(message)
 ```
 
-## Message 和 Channel
-`message`和 `channel` 是两个紧密相关的模块，它们共同构成了消息处理的核心机制。`message`定义了消息对象的结构和处理逻辑，包含了消息的发送者、接收者、内容等属性。
-`channel`负责处理不同通信渠道的消息。它使用 Message 类来创建和处理消息对象，确保消息能够正确地从外部渠道进入系统，并进行相应的处理。
+`sender` 默认 `user`，未提供 `sender_id` 时使用默认身份；未提供 `session_id` 和 `message_id` 时生成标识。`text` 会去掉首尾空白。`receiver` 默认为空，只有显式设为 `bot` 才触发这条 SDK 路径的 Bot 执行。
 
-在接受到客户端的消息后，Channel 类中的 handle_message 方法会将接收到的消息转换为 Message 对象。send_response 方法则负责将处理后的消息发送回客户端。
-通过这种设计，message 和 channel 共同确保了消息在不同通信渠道之间的正确传递和处理，使得系统能够灵活地适应各种通信方式。
+服务接入应由认证层提供稳定用户身份。需要重试的客户端应复用原 `message_id`；每次生成新标识会被视为新输入。同一标识重复提交相同输入可返回既有状态，修改内容或身份则冲突。
 
-## 消息处理
-Query 和 Response 是两个具体的动作（Action）类，分别代表用户的请求和系统的回复，message和这两个Action的生产和处理相关。
+## Channel 消息
 
-Processor 接收到 Message，并根据消息内容生成一个 Query 动作。这个 Query 动作包含了消息的所有信息，如发送者、接收者、消息内容等。
+`InboundMessage` 必填 `channel`、`sender_id`、`chat_id`、`content`。它还携带媒体、平台 metadata、`message_id`，以及群聊的 `mentioned`、`sender_name`、`reply_to`、`conversation_type`。
 
-Processor 会根据 Message 对象的 session_id 获取或创建一个对话状态跟踪器（DST），并更新这个跟踪器的状态。这个过程中，Message 对象的信息会被用于更新对话状态。
+默认 `session_key` 为 `channel:chat_id`；可信应用可通过 `session_key_override` 绑定已有会话。Bot mention 是适配器识别的结构化信号，不由正文字符串猜测。群消息应交给 `Application.submit_message()`。
 
-Processor 会将agent生成的回复动作 （Response）通过通道发送给用户，这个过程中，Message 对象的信息会被用于执行通道相关的操作。
-通过这种设计，确保了用户消息的正确处理和系统回复的生成。
+`OutboundMessage` 包含目标 channel/chat、正文、媒体和 metadata，以及可选的持久化 `event_id`、`sequence`、`session_id`。这些事件标识用于重放、去重和投递关联。
 
+## Web 身份与回复
+
+WebSocket 首帧 `resume` 认证并绑定用户和会话，后续 `send` 不能自行改写 `user_id`、`sender_id` 或 `session_id`。HTTP 与 WebSocket 使用同一授权服务。
+
+`bot_utter` 持久化后才向传输层发布。收到 receipt、进入发送队列、平台接受和用户看到消息是不同阶段；具体保证见 [可靠投递](../deployment/delivery.md)。
+
+实现入口：`cota/message/message.py`、`cota/channels/events.py`、`cota/inputs.py`、`cota/processor.py`。
+
+相关文档：[Channel](channel.md) · [DST](dst.md) · [应用 API](../deployment/api.md) · [群聊](../deployment/group.md)

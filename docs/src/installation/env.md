@@ -1,53 +1,34 @@
-# 虚拟环境设置
+# 环境准备
 
-推荐使用虚拟环境来隔离Python项目。如使用`virtualenv`创建隔离的Python环境，来防止了依赖冲突。
+Cota 源码要求 **Python 3.12+**。运行当前源码还需要 **Node.js 22.19+ 和 npm**；仓库 `.node-version` 给出开发固定版本。
+发布的平台 wheel 可以自带 Node/Pi，使用该类发布包时不要求用户另装 Node/npm。
 
-## 推荐Python版本
+## Python 虚拟环境
 
-使用Python 3.12及以上版本，以确保兼容性和最新的语言特性。
+已有 Python 3.12 时：
 
-## Ubuntu
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python --version
+```
 
-1. 创建虚拟环境：
-    ```bash
-    python3 -m venv ./venv
-    ```
+也可以使用已安装的 uv：
 
-2. 激活虚拟环境：
-    ```bash
-    source ./venv/bin/activate
-    ```
+```bash
+uv venv --python 3.12
+source .venv/bin/activate
+```
 
-## macOS
+激活环境只决定 Python 和命令的位置，不会配置模型密钥。模型 key、apibase、model 直接填写在 Bot 的 endpoints.yml。
+当前发布目标是 macOS 和 Linux；Windows/Alpine 不属于已配置的平台 wheel 目标，不应直接照抄部署结论。
 
-1. 创建虚拟环境：
-    ```bash
-    python3 -m venv ./venv
-    ```
+## 源码运行前检查
 
-2. 激活虚拟环境：
-    ```bash
-    source ./venv/bin/activate
-    ```
+```bash
+python --version
+node --version
+npm --version
+```
 
-## Windows
-
-1. 创建虚拟环境：
-    ```cmd
-    C:\> python3 -m venv ./venv
-    ```
-
-2. 激活虚拟环境：
-    ```cmd
-    C:\> .\venv\Scripts\activate
-    ```
-
-***
-
-激活虚拟环境后，你就可以在这个环境中安装项目所需的Python包，而不会影响系统的其他部分。
-
-> **提醒**
->
-> - 确保你使用的Python版本符合项目要求。
-> - 激活虚拟环境后，你可以在环境中安装项目所需的Python包，而不会影响系统的其他部分。
-> - 当你完成工作后，可以通过运行`deactivate`命令来退出虚拟环境。
+安装步骤见 [安装 Cota](install.md)。数据库路径、外部工具和模型服务仍由 Bot 的部署配置决定。

@@ -1,6 +1,20 @@
-from cota.channels.socketio import SocketIO
-from cota.channels.websocket import Websocket
-from cota.channels.sse import SSE
-from cota.channels.cmdline import Cmdline
+"""Cota Channels：Web、飞书和命令行。"""
 
-__all__ = ['SocketIO', 'Websocket', 'SSE', 'Cmdline']
+from .base import BaseChannel
+from .manager import ChannelManager
+from .events import InboundMessage, OutboundMessage
+from .queue import MessageBus
+from .web import WebChannel
+from .platforms import FeishuChannel
+from .cmdline import CmdlineChannel
+
+__all__ = [
+    "BaseChannel",
+    "ChannelManager",
+    "MessageBus",
+    "InboundMessage",
+    "OutboundMessage",
+    "WebChannel",
+    "FeishuChannel",
+    "CmdlineChannel",
+]

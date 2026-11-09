@@ -2,7 +2,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Dict, Text, Optional, Any, Union
+from typing import List, Dict, Text, Optional, Any
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +15,10 @@ class LLMClient(ABC):
         self, 
         messages: List[Dict[Text, Text]], 
         max_tokens: int = 500,
-        response_format: Dict[Text, Text] = {"type": "text"},
+        response_format: Optional[Dict[Text, Text]] = None,
         tools: Optional[List[Dict[Text, Any]]] = None,
-        tool_choice: Optional[str] = None
+        tool_choice: Optional[str] = None,
+        temperature: Optional[float] = None,
     ) -> Dict[Text, Any]:
         """Generate chat completion response.
         
@@ -34,3 +35,6 @@ class LLMClient(ABC):
             - "tool_calls": List[Dict] (optional) - List of tool calls if tools were used
         """
         pass
+
+    async def close(self):
+        """Release owned connections; adapters without resources need no cleanup."""

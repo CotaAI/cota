@@ -1,277 +1,860 @@
-import os
-import json
-import contextlib
-import itertools
-import sqlalchemy as sa
-from time import sleep
-import logging
-from typing import Text, List, Optional, Union, Dict, Iterator
-from sqlalchemy import or_, and_, func, desc
-from cota.dst import DST
+"""Append-only event persistence with disposable state snapshots.
 
-logger = logging.getLogger(__name__)
+SQL revisions protect concurrent writers; they do not provide distributed leases
+or exactly-once external effects. Runtime still reconciles interrupted tools.
+"""
+import asyncio
+from copy import deepcopy
+from contextlib import nullcontext
+import json
+import time
+from typing import Dict
+from weakref import WeakValueDictionary
+
+import sqlalchemy as sa
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.dialects.mysql import LONGTEXT
+from cota.dst import DST
+from cota.delivery_store import (MemoryDeliveryStore, SQLDeliveryStore,
+                                 delivery_rows, make_delivery_table, validate_target)
+from cota.snapshots import digest, make_snapshot, usable_snapshot
+
+
+# Small scalar fields for an execution index; never include prompts/tool bodies.
+EVENT_SUMMARY_FIELDS = ('text', 'tool_call_id', 'tool', 'skill', 'status', 'request_id',
+                        'request_sequence', 'purpose',
+                        'result_event_id', 'input_event_id', 'error_type',
+                        'resource_kind', 'resource_skill')
+
+
+def event_header(event):
+    header = {k: v for k, v in event.items() if k != 'payload'}
+    resource = event['payload'].get('resource') or {}
+    values = {**event['payload'], 'resource_kind': resource.get('kind'), 'resource_skill': resource.get('skill')}
+    header['summary'] = {
+        key: str(int(value)) if isinstance(value, bool) else (str(value)[:200] if key == 'text' else str(value))
+        for key in EVENT_SUMMARY_FIELDS
+        if (value := values.get(key)) is not None
+        and isinstance(value, (str, int, float, bool))
+    }
+    return header
+
+
+class StoreConflict(RuntimeError):
+    """Reload and reconcile a newer session revision before retrying."""
+
+
+class ExecutionSuperseded(StoreConflict):
+    """Optional execution was approved against a conversation that has changed."""
+
 
 class Store:
-    """Class to hold all of the TrackerStore classes"""
+    def __init__(self, snapshot_interval=100):
+        if type(snapshot_interval) is not int or snapshot_interval < 1:
+            raise ValueError('snapshot_interval must be a positive integer')
+        self.snapshot_interval = snapshot_interval
+        self._locks = WeakValueDictionary()
+        self._debug_log = None
+        # Admission is volatile; only committed user/run events survive restart.
+        self._inputs = {}
+        self._input_locks = WeakValueDictionary()
 
-    def __init__(
-            self,
-    ) -> None:
-        """Create a TrackerStore."""
-        self.max_history = None
+    def input_admission_lock(self, session_id):
+        lock = self._input_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._input_locks[session_id] = lock
+        return lock
+
+    async def _input_event(self, session_id, message_id):
+        from cota.inputs import input_event_id, InputConflict
+        event = await self.event_by_id(session_id, input_event_id(message_id))
+        if event is not None and (event['type'] != 'user_utter' or
+                (event['payload'].get('metadata') or {}).get('message_id') != message_id):
+            raise InputConflict('message_id does not match its committed input event')
+        return event
+
+    async def check_input(self, message, *, durable_only=False):
+        """Validate identity, returning (receipt, live future) for existing input."""
+        from cota.inputs import input_key, canonical_input, event_input, InputConflict
+        key = input_key(message)
+        canonical = canonical_input(message)
+        pending = self._inputs.get(key)
+        if pending is not None and pending['canonical'] != canonical:
+            raise InputConflict('message_id already identifies different input')
+        event = await self._input_event(*key)
+        if event is not None:
+            if event_input(event) != canonical:
+                raise InputConflict('message_id already identifies different input')
+            return await self._input_receipt(*key, event), pending.get('future') if pending else None
+        if pending is not None and not durable_only:
+            return deepcopy(pending['receipt']), pending.get('future')
+        return None, None
+
+    def claim_input(self, message, future=None):
+        from cota.inputs import input_key, canonical_input
+        key = input_key(message)
+        self._inputs[key] = {'canonical': canonical_input(message), 'future': future,
+                            'receipt': {'session_id': key[0], 'message_id': key[1],
+                                        'status': 'queued', 'error': None}}
+
+    def start_input(self, message):
+        from cota.inputs import input_key
+        key = input_key(message)
+        if key not in self._inputs:
+            self.claim_input(message)
+        self._inputs[key]['receipt']['status'] = 'running'
+
+    def finish_input(self, message, *, processor=False):
+        from cota.inputs import input_key
+        key = input_key(message)
+        pending = self._inputs.get(key)
+        if pending is not None and (not processor or pending['future'] is None):
+            self._inputs.pop(key)
+
+    async def ensure_input_admissible(self, session_id):
+        """Reject unowned unfinished runs before admitting a new input."""
+        runs = await self._query_events(session_id, kinds=('run_started',), descending=True, limit=1)
+        if not runs:
+            return
+        run = runs[0]
+        finished = await self._query_events(session_id, run_id=run['run_id'],
+                                            kinds=('run_finished',), limit=1)
+        if finished:
+            return
+        from cota.inputs import input_event_id
+        if any(sid == session_id and pending['receipt']['status'] == 'running' and
+               input_event_id(mid) == run['payload'].get('input_event_id')
+               for (sid, mid), pending in self._inputs.items()):
+            return
+        from cota.runtime.pi_runtime import RunInProgress
+        raise RunInProgress('Previous run is still running; reconcile its executor before submitting new input')
+
+    async def input_receipt(self, session_id, message_id):
+        """Current input status from live admission or immutable user/run facts.
+
+        Application inputs are durable before admission returns. Accepted inputs
+        without a run are recorded and can be dispatched after restart. Started
+        runs without a live executor or terminal fact are interrupted; merely
+        looking up a receipt never resumes execution.
+        """
+        event = await self._input_event(session_id, message_id)
+        if event is None and (session_id, message_id) not in self._inputs:
+            # A commit may finish and drop its volatile claim while the first
+            # SQL read is in flight. Re-read after observing that handoff.
+            event = await self._input_event(session_id, message_id)
+        return await self._input_receipt(session_id, message_id, event)
+
+    async def _input_receipt(self, session_id, message_id, event):
+        pending = self._inputs.get((session_id, message_id))
+        if event is None:
+            return deepcopy(pending['receipt']) if pending else None
+        receipt = {'session_id': session_id, 'message_id': message_id,
+                   'status': pending['receipt']['status'] if pending else (
+                       'recorded' if ((event['payload'].get('metadata') or {}).get('mode') == 'group'
+                                      or (event['payload'].get('metadata') or {}).get('accepted'))
+                       else 'interrupted'),
+                   'error': None, 'input_event_id': event['event_id']}
+        if (event['payload'].get('metadata') or {}).get('execute') is False:
+            receipt['status'] = 'completed'
+            return receipt
+        cursor = event['sequence']
+        while True:
+            runs = await self._query_events(session_id, kinds=('run_started',),
+                                            after_sequence=cursor, limit=100)
+            for run in runs:
+                if run['payload'].get('input_event_id') != event['event_id']:
+                    continue
+                receipt['run_id'] = run['run_id']
+                if pending is None:
+                    receipt['status'] = 'interrupted'
+                finished = await self._query_events(session_id, run_id=run['run_id'],
+                                                    kinds=('run_finished',), descending=True, limit=1)
+                if finished:
+                    receipt['status'] = finished[0]['payload']['status']
+                    receipt['error'] = finished[0]['payload'].get('error') or finished[0]['payload'].get('error_type')
+                return receipt
+            if len(runs) < 100:
+                return receipt
+            cursor = runs[-1]['sequence']
+
+    def enable_debug_log(self, path):
+        from cota.execution_logging import ExecutionLog
+        self._debug_log = ExecutionLog(path)
+        return self._debug_log.path
+
+    @property
+    def debug_enabled(self):
+        return self._debug_log is not None
+
+    async def save_model_debug(self, session_id, request_id, data):
+        """Optional diagnostics never participate in state recovery or stop execution."""
+        if not self.debug_enabled:
+            return
+        import logging
+        try:
+            await self._save_model_debug(session_id, request_id, deepcopy(data))
+        except Exception as error:
+            logging.getLogger(__name__).warning('Cannot save model diagnostics (%s)', type(error).__name__)
+
+    async def model_debug(self, session_id, request_id):
+        raise NotImplementedError
+
+    async def model_debug_headers(self, session_id, limit=100):
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError('Invalid diagnostic page size')
+        return await self._model_debug_headers(session_id, limit)
+
+    def _emit_saved(self, data, previous_count):
+        from cota.execution_logging import emit_committed
+        emit_committed(data['session_id'], data['events'][previous_count:], self._debug_log)
+
+    def session_lock(self, session_id):
+        lock = self._locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[session_id] = lock
+        return lock
 
     @staticmethod
     def create(endpoint_config: Dict) -> "Store":
-        """Factory to create a store"""
-        store_type = endpoint_config.get('type', None)
-        if not store_type:
-            return MemoryStore()
+        kind = endpoint_config.get('type', 'memory')
+        interval = endpoint_config.get('snapshot_interval', 100)
+        if not kind or kind.lower() == 'memory':
+            return MemoryStore(snapshot_interval=interval)
+        if kind.lower() != 'sql':
+            raise ValueError(f'Unknown Store type: {kind}')
+        dialect = endpoint_config.get('dialect', 'mysql+pymysql')
+        defaults = ({'db': 'cota.db'} if dialect.startswith('sqlite') else
+                    {'host': '127.0.0.1', 'port': 3306, 'db': 'mysql',
+                     'username': 'root', 'password': ''})
+        keys = ('host', 'port', 'db', 'username', 'password', 'login_db', 'query')
+        return SQLStore(dialect=dialect, snapshot_interval=interval, **{
+            k: endpoint_config.get(k, defaults.get(k)) for k in keys
+            if k in endpoint_config or k in defaults})
 
-        if store_type.lower() == "sql":
-            store = SQLStore(
-                dialect = endpoint_config.get('dialect','mysql+pymysql'),
-                host = endpoint_config.get('host','127.0.0.1'),
-                port = endpoint_config.get('port',3306),
-                db = endpoint_config.get('db','mysql'),
-                username = endpoint_config.get('username','root'),
-                password = endpoint_config.get('password',''),
-                query = endpoint_config.get('query',{})
-            )
-            return store
-        return MemoryStore()
+    def _prepare_commit(self, data, old, snapshot, old_runs):
+        revision = (old or {}).get('revision', 0)
+        if revision != data['revision']:
+            raise StoreConflict(f"Stale session revision: {data['session_id']}")
+        count = (old or {}).get('last_sequence', 0)
+        if count > len(data['events']) or (old and digest(data['events'][:count]) != old['events_hash']):
+            raise ValueError('Cannot edit or delete persisted event facts')
+        if any(data['run_metadata'].get(run) != value for run, value in old_runs.items()):
+            raise ValueError('Cannot edit or delete persisted run metadata')
+        tracker = DST.from_events(data['session_id'], data['events'], snapshot=snapshot,
+                                  run_metadata=data['run_metadata'])
+        # Reject state that bypassed the event reducer, including private mutation.
+        state = tracker.state_dict()
+        supplied = {key: data[key] for key in state}
+        if digest(state) != digest(supplied):
+            raise ValueError('DST state must be produced by events; use state mutation APIs')
+        last_snapshot = snapshot['last_sequence'] if snapshot and usable_snapshot(snapshot, data['session_id'], tracker.events) else 0
+        new_events = data['events'][count:]
+        boundary = any(e['type'] == 'run_finished' for e in new_events)
+        write_snapshot = boundary or len(tracker.events) - last_snapshot >= self.snapshot_interval
+        next_snapshot = make_snapshot(tracker) if write_snapshot else None
+        metadata = {'session_id': data['session_id'], 'user_id': tracker.user_id,
+                    'revision': revision + 1, 'last_sequence': len(tracker.events),
+                    'events_hash': digest(data['events']), 'updated_at': time.time()}
+        return metadata, next_snapshot, count
 
-    async def save(self, dst: DST) -> None:
-        raise NotImplementedError()
+    async def save(self, dst, delivery_target=None):
+        raise NotImplementedError
 
-    async def retrieve(self, session_id: Text) -> Optional[Dict]:
-        raise NotImplementedError()
-    
-    async def retrieve_conversations(self, user_id: Text):
-        raise NotImplementedError()
+    async def append_conversation_event(self, session_id, event, agent=None):
+        """Append an input fact without sharing the producer's mutable event."""
+        from cota.events import Event
+        fact = Event.from_dict(event.as_dict())
+        fact.sequence = None
+        async with self.session_lock(session_id):
+            canonical = await self.load(session_id, agent=agent)
+            if canonical is None:
+                canonical = DST(session_id, agent)
+            canonical.apply_event(fact)
+            await self.save(canonical)
+            return fact.as_dict()
 
+    async def save_execution(self, dst, delivery_target=None, *, expected_sequence=None):
+        """Merge a detached execution's facts into the latest session journal.
 
-class MemoryStore(Store):
-    """Store tracker data"""
+        Later conversation inputs may be absent from ``dst`` by design. Event
+        identities, rather than its local sequences or revision, identify facts
+        already committed. The runtime view remains unchanged; returned records
+        contain canonical sequences for delivery and other external references.
+        """
+        from cota.events import Event
+        from cota.run_metadata import validate_run_metadata
+        target = validate_target(delivery_target)
+        branch = dst.as_dict()
+        async with self.session_lock(dst.session_id):
+            canonical = await self.load(dst.session_id, agent=dst.agent)
+            if canonical is None:
+                canonical = DST(dst.session_id, dst.agent)
+            if expected_sequence is not None and len(canonical.events) != expected_sequence:
+                raise ExecutionSuperseded('Conversation changed before optional execution started')
+            by_id = {event.event_id: event.as_dict() for event in canonical.events}
+            changed = False
+            committed = {}
+            for event in branch['events']:
+                previous = by_id.get(event['event_id'])
+                if previous is not None:
+                    if digest({**previous, 'sequence': None}) != digest({**event, 'sequence': None}):
+                        raise StoreConflict(f"Cannot edit persisted event: {event['event_id']}")
+                else:
+                    fact = Event.from_dict({**event, 'sequence': None})
+                    canonical.apply_event(fact)
+                    previous = fact.as_dict()
+                    by_id[fact.event_id] = previous
+                    changed = True
+                committed[event['event_id']] = previous
+            metadata = canonical.run_metadata
+            for run_id, value in branch['run_metadata'].items():
+                if run_id in metadata:
+                    if digest(metadata[run_id]) != digest(value):
+                        raise StoreConflict(f'Cannot edit persisted run metadata: {run_id}')
+                else:
+                    metadata[run_id] = value
+                    changed = True
+            canonical._run_metadata = validate_run_metadata(metadata, canonical.events)
+            if changed:
+                await self.save(canonical, delivery_target=target)
+            return committed
 
-    def __init__(
-            self
-    ) -> None:
-        self.max_history = None
-        self.store = list()
+    async def _read(self, session_id):
+        """Read session metadata, snapshot, events and run metadata consistently."""
+        raise NotImplementedError
 
-    async def save(self, dst: DST) -> None:
-        records = [ record for record in self.store if record["session_id"] == dst.session_id ]
-        latest_timestamp = -1
-        if len(records) > 0:
-            #records = sorted(records, key=lambda record: record["timestamp"])
-            #latest_timestamp = records[-1]["timestamp"]
-            latest_timestamp = max(record["timestamp"] for record in records)
-
-        for action in dst.actions:
-            action_dict = action.as_dict()
-            timestamp = action_dict.get('timestamp')
-
-            if timestamp > latest_timestamp:
-                self.store.append({
-                    'session_id': dst.session_id,
-                    'sender_id': action_dict.get("sender_id"),
-                    'receiver_id': action_dict.get("receiver_id"),
-                    'timestamp': timestamp,
-                    'action_name': action_dict.get("name"),
-                    'data': json.dumps(action_dict),
-                })
-
-    async def retrieve(self, session_id: Text) -> List[Dict]:
-        """retrive data by session_id"""
-        records = [ record for record in self.store if record["session_id"] == session_id ]
-        
-        if len(records) == 0:
-            logger.debug(f"No records found for session id '{session_id}'")
-            return None
-
-        actions_dict = [json.loads(record.get('data')) for record in sorted(records, key=lambda record: record["timestamp"])]
-        return actions_dict
-    
-    async def latest_utter(self, session_ids: List[Text]) -> List[Dict]:
-        utters = []
-        for session_id in session_ids:
-            print("session_id: ", session_id)
-            records = [record for record in self.store if record["session_id"] == session_id and record["action_name"] in ["Query", "Response"]]
-            if records:
-                print("records: ", records)
-                latest_utter = sorted(records, key=lambda record: record["timestamp"])[-1]
-                utters.append(json.loads(latest_utter.get("data")))
-        return utters
-
-
-class SQLStore(Store):
-    """Store which can save and retrieve trackers from an SQL database."""
-
-    from sqlalchemy.ext.declarative import declarative_base
-    Base = declarative_base()
-
-    class SQLAction(Base):
-        """Represents an action in the SQL Tracker Store"""
-        __tablename__ = "actions"
-
-        id = sa.Column(sa.Integer, nullable=False, primary_key=True)
-        sender_id = sa.Column(sa.String(255), nullable=False, index=True)
-        receiver_id = sa.Column(sa.String(255), nullable=False, index=True)
-        session_id = sa.Column(sa.String(255), nullable=False, index=True)
-        timestamp = sa.Column(sa.String(255), nullable=False)
-        action_name = sa.Column(sa.String(255))
-        data = sa.Column(sa.Text)
-
-    def __init__(
-            self,
-            dialect: Text = "sqlite",
-            host: Optional[Text] = None,
-            port: Optional[int] = None,
-            db: Text = "cota.db",
-            username: Text = None,
-            password: Text = None,
-            login_db: Optional[Text] = None,
-            query: Optional[Dict] = None,
-    ) -> None:
-        import sqlalchemy.exc
-        engine_url = sa.engine.url.URL(
-            dialect,
-            username,
-            password,
-            host,
-            port,
-            database=login_db if login_db else db,
-            query=query,
-        )
-        logger.debug(f"Attempting to connect to database via '{engine_url}'.")
-
-        # Database might take a while to come up
-        while True:
-            try:
-                self.engine = sa.engine.create_engine(engine_url)
-
-                if login_db:
-                    from sqlalchemy import create_engine
-                    self._create_database(self.engine, db)
-                    engine_url.database = db
-                    self.engine = create_engine(engine_url)
-                try:
-                    self.Base.metadata.create_all(self.engine)
-                except (
-                        sqlalchemy.exc.OperationalError,
-                        sqlalchemy.exc.ProgrammingError,
-                ) as e:
-                    logger.error(f"Could not create tables: {e}")
-
-                self.sessionmaker = sa.orm.session.sessionmaker(bind=self.engine)
-                break
-            except (
-                    sqlalchemy.exc.OperationalError,
-                    sqlalchemy.exc.IntegrityError,
-            ) as error:
-                logger.warning(error)
-                sleep(5)
-
-        logger.debug(f"Connection to SQL database '{db}' successful.")
-        super().__init__()
+    async def load(self, session_id, agent=None):
+        record = await self._read(session_id)
+        return self._restore(session_id, record, agent)
 
     @staticmethod
-    def _create_database(engine: "Engine", db: Text):
-        """Create database `db` on `engine` if it does not exist."""
+    def _restore(session_id, record, agent=None):
+        if record is None:
+            return None
+        metadata, snapshot, events, runs = record
+        if len(events) != metadata['last_sequence'] or digest(events) != metadata['events_hash']:
+            raise ValueError('Persisted event stream does not match session metadata')
+        return DST.from_events(session_id, events, agent, snapshot=snapshot,
+                               revision=metadata['revision'], run_metadata=runs)
 
-        import psycopg2
-
-        conn = engine.connect()
-
-        cursor = conn.connection.cursor()
-        cursor.execute("COMMIT")
-        cursor.execute(f"SELECT 1 FROM pg_catalog.pg_database WHERE datname = '{db}'")
-        exists = cursor.fetchone()
-        if not exists:
-            try:
-                cursor.execute(f"CREATE DATABASE {db}")
-            except psycopg2.IntegrityError as e:
-                logger.error(f"Could not create database '{db}': {e}")
-
-        cursor.close()
-        conn.close()
-
-    async def save(self, tracker: DST) -> None:
-        with self.sessionmaker() as session:
-            action_num = session.query(self.SQLAction).filter(
-                self.SQLAction.session_id == tracker.session_id
-            ).order_by(self.SQLAction.timestamp).count()
-
-            for i in range(action_num, len(tracker.actions)):
-                action = tracker.actions[i]
-                data = action.as_dict()
-                sender_id = action.sender_id
-                receiver_id = action.receiver_id
-                session_id = tracker.session_id
-                timestamp = data.get("timestamp")
-                action_name = data.get("name")
-
-                # noinspection PyArgumentList
-                session.add(
-                    self.SQLAction(
-                        sender_id=sender_id,
-                        receiver_id=receiver_id,
-                        session_id=session_id,
-                        timestamp=str(timestamp),
-                        action_name=action_name,
-                        data=json.dumps(data),
-                    )
-                )
-            session.commit()
-
-        logger.debug(f"Tracker with session_id '{tracker.session_id}' stored to database")
-
-    async def retrieve(self, session_id: Text) -> Optional[Dict]:
-        """Create a tracker from all previously stored actions."""
-
-        with self.sessionmaker() as session:
-            serialised_actions = session.query(self.SQLAction).filter(
-                    self.SQLAction.session_id == session_id
-                ).order_by(self.SQLAction.timestamp).all()
-
-            actions_dict = [json.loads(action.data) for action in serialised_actions]
-
-            if len(actions_dict) > 0:
-                logger.debug(f"Retrun actions dict from session id '{session_id}'")
-
-                return actions_dict
-            else:
-                logger.debug( f"Can't retrieve session id '{session_id}' from SQL storage. ")
+    async def inspect_state(self, session_id):
+        """On-demand state view; expensive validation/replay runs off the event loop."""
+        record = await self._read(session_id)
+        def restore():
+            tracker = self._restore(session_id, record)
+            if tracker is None:
                 return None
+            return {'session_id': session_id, 'revision': tracker.revision,
+                    'last_sequence': len(tracker.events), 'state': tracker.state_dict()}
+        return await asyncio.to_thread(restore)
 
-    async def latest_utter(self, session_ids: List[Text]) -> List[Dict]:
-        utters = []
-        with self.sessionmaker() as session:
-            subquery = (
-            session.query(
-                self.SQLAction.session_id,
-                func.max(self.SQLAction.timestamp).label("max_timestamp")
-            )
-            .filter(
-                self.SQLAction.session_id.in_(session_ids),
-                self.SQLAction.action_name.in_(["Query", "Response"])
-            )
-            .group_by(self.SQLAction.session_id)
-            .subquery()
-            )
+    async def session_metadata(self, session_id):
+        """Read a session cursor without hydrating its history."""
+        raise NotImplementedError
 
-            query = (
-            session.query(self.SQLAction.data)
-            .join(
-                subquery,
-                and_(
-                    self.SQLAction.session_id == subquery.c.session_id,
-                    self.SQLAction.timestamp == subquery.c.max_timestamp
-                )
-            )
-            .order_by(desc(self.SQLAction.timestamp))
-            )
+    async def event_headers(self, session_id, *, after_sequence=0, limit=100):
+        """Bounded execution index; full event payloads are fetched separately."""
+        if type(after_sequence) is not int or after_sequence < 0 or type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError('Expected after_sequence >= 0 and 1 <= limit <= 1000')
+        return await self._event_headers(session_id, after_sequence, limit)
 
-            for row in query:
-                utters.append(json.loads(row.data))
-        return utters
+    async def export_session(self, session_id):
+        """Export state and history for inspection; use load() to resume execution."""
+        tracker = await self.load(session_id)
+        return tracker.as_dict() if tracker is not None else None
+
+    async def snapshot(self, session_id):
+        record = await self._read(session_id)
+        return deepcopy(record[1]) if record else None
+
+    async def export_conversations(self, user_id):
+        return [await self.export_session(sid) for sid in await self._conversation_ids(user_id)]
+
+    async def history(self, session_id, *, include_execution=False, offset=0, limit=100):
+        if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError('Expected offset >= 0 and 1 <= limit <= 1000')
+        return await self._query_events(session_id, kinds=None if include_execution else ('user_utter', 'bot_utter'),
+                                        offset=offset, limit=limit)
+
+    async def events(self, session_id, run_id=None, after_sequence=0, limit=100):
+        if (type(after_sequence) is not int or after_sequence < 0 or
+                type(limit) is not int or not 1 <= limit <= 1000):
+            raise ValueError('Expected after_sequence >= 0 and 1 <= limit <= 1000')
+        if run_id is not None and (not isinstance(run_id, str) or not run_id):
+            raise ValueError('run_id must be a nonempty string or None')
+        return await self._query_events(session_id, run_id=run_id, after_sequence=after_sequence, limit=limit)
+
+    async def trace(self, session_id, run_id):
+        from cota.trace import build_trace
+        record = await self._read(session_id)
+        return build_trace(record[2] if record else [], run_id)
+
+    async def run_metadata(self, session_id, run_id):
+        """Original Skill catalog for a run; optional discovery detail is Debug-only."""
+        raise NotImplementedError
+
+    async def event_by_id(self, session_id, event_id):
+        """Read a single immutable fact for provenance links without restoring DST."""
+        raise NotImplementedError
+
+    async def latest_utter(self, session_ids):
+        result = []
+        for sid in session_ids:
+            result.extend(await self._query_events(sid, kinds=('user_utter', 'bot_utter'), descending=True, limit=1))
+        return result
+
+
+class MemoryStore(MemoryDeliveryStore, Store):
+    def __init__(self, snapshot_interval=100):
+        super().__init__(snapshot_interval)
+        self.sessions = {}
+        self.delivery_rows = {}
+        self._delivery_ordinal = 0
+        self.event_rows = {}
+        self.snapshots = {}
+        self.model_records = {}
+        self.run_records = {}
+
+    async def run_metadata(self, session_id, run_id):
+        return deepcopy(self.run_records.get(session_id, {}).get(run_id))
+
+    async def event_by_id(self, session_id, event_id):
+        return deepcopy(next((event for event in self.event_rows.get(session_id, [])
+                              if event['event_id'] == event_id), None))
+
+    async def _save_model_debug(self, session_id, request_id, data):
+        self.model_records[(session_id, request_id)] = data
+
+    async def model_debug(self, session_id, request_id):
+        return deepcopy(self.model_records.get((session_id, request_id)))
+
+    async def _model_debug_headers(self, session_id, limit):
+        rows = [data for (sid, _), data in self.model_records.items() if sid == session_id]
+        rows.sort(key=lambda row: row['started_at'], reverse=True)
+        return [{k: row.get(k) for k in ('request_id', 'run_id', 'purpose', 'status', 'started_at')}
+                for row in rows[:limit]]
+
+    async def save(self, dst, delivery_target=None):
+        target = validate_target(delivery_target)
+        data = dst.as_dict()
+        metadata, snapshot, count = self._prepare_commit(data, self.sessions.get(dst.session_id),
+                                                        self.snapshots.get(dst.session_id),
+                                                        self.run_records.get(dst.session_id, {}))
+        new_events = deepcopy(data['events'][count:])
+        new_runs = deepcopy(data['run_metadata'])
+        pending = delivery_rows(dst.session_id, new_events, target)
+        for ordinal, row in enumerate(pending, self._delivery_ordinal + 1):
+            row['id'] = ordinal
+        # Prepare all fallible data before the atomic in-memory commit; no await.
+        self.event_rows.setdefault(dst.session_id, []).extend(new_events)
+        self.delivery_rows.update({(row['session_id'], row['event_id']): row for row in pending})
+        self._delivery_ordinal += len(pending)
+        self.sessions[dst.session_id] = metadata
+        self.run_records[dst.session_id] = new_runs
+        if snapshot is not None:
+            self.snapshots[dst.session_id] = snapshot
+        dst.revision = metadata['revision']
+        self._emit_saved(data, count)
+
+    async def _read(self, session_id):
+        if session_id not in self.sessions:
+            return None
+        return deepcopy((self.sessions[session_id], self.snapshots.get(session_id),
+                         self.event_rows[session_id], self.run_records.get(session_id, {})))
+
+    async def session_metadata(self, session_id):
+        return deepcopy(self.sessions.get(session_id))
+
+    async def snapshot(self, session_id):
+        return deepcopy(self.snapshots.get(session_id))
+
+    async def _event_headers(self, session_id, after_sequence, limit):
+        # Sequence is contiguous, so this is a slice, not a full-history scan/copy.
+        return [event_header(e) for e in self.event_rows.get(session_id, [])[after_sequence:after_sequence + limit]]
+
+    async def _conversation_ids(self, user_id):
+        return [m['session_id'] for m in sorted(self.sessions.values(), key=lambda m: m['updated_at'], reverse=True)
+                if m['user_id'] == user_id]
+
+    async def _query_events(self, session_id, *, kinds=None, run_id=None, after_sequence=0,
+                            offset=0, limit=None, descending=False, before_sequence=None):
+        rows = [e for e in self.event_rows.get(session_id, [])
+                if e['sequence'] > after_sequence and (before_sequence is None or e['sequence'] < before_sequence) and (kinds is None or e['type'] in kinds)
+                and (run_id is None or e['run_id'] == run_id)]
+        if descending:
+            rows.reverse()
+        return deepcopy(rows[offset:offset + limit if limit is not None else None])
+
+    async def message_count(self, session_id, *, after=0, through=None, exclude_sender=None):
+        return sum(1 for e in self.event_rows.get(session_id, [])
+                   if e['type'] in ('user_utter', 'bot_utter') and e['sequence'] > after
+                   and (through is None or e['sequence'] <= through)
+                   and not (exclude_sender is not None and e['type'] == 'user_utter'
+                            and (e['payload'].get('metadata') or {}).get('sender_id') == exclude_sender))
+
+    async def unstarted_inputs(self, *, session_id=None, after=None, limit=100):
+        """Bounded accepted direct work with no run_started fact; never resume tools."""
+        import heapq
+        def candidates():
+            for sid, rows in self.event_rows.items():
+                if session_id is not None and sid != session_id:
+                    continue
+                started = {e['payload'].get('input_event_id') for e in rows if e['type'] == 'run_started'}
+                for event in rows:
+                    if (event['type'] == 'user_utter' and (event['payload'].get('metadata') or {}).get('accepted')
+                            and event['event_id'] not in started
+                            and (after is None or (sid, event['sequence']) > tuple(after))):
+                        yield {'session_id': sid, **event}
+        return deepcopy(heapq.nsmallest(limit, candidates(), key=lambda e: (e['session_id'], e['sequence'])))
+
+
+class SQLStore(SQLDeliveryStore, Store):
+    class Base(DeclarativeBase):
+        pass
+
+    class SQLSession(Base):
+        __tablename__ = 'sessions'
+        session_id = sa.Column(sa.String(255), primary_key=True)
+        user_id = sa.Column(sa.String(255), index=True)
+        revision = sa.Column(sa.Integer, nullable=False)
+        last_sequence = sa.Column(sa.Integer, nullable=False)
+        events_hash = sa.Column(sa.String(64), nullable=False)
+        updated_at = sa.Column(sa.Double, nullable=False)
+
+    class SQLEvent(Base):
+        __tablename__ = 'events'
+        session_id = sa.Column(sa.String(255), sa.ForeignKey('sessions.session_id'), primary_key=True)
+        sequence = sa.Column(sa.Integer, primary_key=True)
+        event_id = sa.Column(sa.String(255), nullable=False)
+        run_id = sa.Column(sa.String(255))
+        type = sa.Column(sa.String(64), nullable=False)
+        source = sa.Column(sa.String(64), nullable=False)
+        timestamp = sa.Column(sa.Double, nullable=False)
+        schema_version = sa.Column(sa.Integer, nullable=False)
+        payload = sa.Column(sa.Text().with_variant(LONGTEXT(), 'mysql'), nullable=False)
+        __table_args__ = (
+            sa.UniqueConstraint('session_id', 'event_id'),
+            sa.Index('ix_events_session_run_sequence', 'session_id', 'run_id', 'sequence'),
+            sa.Index('ix_events_session_type_sequence', 'session_id', 'type', 'sequence'),
+        )
+
+    SQLDelivery = type('SQLDelivery', (Base,), {'__table__': make_delivery_table(Base.metadata)})
+
+    class SQLSnapshot(Base):
+        __tablename__ = 'session_snapshots'
+        session_id = sa.Column(sa.String(255), sa.ForeignKey('sessions.session_id'), primary_key=True)
+        last_sequence = sa.Column(sa.Integer, nullable=False)
+        data = sa.Column(sa.Text().with_variant(LONGTEXT(), 'mysql'), nullable=False)
+
+    class SQLModelDebug(Base):
+        __tablename__ = 'model_debug'
+        session_id = sa.Column(sa.String(255), primary_key=True)
+        request_id = sa.Column(sa.String(255), primary_key=True)
+        run_id = sa.Column(sa.String(255))
+        purpose = sa.Column(sa.String(64), nullable=False)
+        status = sa.Column(sa.String(32), nullable=False)
+        started_at = sa.Column(sa.Double, nullable=False)
+        data = sa.Column(sa.Text().with_variant(LONGTEXT(), 'mysql'), nullable=False)
+        __table_args__ = (sa.Index('ix_model_debug_session_time', 'session_id', 'started_at'),)
+
+    class SQLRunMetadata(Base):
+        __tablename__ = 'run_metadata'
+        session_id = sa.Column(sa.String(255), sa.ForeignKey('sessions.session_id'), primary_key=True)
+        run_id = sa.Column(sa.String(255), primary_key=True)
+        data = sa.Column(sa.Text().with_variant(LONGTEXT(), 'mysql'), nullable=False)
+
+    def __init__(self, dialect='sqlite', host=None, port=None, db='cota.db',
+                 username=None, password=None, login_db=None, query=None, snapshot_interval=100):
+        super().__init__(snapshot_interval)
+        url = sa.engine.URL.create(dialect, username=username, password=password,
+                                   host=host, port=port, database=login_db or db, query=query or {})
+        options = {}
+        if dialect.startswith('sqlite'):
+            options['connect_args'] = {'check_same_thread': False}
+            if db == ':memory:':
+                options['poolclass'] = sa.pool.StaticPool
+        self.engine = sa.create_engine(url, **options)
+        if login_db:
+            self._create_database(self.engine, db)
+            self.engine.dispose()
+            self.engine = sa.create_engine(url.set(database=db), **options)
+        try:
+            inspector = sa.inspect(self.engine)
+            for table in self.Base.metadata.sorted_tables:
+                if inspector.has_table(table.name):
+                    existing = {column['name'] for column in inspector.get_columns(table.name)}
+                    missing = set(table.c.keys()) - existing
+                    if missing:
+                        raise ValueError(f'Incompatible Store schema: {table.name}; missing columns: {", ".join(sorted(missing))}')
+            self.Base.metadata.create_all(self.engine)
+        except Exception:
+            self.engine.dispose()
+            raise
+        self._io_lock = asyncio.Lock()
+
+    @staticmethod
+    def _create_database(engine, db):
+        import re
+        if not re.fullmatch(r'[a-zA-Z0-9_-]+', db):
+            raise ValueError(f'Invalid database name: {db}')
+        from psycopg2 import sql
+        with engine.connect().execution_options(isolation_level='AUTOCOMMIT') as conn:
+            cursor = conn.connection.cursor()
+            try:
+                cursor.execute('SELECT 1 FROM pg_catalog.pg_database WHERE datname = %s', (db,))
+                if not cursor.fetchone():
+                    cursor.execute(sql.SQL('CREATE DATABASE {}').format(sql.Identifier(db)))
+            finally:
+                cursor.close()
+
+    async def _io(self, func, *args):
+        # Also serializes access to the single connection used by in-memory SQLite.
+        # Drain a cancelled transaction before releasing this local lock.
+        async with self._io_lock:
+            task = asyncio.create_task(asyncio.to_thread(func, *args))
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await task
+                raise
+
+    async def save(self, dst, delivery_target=None):
+        data = dst.as_dict()
+        target = validate_target(delivery_target)
+        revision = await self._io(self._save, data, target)
+        dst.revision = revision
+
+    async def _save_model_debug(self, session_id, request_id, data):
+        def write():
+            table = self.SQLModelDebug.__table__
+            with self.engine.begin() as conn:
+                conn.execute(table.delete().where(table.c.session_id == session_id, table.c.request_id == request_id))
+                conn.execute(table.insert().values(session_id=session_id, request_id=request_id,
+                    **{k: data.get(k) for k in ('run_id', 'purpose', 'status', 'started_at')},
+                    data=json.dumps(data, ensure_ascii=False, allow_nan=False)))
+        await self._io(write)
+
+    async def model_debug(self, session_id, request_id):
+        def read():
+            table = self.SQLModelDebug.__table__
+            with self.engine.connect() as conn:
+                raw = conn.execute(sa.select(table.c.data).where(table.c.session_id == session_id,
+                    table.c.request_id == request_id)).scalar_one_or_none()
+                return json.loads(raw) if raw is not None else None
+        return await self._io(read)
+
+    async def _model_debug_headers(self, session_id, limit):
+        def read():
+            table = self.SQLModelDebug.__table__
+            with self.engine.connect() as conn:
+                return [dict(row) for row in conn.execute(sa.select(table.c.request_id, table.c.run_id,
+                    table.c.purpose, table.c.status, table.c.started_at).where(table.c.session_id == session_id)
+                    .order_by(table.c.started_at.desc()).limit(limit)).mappings()]
+        return await self._io(read)
+
+    async def run_metadata(self, session_id, run_id):
+        def read():
+            table = self.SQLRunMetadata.__table__
+            with self.engine.connect() as conn:
+                raw = conn.execute(sa.select(table.c.data).where(
+                    table.c.session_id == session_id, table.c.run_id == run_id)).scalar_one_or_none()
+                return json.loads(raw) if raw is not None else None
+        return await self._io(read)
+
+    async def event_by_id(self, session_id, event_id):
+        def read():
+            table = self.SQLEvent.__table__
+            with self.engine.connect() as conn:
+                row = conn.execute(sa.select(table).where(
+                    table.c.session_id == session_id, table.c.event_id == event_id)).mappings().first()
+                return self._event(row) if row is not None else None
+        return await self._io(read)
+
+    def _read_runs(self, conn, session_id):
+        table = self.SQLRunMetadata.__table__
+        return {row.run_id: json.loads(row.data) for row in conn.execute(
+            sa.select(table.c.run_id, table.c.data).where(table.c.session_id == session_id))}
+
+    @staticmethod
+    def _decode_snapshot(raw):
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except (ValueError, TypeError):
+            return {}  # Invalid cache: load falls back to the event stream.
+
+    def _save(self, data, delivery_target=None):
+        sessions, snapshots, events = self.SQLSession.__table__, self.SQLSnapshot.__table__, self.SQLEvent.__table__
+        sid = data['session_id']
+        with self.engine.begin() as conn:
+            old = conn.execute(sa.select(sessions).where(sessions.c.session_id == sid)).mappings().first()
+            raw = conn.execute(sa.select(snapshots.c.data).where(snapshots.c.session_id == sid)).scalar_one_or_none()
+            old_runs = self._read_runs(conn, sid)
+            metadata, snapshot, count = self._prepare_commit(data, old, self._decode_snapshot(raw), old_runs)
+            if old:
+                result = conn.execute(sessions.update().where(sessions.c.session_id == sid,
+                                      sessions.c.revision == data['revision']).values(**metadata))
+                if result.rowcount != 1:
+                    raise StoreConflict(f'Concurrent session revision: {sid}')
+            else:
+                try:
+                    conn.execute(sessions.insert().values(**metadata))
+                except sa.exc.IntegrityError as exc:
+                    raise StoreConflict(f'Concurrent session revision: {sid}') from exc
+            rows = [{**e, 'session_id': sid, 'payload': json.dumps(e['payload'], ensure_ascii=False, allow_nan=False)}
+                    for e in data['events'][count:]]
+            if rows:
+                conn.execute(events.insert(), rows)
+            pending = delivery_rows(sid, data['events'][count:], delivery_target)
+            if pending:
+                conn.execute(self.SQLDelivery.__table__.insert(), pending)
+            new_runs = [{'session_id': sid, 'run_id': run,
+                         'data': json.dumps(value, ensure_ascii=False, allow_nan=False)}
+                        for run, value in data['run_metadata'].items() if run not in old_runs]
+            if new_runs:
+                conn.execute(self.SQLRunMetadata.__table__.insert(), new_runs)
+            if snapshot is not None:
+                # The session revision update above serializes snapshot writers.
+                conn.execute(snapshots.delete().where(snapshots.c.session_id == sid))
+                conn.execute(snapshots.insert().values(session_id=sid, last_sequence=snapshot['last_sequence'],
+                                                      data=json.dumps(snapshot, ensure_ascii=False, allow_nan=False)))
+        self._emit_saved(data, count)
+        return metadata['revision']
+
+    @staticmethod
+    def _event(row):
+        data = dict(row)
+        data.pop('session_id')
+        data['payload'] = json.loads(data['payload'])
+        return data
+
+    async def _read(self, session_id):
+        return await self._io(self._read_sync, session_id)
+
+    def _read_sync(self, session_id):
+        sessions, snapshots, events = self.SQLSession.__table__, self.SQLSnapshot.__table__, self.SQLEvent.__table__
+        # All SELECTs must see one commit, including on PostgreSQL's default
+        # READ COMMITTED connections. Set isolation before SQL autobegins.
+        with self.engine.connect() as conn:
+            if self.engine.dialect.name == 'sqlite':
+                conn.exec_driver_sql('BEGIN')
+            elif self.engine.dialect.name in ('mysql', 'postgresql'):
+                conn = conn.execution_options(isolation_level='REPEATABLE READ')
+            with conn.begin() if not conn.in_transaction() else nullcontext():
+                metadata = conn.execute(sa.select(sessions).where(sessions.c.session_id == session_id)).mappings().first()
+                if metadata is None:
+                    return None
+                raw = conn.execute(sa.select(snapshots.c.data).where(snapshots.c.session_id == session_id)).scalar_one_or_none()
+                rows = conn.execute(sa.select(events).where(events.c.session_id == session_id,
+                                    events.c.sequence <= metadata['last_sequence']).order_by(events.c.sequence)).mappings()
+                return (dict(metadata), self._decode_snapshot(raw), [self._event(row) for row in rows],
+                        self._read_runs(conn, session_id))
+
+    async def _conversation_ids(self, user_id):
+        def query():
+            table = self.SQLSession.__table__
+            with self.engine.connect() as conn:
+                return list(conn.scalars(sa.select(table.c.session_id).where(table.c.user_id == user_id).order_by(table.c.updated_at.desc())))
+        return await self._io(query)
+
+    async def session_metadata(self, session_id):
+        def query():
+            table = self.SQLSession.__table__
+            with self.engine.connect() as conn:
+                row = conn.execute(sa.select(table).where(table.c.session_id == session_id)).mappings().first()
+                return dict(row) if row else None
+        return await self._io(query)
+
+    async def snapshot(self, session_id):
+        def query():
+            table = self.SQLSnapshot.__table__
+            with self.engine.connect() as conn:
+                raw = conn.execute(sa.select(table.c.data).where(table.c.session_id == session_id)).scalar_one_or_none()
+                return self._decode_snapshot(raw)
+        return await self._io(query)
+
+    async def _event_headers(self, session_id, after_sequence, limit):
+        def query():
+            table = self.SQLEvent.__table__
+            columns = [c for c in table.c if c.name not in ('session_id', 'payload')]
+            # Extract bounded scalars in SQL: large model/tool bodies never cross
+            # the database connection during polling (SQLite, MySQL, PostgreSQL).
+            payload = (sa.cast(table.c.payload, sa.JSON) if self.engine.dialect.name == 'postgresql'
+                       else sa.type_coerce(table.c.payload, sa.JSON))
+            for key in EVENT_SUMMARY_FIELDS:
+                value = payload['resource'][key.removeprefix('resource_')] if key.startswith('resource_') else payload[key]
+                scalar = value.as_string()
+                # Only display text is shortened. IDs must stay exact for links
+                # and call grouping, including long provider-generated call IDs.
+                scalar = sa.func.substr(scalar, 1, 200) if key == 'text' else sa.cast(scalar, sa.Text)
+                columns.append(scalar.label('summary_' + key))
+            stmt = sa.select(*columns).where(table.c.session_id == session_id,
+                    table.c.sequence > after_sequence).order_by(table.c.sequence).limit(limit)
+            with self.engine.connect() as conn:
+                result = []
+                for row in conn.execute(stmt).mappings():
+                    header = dict(row)
+                    header['summary'] = {key: value for key in EVENT_SUMMARY_FIELDS
+                        if (value := header.pop('summary_' + key)) is not None}
+                    result.append(header)
+                return result
+        return await self._io(query)
+
+    async def _query_events(self, session_id, *, kinds=None, run_id=None, after_sequence=0,
+                            offset=0, limit=None, descending=False, before_sequence=None):
+        def query():
+            table = self.SQLEvent.__table__
+            stmt = sa.select(table).where(table.c.session_id == session_id, table.c.sequence > after_sequence)
+            if before_sequence is not None:
+                stmt = stmt.where(table.c.sequence < before_sequence)
+            if kinds is not None:
+                stmt = stmt.where(table.c.type.in_(kinds))
+            if run_id is not None:
+                stmt = stmt.where(table.c.run_id == run_id)
+            stmt = stmt.order_by(table.c.sequence.desc() if descending else table.c.sequence).offset(offset)
+            if limit is not None:
+                stmt = stmt.limit(limit)
+            with self.engine.connect() as conn:
+                return [self._event(row) for row in conn.execute(stmt).mappings()]
+        return await self._io(query)
+
+    async def message_count(self, session_id, *, after=0, through=None, exclude_sender=None):
+        def query():
+            table = self.SQLEvent.__table__
+            stmt = sa.select(sa.func.count()).select_from(table).where(
+                table.c.session_id == session_id, table.c.sequence > after,
+                table.c.type.in_(('user_utter', 'bot_utter')))
+            if through is not None:
+                stmt = stmt.where(table.c.sequence <= through)
+            if exclude_sender is not None:
+                payload = (sa.cast(table.c.payload, sa.JSON) if self.engine.dialect.name == 'postgresql'
+                           else sa.type_coerce(table.c.payload, sa.JSON))
+                sender = payload['metadata']['sender_id'].as_string()
+                stmt = stmt.where(sa.or_(table.c.type != 'user_utter', sender.is_(None), sender != exclude_sender))
+            with self.engine.connect() as conn:
+                return conn.scalar(stmt)
+        return await self._io(query)
+
+    async def unstarted_inputs(self, *, session_id=None, after=None, limit=100):
+        def query():
+            table = self.SQLEvent.__table__
+            runs = table.alias('started_runs')
+            def payload(column):
+                return (sa.cast(column, sa.JSON) if self.engine.dialect.name == 'postgresql'
+                        else sa.type_coerce(column, sa.JSON))
+            started = sa.exists(sa.select(1).where(runs.c.session_id == table.c.session_id,
+                runs.c.type == 'run_started', payload(runs.c.payload)['input_event_id'].as_string() == table.c.event_id))
+            stmt = sa.select(table).where(table.c.type == 'user_utter',
+                payload(table.c.payload)['metadata']['accepted'].as_boolean().is_(True), ~started)
+            if session_id is not None:
+                stmt = stmt.where(table.c.session_id == session_id)
+            if after is not None:
+                stmt = stmt.where(sa.or_(table.c.session_id > after[0],
+                    sa.and_(table.c.session_id == after[0], table.c.sequence > after[1])))
+            stmt = stmt.order_by(table.c.session_id, table.c.sequence).limit(limit)
+            with self.engine.connect() as conn:
+                return [{'session_id': row['session_id'], **self._event(row)} for row in conn.execute(stmt).mappings()]
+        return await self._io(query)

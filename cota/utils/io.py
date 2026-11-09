@@ -1,8 +1,5 @@
-import os
-import re
-from pathlib import Path
 import yaml
-from typing import Text, Any, Union, Dict
+from typing import Text, Dict
 
 DEFAULT_ENCODING = "utf-8"
 

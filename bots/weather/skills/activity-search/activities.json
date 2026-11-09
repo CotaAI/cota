@@ -1,0 +1,96 @@
+{
+  "currency": "CNY",
+  "pricing": "成人儿童同价；仅含门票；null 为价格未知",
+  "activities": [
+    {
+      "id": "hz-science",
+      "name": "科技探索馆",
+      "city": "杭州",
+      "indoor": true,
+      "family_friendly": true,
+      "price_per_person": 60,
+      "duration_minutes": 120,
+      "available": true
+    },
+    {
+      "id": "hz-park",
+      "name": "湖畔自然步道",
+      "city": "杭州",
+      "indoor": false,
+      "family_friendly": true,
+      "price_per_person": 0,
+      "duration_minutes": 90,
+      "available": true
+    },
+    {
+      "id": "hz-workshop",
+      "name": "亲子手作坊",
+      "city": "杭州",
+      "indoor": true,
+      "family_friendly": true,
+      "price_per_person": 150,
+      "duration_minutes": 120,
+      "available": true
+    },
+    {
+      "id": "hz-full",
+      "name": "童趣体验馆",
+      "city": "杭州",
+      "indoor": true,
+      "family_friendly": true,
+      "price_per_person": 30,
+      "duration_minutes": 60,
+      "available": false
+    },
+    {
+      "id": "sh-aquarium",
+      "name": "海洋探索馆",
+      "city": "上海",
+      "indoor": true,
+      "family_friendly": true,
+      "price_per_person": 90,
+      "duration_minutes": 150,
+      "available": true
+    },
+    {
+      "id": "sh-garden",
+      "name": "滨江花园",
+      "city": "上海",
+      "indoor": false,
+      "family_friendly": true,
+      "price_per_person": 20,
+      "duration_minutes": 90,
+      "available": true
+    },
+    {
+      "id": "sh-gallery",
+      "name": "主题展览",
+      "city": "上海",
+      "indoor": true,
+      "family_friendly": true,
+      "price_per_person": null,
+      "duration_minutes": 60,
+      "available": true
+    },
+    {
+      "id": "bj-museum",
+      "name": "历史体验馆",
+      "city": "北京",
+      "indoor": true,
+      "family_friendly": true,
+      "price_per_person": 40,
+      "duration_minutes": 120,
+      "available": true
+    },
+    {
+      "id": "bj-hike",
+      "name": "山地长线徒步",
+      "city": "北京",
+      "indoor": false,
+      "family_friendly": false,
+      "price_per_person": 80,
+      "duration_minutes": 300,
+      "available": true
+    }
+  ]
+}

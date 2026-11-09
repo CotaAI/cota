@@ -1,551 +1,229 @@
-# API接口文档
+# Web 聊天与应用接入
 
-COTA框架提供了一套完整的REST API接口，用于与智能体进行交互、管理对话状态和获取系统信息。
+Cota 负责执行协调、上下文与用户记忆、输入去重和执行记录。外围应用负责账号、登录、会话创建、成员及访问权限。HTTP 和 WebSocket 使用同一监听端口。
 
-## 📋 API概览
+## 接入已有应用
 
-COTA API基于RESTful设计原则，使用JSON格式进行数据交换，支持跨域访问(CORS)。
+外围应用创建 user_id、session_id，并验证用户的会话访问权限。Web 入口可以注入两个异步函数：
 
-### 基础信息
-- **协议**: HTTP/HTTPS
-- **数据格式**: JSON
-- **字符编码**: UTF-8
-- **跨域支持**: 是
-- **认证方式**: 无需认证 (可根据需求扩展)
-
-### 服务器配置
 ```python
-# CORS配置
-CORS_AUTOMATIC_OPTIONS = True
-CORS_SUPPORTS_CREDENTIALS = True
-CORS_EXPOSE_HEADERS = "filename"
+from cota.server import create_app
+
+async def authenticate(token):
+    # 接入应用自己的登录系统；失败时抛出 PermissionError。
+    return await accounts.verify_token(token)
+
+async def authorize(user_id, session_id):
+    # 必须返回 True 才授权；False/None 均拒绝，也可抛出 PermissionError。
+    return await conversations.can_access(user_id, session_id)
+
+app = create_app(agent, authenticate=authenticate, authorize=authorize)
 ```
 
-## 🔧 系统接口
+accounts/conversations 是外围应用的服务，不是 Cota 核心内置对象。两个函数必须同时提供。外部模式禁用 `/api/guests` 和 Cota 会话创建：前端直接使用外围已有的 token、session_id，无需在 Cota 注册用户或会话。授权函数会在历史查询、消息提交、状态查询、WebSocket 订阅和每个排队/实时帧投递前调用。凭据也会在发送和投递时重新验证；适配器应能高效处理这些只读检查。
 
-### 获取版本信息
-
-获取COTA框架的版本信息。
-
-```http
-GET /version
-```
-
-**响应示例**:
-```json
-{
-  "version": "1.0.0"
-}
-```
-
-**响应状态码**:
-- `200 OK`: 成功获取版本信息
-
-**使用示例**:
-```bash
-curl -X GET http://localhost:5005/version
-```
+浏览器客户端可以直接连接：
 
 ```javascript
-// JavaScript示例
-fetch('http://localhost:5005/version')
-  .then(response => response.json())
-  .then(data => console.log('COTA版本:', data.version));
+const client = new CotaClient({
+  base: 'https://your-bot.example',
+  token: applicationToken,
+  sessionId: applicationSessionId,
+});
+const messageId = await client.chat('你好');
+// 外围已经有消息 ID 时可复用：await client.chat('你好', existingMessageId)
 ```
 
-## 💬 对话管理接口
-
-### 发送消息
-
-向指定会话发送用户消息，智能体会处理消息并更新对话状态。
-
-```http
-POST /add/message/{session_id}/tracker
-```
-
-**路径参数**:
-| 参数 | 类型 | 必需 | 描述 |
-|------|------|------|------|
-| `session_id` | string | 是 | 会话标识符 |
-
-**请求体参数**:
-| 参数 | 类型 | 必需 | 描述 |
-|------|------|------|------|
-| `text` | string | 是 | 用户消息内容 |
-| `sender` | string | 否 | 发送者角色，默认为"user" |
-| `sender_id` | string | 否 | 发送者ID |
-| `meta_data` | object | 否 | 消息元数据 |
-
-**请求示例**:
-```json
-{
-  "text": "你好，请帮我查询今天的天气",
-  "sender": "user",
-  "sender_id": "user_123",
-  "meta_data": {
-    "timestamp": "2024-01-01T10:00:00Z",
-    "source": "web"
-  }
-}
-```
-
-**响应示例**:
-```json
-{
-  "session_id": "session_456",
-  "slots": {
-    "city": null,
-    "date": "今天"
-  },
-  "actions": [
-    {
-      "name": "UserUtter",
-      "timestamp": "2024-01-01T10:00:00Z",
-      "result": [
-        {
-          "text": "你好，请帮我查询今天的天气",
-          "sender": "user",
-          "sender_id": "user_123"
-        }
-      ]
-    },
-    {
-      "name": "BotUtter",
-      "timestamp": "2024-01-01T10:00:01Z",
-      "result": [
-        {
-          "text": "好的，请问您想查询哪个城市的天气？",
-          "sender": "bot",
-          "sender_id": "bot_assistant"
-        }
-      ]
-    }
-  ]
-}
-```
-
-**响应状态码**:
-- `200 OK`: 消息处理成功
-- `400 Bad Request`: 请求参数错误
-- `500 Internal Server Error`: 服务器内部错误
-
-**使用示例**:
-```bash
-curl -X POST http://localhost:5005/add/message/session_123/tracker \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "你好，请帮我查询今天的天气",
-    "sender": "user",
-    "sender_id": "user_123"
-  }'
-```
+如果在自己的后端直接使用 SDK，入口已经受信任，不需要经过 Web 身份适配器：
 
 ```python
-import requests
+from cota import Application
 
-url = "http://localhost:5005/add/message/session_123/tracker"
-payload = {
-    "text": "你好，请帮我查询今天的天气",
-    "sender": "user", 
-    "sender_id": "user_123"
-}
-
-response = requests.post(url, json=payload)
-result = response.json()
-print("对话状态:", result)
-```
-
-### 获取对话状态
-
-获取指定会话的完整对话状态和历史记录。
-
-```http
-GET /get/conversations/{conversation_id}/tracker
-```
-
-**路径参数**:
-| 参数 | 类型 | 必需 | 描述 |
-|------|------|------|------|
-| `conversation_id` | string | 是 | 会话标识符 |
-
-**响应示例**:
-```json
-{
-  "session_id": "session_456",
-  "slots": {
-    "city": "北京",
-    "date": "今天"
-  },
-  "actions": [
-    {
-      "name": "UserUtter",
-      "timestamp": "2024-01-01T10:00:00Z",
-      "result": [
-        {
-          "text": "查询北京今天的天气",
-          "sender": "user",
-          "sender_id": "user_123"
-        }
-      ]
-    },
-    {
-      "name": "Weather",
-      "timestamp": "2024-01-01T10:00:01Z", 
-      "result": [
-        {
-          "text": "北京今天晴天，温度25°C，湿度60%",
-          "sender": "bot",
-          "sender_id": "bot_assistant"
-        }
-      ]
-    }
-  ]
-}
-```
-
-**响应状态码**:
-- `200 OK`: 成功获取对话状态
-- `404 Not Found`: 会话不存在
-- `500 Internal Server Error`: 服务器内部错误
-
-**使用示例**:
-```bash
-curl -X GET http://localhost:5005/get/conversations/session_123/tracker
-```
-
-```javascript
-// 获取对话状态
-async function getConversationState(conversationId) {
-  try {
-    const response = await fetch(`/get/conversations/${conversationId}/tracker`);
-    const state = await response.json();
-    console.log('对话状态:', state);
-    return state;
-  } catch (error) {
-    console.error('获取对话状态失败:', error);
-  }
-}
-```
-
-### 获取最新消息
-
-批量获取多个会话的最新消息内容。
-
-```http
-GET /get/latest/utter/conversations?conversation_ids=[id1,id2,...]
-```
-
-**查询参数**:
-| 参数 | 类型 | 必需 | 描述 |
-|------|------|------|------|
-| `conversation_ids` | array | 是 | 会话ID数组，JSON格式字符串 |
-
-**请求示例**:
-```
-GET /get/latest/utter/conversations?conversation_ids=["session_123","session_456"]
-```
-
-**响应示例**:
-```json
-{
-  "conversations": [
-    {
-      "text": "北京今天晴天，温度25°C",
-      "sender": "bot",
-      "sender_id": "bot_assistant",
-      "timestamp": "2024-01-01T10:00:01Z",
-      "session_id": "session_123"
-    },
-    {
-      "text": "好的，我已经为您预订了酒店",
-      "sender": "bot", 
-      "sender_id": "bot_assistant",
-      "timestamp": "2024-01-01T10:05:00Z",
-      "session_id": "session_456"
-    }
-  ]
-}
-```
-
-**响应状态码**:
-- `200 OK`: 成功获取最新消息
-- `400 Bad Request`: 请求参数错误
-- `500 Internal Server Error`: 服务器内部错误
-
-**使用示例**:
-```bash
-curl -X GET "http://localhost:5005/get/latest/utter/conversations?conversation_ids=[\"session_123\",\"session_456\"]"
-```
-
-```python
-import requests
-import json
-
-# 获取多个会话的最新消息
-conversation_ids = ["session_123", "session_456"]
-url = f"http://localhost:5005/get/latest/utter/conversations"
-params = {"conversation_ids": json.dumps(conversation_ids)}
-
-response = requests.get(url, params=params)
-result = response.json()
-print("最新消息:", result['conversations'])
-```
-
-### 获取历史消息
-
-获取指定会话的完整历史消息记录。
-
-```http
-GET /get/history/message/conversation/{conversation_id}
-```
-
-**路径参数**:
-| 参数 | 类型 | 必需 | 描述 |
-|------|------|------|------|
-| `conversation_id` | string | 是 | 会话标识符 |
-
-**响应示例**:
-```json
-{
-  "conversations": [
-    {
-      "text": "你好",
-      "sender": "user",
-      "sender_id": "user_123",
-      "timestamp": "2024-01-01T09:58:00Z",
-      "type": "text"
-    },
-    {
-      "text": "您好！我是COTA智能助手，有什么可以帮您的吗？",
-      "sender": "bot",
-      "sender_id": "bot_assistant", 
-      "timestamp": "2024-01-01T09:58:01Z",
-      "type": "text"
-    },
-    {
-      "text": "查询北京今天的天气",
-      "sender": "user",
-      "sender_id": "user_123",
-      "timestamp": "2024-01-01T10:00:00Z", 
-      "type": "text"
-    },
-    {
-      "text": "北京今天晴天，温度25°C，湿度60%",
-      "sender": "bot",
-      "sender_id": "bot_assistant",
-      "timestamp": "2024-01-01T10:00:01Z",
-      "type": "text"
-    }
-  ]
-}
-```
-
-**错误响应**:
-```json
-{
-  "error": "Conversation ID not provided",
-  "status": 400
-}
-```
-
-**响应状态码**:
-- `200 OK`: 成功获取历史消息
-- `400 Bad Request`: 会话ID未提供
-- `404 Not Found`: 会话不存在  
-- `500 Internal Server Error`: 服务器内部错误
-
-**使用示例**:
-```bash
-curl -X GET http://localhost:5005/get/history/message/conversation/session_123
-```
-
-```python
-import requests
-
-def get_conversation_history(conversation_id):
-    """获取会话历史消息"""
-    url = f"http://localhost:5005/get/history/message/conversation/{conversation_id}"
-    
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        
-        data = response.json()
-        messages = data.get('conversations', [])
-        
-        print(f"会话 {conversation_id} 的历史消息:")
-        for msg in messages:
-            print(f"[{msg['timestamp']}] {msg['sender']}: {msg['text']}")
-            
-        return messages
-    except requests.exceptions.RequestException as e:
-        print(f"获取历史消息失败: {e}")
-        return []
-
-# 使用示例
-history = get_conversation_history("session_123")
-```
-
-## 🔍 数据结构说明
-
-### Message对象
-```json
-{
-  "text": "string",           // 消息内容
-  "sender": "string",        // 发送者角色 (user/bot)
-  "sender_id": "string",     // 发送者ID
-  "receiver": "string",      // 接收者角色 (可选)
-  "receiver_id": "string",   // 接收者ID (可选)
-  "session_id": "string",    // 会话ID
-  "timestamp": "string",     // 时间戳 (ISO格式)
-  "type": "string",          // 消息类型 (text/image)
-  "metadata": {}             // 元数据对象 (可选)
-}
-```
-
-### Action对象
-```json
-{
-  "name": "string",          // 动作名称
-  "description": "string",   // 动作描述 (可选)
-  "timestamp": "string",     // 执行时间戳
-  "result": [                // 执行结果数组
-    {
-      "text": "string",      // 结果文本
-      "sender": "string",    // 发送者
-      "sender_id": "string", // 发送者ID
-      "type": "string"       // 结果类型
-    }
-  ]
-}
-```
-
-### DST状态对象
-```json
-{
-  "session_id": "string",    // 会话ID
-  "slots": {},               // 槽位信息字典
-  "actions": []              // 动作历史数组
-}
-```
-
-## 🛠️ 错误处理
-
-### 错误响应格式
-```json
-{
-  "error": "错误描述信息",
-  "status": 400,
-  "details": {
-    "field": "具体错误字段",
-    "message": "详细错误信息"
-  }
-}
-```
-
-### 常见错误码
-| 状态码 | 说明 | 解决方案 |
-|--------|------|----------|
-| 400 | 请求参数错误 | 检查请求参数格式和必填字段 |
-| 404 | 资源不存在 | 确认会话ID或路径是否正确 |
-| 500 | 服务器内部错误 | 检查服务器日志，联系管理员 |
-
-## 📝 使用最佳实践
-
-### 1. 会话管理
-```python
-import uuid
-import requests
-
-class CotaClient:
-    def __init__(self, base_url="http://localhost:5005"):
-        self.base_url = base_url
-        self.session_id = str(uuid.uuid4())
-    
-    def send_message(self, text, sender_id="user"):
-        """发送消息到智能体"""
-        url = f"{self.base_url}/add/message/{self.session_id}/tracker"
-        payload = {
-            "text": text,
-            "sender": "user",
-            "sender_id": sender_id
-        }
-        
-        response = requests.post(url, json=payload)
-        return response.json()
-    
-    def get_history(self):
-        """获取对话历史"""
-        url = f"{self.base_url}/get/history/message/conversation/{self.session_id}"
-        response = requests.get(url)
-        return response.json()
-
-# 使用示例
-client = CotaClient()
-result = client.send_message("你好")
-print("智能体回复:", result)
-```
-
-### 2. 错误处理
-```python
-def safe_api_call(func):
-    """API调用装饰器，统一错误处理"""
-    def wrapper(*args, **kwargs):
-        try:
-            response = func(*args, **kwargs)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                print(f"API错误: {response.status_code} - {response.text}")
-                return None
-        except requests.exceptions.RequestException as e:
-            print(f"网络错误: {e}")
-            return None
-    return wrapper
-
-@safe_api_call
-def send_message_safe(session_id, text):
-    return requests.post(
-        f"http://localhost:5005/add/message/{session_id}/tracker",
-        json={"text": text}
+async with Application(agent) as app:
+    submission = await app.submit(
+        user_id=verified_user_id, session_id=verified_session_id,
+        text='你好',  # message_id 可省略，Cota 自动生成
     )
+    result = await submission.wait()
 ```
 
-### 3. 批量操作
-```python
-async def batch_get_latest_messages(conversation_ids):
-    """批量获取最新消息"""
-    import aiohttp
-    import json
-    
-    async with aiohttp.ClientSession() as session:
-        url = "http://localhost:5005/get/latest/utter/conversations"
-        params = {"conversation_ids": json.dumps(conversation_ids)}
-        
-        async with session.get(url, params=params) as response:
-            if response.status == 200:
-                data = await response.json()
-                return data.get('conversations', [])
-            else:
-                print(f"批量获取失败: {response.status}")
-                return []
+服务中应复用一个长期存活的 Application。完整 API、生命周期和输入状态见 [应用接入契约](application.md)。
+
+通过 CLI 启动已有应用时，也可在 channels.web 配置 `access_factory: './access.py:create_access'`。工厂是同步无参数函数，返回 `ExternalAccess(authenticate, authorize)`；文件路径相对 Bot 目录，也支持 `module:factory`。此文件属于受信任的部署代码。工厂配置不能与 create_app 的显式身份参数同时使用。
+
+## 独立分享链接
+
+不接已有应用时，显式启用独立的配套聊天应用：
+
+```bash
+cota run --config ./bots/weather --chat-app --host 127.0.0.1 --port 5005
 ```
 
-## 📊 性能考虑
+打开 `http://127.0.0.1:5005/chat/`。应用支持访客身份、会话列表、单聊和群聊、邀请和成员管理。应用元数据独立保存于 `.cota/chat.sqlite3`，消息仍使用原 Store；详情见 [可选聊天应用](chat-app.md)。不加 `--chat-app` 时不提供默认聊天页面。
 
-### 请求限制
-- 建议单次请求消息长度不超过10KB
-- 批量查询会话ID不超过100个
-- 并发请求控制在合理范围内
+仅使用核心 Web API 且没有配置外围身份适配器时，仍可使用轻量的 GuestAccess：`POST /api/guests` 签发 30 天访客凭据，`POST /api/conversations` 签发绑定该用户的私有会话 ID，签名密钥保存在 `.cota/web.key`，不需要应用数据表。它不支持群聊或会话列表，与配套应用的 ChatAccess 是两种独立选择。密钥不应放进分享的 Bot 包。
 
-### 缓存策略
-- 对话状态会自动缓存
-- 历史消息支持增量获取
-- 建议客户端实现本地缓存
+## 数据与输入状态
 
-### 监控指标
-- 响应时间监控
-- 错误率统计
-- 并发连接数跟踪
+核心 Store 不创建或使用 `web_credentials`、`web_conversations`、`web_inputs`。配套聊天应用的元数据位于独立应用数据库，不是 Store 的替代表。已有数据库中的旧表不会被自动删除。Store 的 deliveries 表只承接渠道回复投递，不管理账号、会话权限或输入去重；Web 本身不创建投递记录。
 
-这套API接口为COTA提供了完整的程序化交互能力，支持各种客户端和集成场景。
+- `user_id`：外部验证的用户身份，决定用户记忆范围。
+- `session_id`：外部对话标识，决定 DST、历史和执行顺序。
+- `message_id`：一次输入的稳定 ID；省略或 null 时自动生成，显式空值无效，长度最多 255 字符。
+- `event_id`：执行事实标识；输入事件使用 message_id 的稳定摘要构造，在原有事件索引中查询。
+
+Store 通过 `(session_id, message_id)` 去重，并核对发送者、正文和媒体等输入内容。相同 ID 的相同输入返回已有状态；改变输入则拒绝。不同 Channel 使用同一 session_id 和 message_id 时也适用。
+
+排队位置由进程内 Runner 管理，但成功接收前已保存 `user_utter`。后续状态由 `run_started` / `run_finished` 等已有执行事实恢复，不单独维护输入状态表。启动时有界恢复尚未开始的 direct 输入，已开始的运行不会自动重放。
+
+进程退出后，已接收且尚未开始的 direct 输入可由启动恢复或原 ID 重试继续调度；已有 run_started 但无完成事实的任务按 interrupted 返回，不自动重跑。没有 ID 的请求会生成新的 ID，因此如果第一次响应丢失，客户端再次省略 ID 会被视为新消息；需要可靠重试时应在客户端预先生成并复用 ID。内置客户端已这样处理。
+
+如果 user_utter 保存失败，提交返回错误，不能当作已接收；后续状态查询可能返回不存在，使用原 ID 重试。保存后、开始模型执行前的失败不会丢掉输入，可用相同 ID 恢复尚未开始的任务。直接使用自定义 Runner handler 时，也必须通过 Processor 或相同的事件提交契约，才能获得持久化去重。
+
+## 配置
+
+```yaml
+channels:
+  web:
+    enabled: true
+    transport: websocket
+    concurrency: 8
+    max_pending: 256
+    cors_origins: []
+```
+
+未配置任何 channels 时默认启动 WebSocket WebChannel；配置了其它通道时，需要明确启用 web。endpoints.yml 的 channels 按字段覆盖 agent.yml 的通道默认设置。监听地址、端口和 TLS 使用 `cota run` 参数，不配置 channels.web.host/port。默认同源；跨源应用需要明确配置 cors_origins。小程序没有 Origin 头时也必须通过身份与会话权限验证。
+
+当前不开放 SSE、Socket.IO 或旧 tracker/workspace 接口。公开聊天接口只返回 user_utter/bot_utter 的消息投影；原始 Events、DST、工具结果与模型请求仍由独立开发调试入口查看。
+
+## HTTP 接口
+
+| 接口 | 作用 |
+|---|---|
+| `POST /api/guests` | 仅核心 GuestAccess：签发访客凭据；配套应用使用自己的管理接口 |
+| `POST /api/conversations` | 仅核心 GuestAccess：签发绑定访客的会话 ID |
+| `POST /api/conversations/{session_id}/messages` | 提交消息，立即返回 202、实际 message_id 和状态查询 Location |
+| `GET /api/conversations/{session_id}/messages?after_sequence=0&limit=100` | 查询授权会话的消息 |
+| `GET /api/conversations/{session_id}/submissions/{message_id}` | 查询 Store 派生的提交状态 |
+| `GET /api/health` | 就绪返回 200；启动未完成、退出中或启用渠道异常返回 503 |
+| `GET /version` | 查看 Cota 版本，不调用模型 |
+| `GET /ws` | 建立 WebSocket |
+| `GET /cota.js` | 获取浏览器 WebSocket 客户端 |
+
+消息提交、历史、状态查询和默认会话创建使用 `Authorization: Bearer <token>`。身份与会话权限规则和 WebSocket 完全一致。只启用飞书等非 Web Channel 时，仅挂载健康检查和版本接口。
+
+### 使用 HTTP 提交消息
+
+无需维护 WebSocket 连接即可接入脚本或后端：
+
+```bash
+curl -i -X POST 'http://127.0.0.1:5005/api/conversations/your-session-id/messages' \
+  -H 'Authorization: Bearer your-token' \
+  -H 'Content-Type: application/json' \
+  --data '{"text":"你好","message_id":"client-message-001"}'
+```
+
+响应为当前提交回执，例如：
+
+```json
+{"session_id":"your-session-id","message_id":"client-message-001","status":"queued","error":null,"duplicate":false}
+```
+
+`202 Accepted` 表示输入已保存并被接收，不表示模型已经完成或用户已读。响应头 `Location` 指向现有的 submissions 状态接口；带同一 Bearer 凭据查询它，再通过 messages 接口取得回复。重复提交同一 ID、相同内容时仍返回 202，`duplicate` 为 true，状态可能已经是 completed，不重新执行模型。不同内容使用同一 ID 返回 409。
+
+请求体只允许 `text`、`message_id`、`mentioned`、`reply_to`。`text` 必填且为 1–32768 字符的非空文本；HTTP 请求体上限 256 KiB。`message_id` 省略或 null 时自动生成。群聊可用 `mentioned: true` 明确 @ Bot，`reply_to` 为引用消息 ID；普通群消息可能仅返回 recorded，是否触发执行由已有群聊策略决定。不能在正文里传入身份或覆盖 session_id。
+
+提交后 HTTP 客户端断线不会取消已接收的执行。HTTP 和 WebSocket 共用去重与消息广播，因此可以 HTTP 发送、WebSocket 接收，也可以完全用 HTTP 查询历史。请求结果丢失时使用原 message_id 重试；不要重新生成 ID。队列满、进程重启等恢复边界与前述 WebSocket 契约相同。
+
+URL 中的 session_id、message_id 应分别进行百分号编码（包括 `/`、`%` 等字符），服务端只解码一次。历史查询额外支持 `until_sequence`：首屏取得 `through` 后，将它作为后续页的 until_sequence，配合返回的 cursor 继续分页，可以固定查询上界。limit 为 1–500，游标必须为非负整数；事件流跳号或当前页没有聊天消息并不表示结束，应以 has_more 为准。
+
+### 错误与就绪检查
+
+HTTP 错误统一返回 JSON，`error` 为稳定代码；部分输入错误附带可读的 `message`。不要依赖 message 文案编写客户端逻辑。
+
+| HTTP 状态 | error | 处理方式 |
+|---|---|---|
+| 400 | invalid_request | 修正 JSON、字段类型或分页参数 |
+| 403 | unauthorized / origin_not_allowed | 检查凭据、会话权限或 cors_origins |
+| 404 | not_found | 接口或提交记录不存在 |
+| 405 | method_not_allowed | 检查 HTTP 方法；Allow 头列出可用方法 |
+| 409 | input_conflict / run_in_progress | 不要修改已有消息 ID 的内容；未结束执行需先协调，不能盲目重跑 |
+| 413 / 415 | payload_too_large / unsupported_media_type | 减小请求体，使用 application/json |
+| 429 | busy | 根据 Retry-After 稍后用原 message_id 重试 |
+| 503 | not_ready | 服务正在启动或关闭，稍后重试 |
+| 500 | internal_error | 查看服务日志；公开响应不包含内部异常和堆栈 |
+
+`/api/health` 是服务就绪检查，响应保留 success、bot、channels；渠道异常只公开 channel_failed，原始原因写入日志。它不探测模型供应商，也不执行收费请求，不能代表模型或外部工具一定可用。服务退出时停止接收新输入，按 Application 的有界关闭规则等待已有执行，随后清理 Web 观察任务；HTTP 监听等待方被取消不会丢弃这段清理。
+
+创建服务器时会提前检查 Channel 配置、enabled 类型、Web transport 和 cors_origins。跨域列表必须是完整的 http(s) origin（不含路径、账号、查询或通配符）。允许的跨域前端可读取 Location 和 Retry-After 响应头。不传 config_path 时使用已加载 Agent 的 config_path，访客签名密钥随 Bot 目录保存。
+
+## WebSocket 协议
+
+建立连接后 10 秒内发送：
+
+```json
+{"type":"resume","token":"...","session_id":"...","after_sequence":0}
+```
+
+验证身份与会话权限后，先补取历史，再发出 `ready`：
+
+```json
+{"type":"ready","session_id":"...","cursor":12}
+```
+
+提交消息，message_id 可省略：
+
+```json
+{"type":"send","message_id":"client-id","text":"你好"}
+```
+
+身份在 resume 绑定，send 不允许携带 user_id、sender_id。默认向初始会话发送；也可携带已订阅会话的 session_id。提交回执包含实际使用的 message_id，状态可能为 queued/recorded/running/completed/limited/failed/interrupted。队列满返回 busy，可稍后使用原 ID 重试。
+
+聊天消息：
+
+```json
+{"type":"message","session_id":"...","event_id":"...","sequence":5,"role":"bot","text":"你好！","message_id":null}
+```
+
+用户消息的 message_id 关联输入；Bot 消息以 event_id 标识。客户端按 event_id 去重，按 sequence 排序。sequence 属于完整执行事件流，聊天消息跳号正常。
+
+## 运行与恢复范围
+
+同会话的明确请求按 FIFO 执行、不同会话有限并发；群聊主动参与任务排在明确请求之后，不抢占已开始的执行。每轮独立绑定用户记忆与工具。模型没有内置定时或后台任务工具。可信应用可独立管理 SchedulerService 后端；定时投递未接入 Web 会话。
+
+断开连接不取消运行。回复先保存到 Store 再推送；重连通过 cursor 补取，发送失败不触发模型/工具重跑。每个连接有独立有界发送队列，历史回放期间的实时消息另有有界缓冲，不持锁等待慢连接。超出缓冲或发送失败会断开慢连接，再从持久历史补取；客户端仍需按 event_id 去重。文本上限 32768 字符，帧上限 256 KiB。
+
+单进程服务，不支持多个执行进程共同消费同一会话。已经持久化但执行中断的输入不会自动重放外部副作用；若旧 DST 仍为 running，必须先确认旧执行器已停止并人工协调，或新建会话。
+
+旧 use_proxy_user 模拟循环不属于已标识消息的执行入口，现在会明确拒绝，避免绕过输入记录重复运行模型。需要模拟对话时应通过独立的评测流程提交正常消息。
+
+
+### 多会话订阅与容量
+
+同一连接可以发送 `{"type":"subscribe","session_id":"room-2","after_sequence":0}`，
+取消订阅使用 `{"type":"unsubscribe","session_id":"room-2"}`。每次订阅、发送与投递都重新鉴权；
+应用继续管理身份与成员关系。每个会话独立先回放、再 ready、再投递回放期间的实时帧。
+客户端按 session_id 分流并按 event_id 去重。任一会话权限撤销会关闭整个连接，重连时只订阅仍有权限的会话。
+
+`channels.web` 可配置 `max_connections`（默认 1024，上限 10000）、
+`max_connections_per_user`（默认 8，上限 100）、`max_subscriptions`（每连接默认 32，上限 256）。
+握手中的连接也计入总连接数；容量满返回 busy。`/api/health` 的 web 字段仅暴露连接数、订阅数与容量，不含身份。
+
+### 最近消息与向前翻页
+
+`GET /api/conversations/{id}/messages?recent=1&limit=50` 获取最近一页；
+用返回的 `cursor` 请求 `?before_sequence=<cursor>&limit=50` 获取更早消息。
+每页按时间正序返回，`has_more` 表示仍有更早消息；`through` 是快照的事件上界。
+不要将 backward 参数与 after_sequence/until_sequence 混用。
+resume/subscribe 可传 `recent:true` 只回放最近 50 条，ready 同时包含 has_more。
+已持有 cursor 的重连应使用 after_sequence 补齐断线期间全部增量。
+
+内置 CotaClient 初次使用最近 50 条，`await client.loadOlder()` 加载更早消息，触发 history 事件。
+浏览器缓存默认最多 200 条（maxCachedMessages 最大 500），当前消息视图最多 1000 条；
+未完成输入单独保留，最多 100 条，达到上限拒绝新增输入，不删除已有输入。
+缓存损坏会保留原始存储并提示恢复；配额不足时保留当前标签页中的待发输入并报告错误，
+调用方应保留草稿并让用户重试。临时服务错误不会删除待发输入；只有终态回执确认完成。
+
+
+实时投递按已持久化的消息前缀补齐：如果较高 sequence 的通知先到达，服务端先查询并投递此前缺少的聊天消息，
+再发送较高 sequence。执行回调乱序不会让客户端游标越过尚未收到的已保存回复。

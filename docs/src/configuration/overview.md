@@ -1,64 +1,32 @@
-# 配置说明总览
+# 配置总览
 
-COTA框架使用YAML格式的配置文件来定义智能体的行为、策略和外部服务连接。一个完整的COTA机器人配置包含以下几个核心部分。
+一个 Bot 文件夹同时保存可分享的业务定义和本次部署需要的资源设置。先建立最小配置，再按业务增加 Skill、工具和 Policy。
 
-## 📁 配置文件结构
-
+```text
+my_bot/
+├── agent.yml          # Bot 身份、对话、工具范围、Policy 策略
+├── endpoints.yml      # 模型、存储、平台连接
+├── skills/            # 可选：Skill 说明和引用资源
+│   └── order/SKILL.md
+├── policy/            # 可选：业务案例标注
+│   └── data.yml
+└── workspace/         # 运行时工作目录
 ```
-bot/                    # 机器人项目目录
-├── agent.yml               # 智能体配置文件（核心）
-├── endpoints.yml            # 端点配置文件（连接配置）
-└── policy/                  # 策略配置目录
-    ├── data.yml            # 策略数据文件
-    └── rules.yml           # 触发规则文件
-```
 
-## 🔧 核心配置组件
+| 配置 | 负责什么 | 使用位置 |
+| --- | --- | --- |
+| `agent.yml` | deploy、system、dialogue、environment、tools、policy、knowledge | `Agent.load_from_path()` 校验并加载 |
+| `endpoints.yml` | base_store、llms、embeddings、channels | Store / LLM / Policy 资源及部署入口 |
+| `skills/**/SKILL.md` | 业务能力说明与资源目录 | Pi 发现，模型按需通过 `read` 阅读 |
+| `policy/*.yml` | `policies` / `name` / `steps` 业务案例 | Policy 提供当前请求的 guidance |
+| `models/policy.json` | 需要训练的 Policy 产物 | 训练后加载，源或配置变化会校验失效 |
 
-### 1. Agent配置 (`agent.yml`)
-定义智能体的基本信息、对话模式、策略和动作。
+`Agent.load_from_path()` 只加载 Bot 资源，不启动监听服务、Channel 或定时 SchedulerService。CLI 部署入口另外合并两份 YAML 中的 `channels`；`endpoints.yml` 覆盖同名 channel 的字段。SDK 创建服务时显式传递 `channel_config`。
 
-**主要配置项**：
-- `system`: 智能体基本信息
-- `dialogue`: 对话模式和参数
-- `policies`: 对话策略配置
-- `actions`: 动作定义和提示词
-- `knowledge`: 知识库配置（RAG功能）
+模型的 `key`、`apibase`、`model` 直接写实际字符串，不进行环境变量替换。分享 Bot 文件夹时用可填写的配置模板交付，部署凭证由接收者配置。
 
-### 2. Endpoints配置 (`endpoints.yml`)
-配置外部服务连接，包括数据库、缓存、LLM等。
+Bot 顶层字段采用明确校验，未知字段会报错。旧 DPL、Action、task.yml 编排、Skill 自动执行脚本和旧 Web transport 配置不能沿用。先按 [快速开始](../tutorial/quick_start.md) 跑通一个示例，再阅读需要的配置项。
 
-**主要配置项**：
-- `base_store`: 数据存储配置
-- `channel`: 通道缓存配置
-- `llms`: 大语言模型配置
+实现入口：`cota/config.py`、`cota/agent.py`、`cota/__main__.py`。
 
-### 3. Policy配置 (`policy/data.yml`)
-定义对话策略和示例，用于训练智能体的对话模式。
-
-**主要配置项**：
-- `policies`: 策略示例列表
-- 每个策略包含完整的对话流程示例
-
-### 4. Trigger配置 (`policy/rules.yml`)
-定义触发规则，当用户输入匹配特定模式时自动执行相应动作。
-
-**主要配置项**：
-- `triggers`: 触发规则列表
-- 每个规则包含触发条件和执行动作
-
-## 🔗 相关配置
-
-### 核心配置文件
-- **agent.yml**: 智能体核心配置，定义系统描述、对话参数、策略和动作
-- **endpoints.yml**: 外部服务配置，包括LLM、数据库和缓存连接
-- **policy/data.yml**: 策略示例数据，用于match类型的策略学习
-- **policy/rules.yml**: 触发规则配置，定义特定条件下的自动响应
-
-### 配置建议
-通过合理的配置，你可以创建功能强大、响应准确的COTA智能体：
-
-1. **从简单开始**: 使用基础的trigger策略，逐步添加高级功能
-2. **RAG增强**: 通过knowledge配置集成知识库，提升回答准确性  
-3. **策略组合**: 结合trigger和match策略，平衡响应速度和智能程度，通过llm DPL结合知识库持续优化DPL能力
-4. **生产优化**: 配置持久化存储和缓存，确保系统稳定性
+相关文档：[Agent 配置](agent.md) · [Endpoints 配置](endpoints.md) · [Policy 配置](policy.md) · [Skills](../skills/overview.md) · [分享 Bot](../deployment/sharing.md)
