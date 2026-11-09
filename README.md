@@ -62,14 +62,12 @@ policies:
     steps:
       - user: 北京现在多少度？
       - bot:
-          - thought: 用户需要实时气温，使用天气查询能力。
           - skills: [weather]
           - result: 主服务与备用服务都没有返回有效天气数据。
-          - thought: 当前无法确认气温，说明暂时查不到，不猜测数值。
           - reply: 暂时没查到北京的气温，稍后再试一下吧。
 ```
 
-`thought` 是标注人员写下的业务判断，`result` 描述这个案例遇到的结果。Cota 在模型请求前结合当前对话与执行进展，提供适用的 Policy 指导，影响后续 Skill 选择、结果处理与回复。模型仍依据本次真实数据执行；案例中的结果不是实时事实。
+这段案例描述了使用什么能力、遇到什么结果，以及怎样回复。Cota 结合当前对话与执行进展提供适用的 Policy 指导，影响后续 Skill 选择、结果处理与回复。运行时仍以本次真实数据为准。
 
 你可以直接编写案例，也可以用 `cota annotate export` 导出真实对话草稿，人工修改后通过 `annotate import` 校验。标注方式见 [Skill、Trace 与 Policy](docs/src/concepts/skill-policy.md)。
 
