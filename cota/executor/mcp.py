@@ -21,11 +21,11 @@ except ImportError:
 
 class MCPClientWrapper:
     """MCP客户端包装类，管理MCP服务器连接和工具调用"""
-    
+
     def __init__(self, server_params: StdioServerParameters):
         """
         初始化MCP客户端包装器
-        
+
         Args:
             server_params: MCP服务器参数
         """
@@ -54,7 +54,7 @@ class MCPClientWrapper:
         except Exception as e:
             logger.error(f"获取工具列表失败: {e}")
             raise
-    
+
     async def list_prompts(self) -> List[Dict]:
         """列出所有可用的prompts"""
         session = await self.ensure_connected()
@@ -71,7 +71,7 @@ class MCPClientWrapper:
         except Exception as e:
             logger.error(f"获取prompts列表失败: {e}")
             raise
-    
+
     async def call_tool(self, tool_name: str, arguments: Dict) -> Dict:
         """调用MCP工具"""
         session = await self.ensure_connected()
@@ -84,7 +84,7 @@ class MCPClientWrapper:
         except Exception as e:
             logger.error(f"调用工具 {tool_name} 失败: {e}")
             raise
-    
+
     async def get_prompt(self, prompt_name: str, arguments: Optional[Dict] = None) -> Dict:
         """获取MCP prompt"""
         session = await self.ensure_connected()
@@ -97,7 +97,7 @@ class MCPClientWrapper:
         except Exception as e:
             logger.error(f"获取prompt {prompt_name} 失败: {e}")
             raise
-    
+
     async def close(self):
         """Close both contexts in the task which entered them."""
         await self._owner.close()

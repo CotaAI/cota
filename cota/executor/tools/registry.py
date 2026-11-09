@@ -26,7 +26,7 @@ TOOL_GROUPS: Dict[str, List[str]] = {
 
 def _expand_groups(names: List[str]) -> Set[str]:
     """Expand group references in a list of names.
-    
+
     E.g., ["group:network", "lookup"] -> {"http_request", "lookup"}
     """
     result = set()
@@ -47,11 +47,11 @@ def _expand_groups(names: List[str]) -> Set[str]:
 
 class ToolPolicy:
     """Tool access policy using allow/deny lists.
-    
+
     - deny wins over allow
     - Supports group shortcuts (e.g., "group:network")
     - None allow = allow all
-    
+
     Example:
         # Allow only network tools
         policy = ToolPolicy(allow=["group:network"])
@@ -62,7 +62,7 @@ class ToolPolicy:
         # Permit HTTP only
         policy = ToolPolicy(allow=["http_request"])
     """
-    
+
     def __init__(
         self,
         allow: Optional[List[str]] = None,
@@ -73,10 +73,10 @@ class ToolPolicy:
         self.deny_all = deny is not None and 'group:all' in deny
         self.allow = _expand_groups(allow) if allow is not None else None
         self.deny = _expand_groups(deny) if deny else set()
-    
+
     def is_allowed(self, tool: "Tool") -> bool:
         """Check if a tool is allowed by this policy.
-        
+
         Args:
             tool: Python tool instance or the name of a Pi tool
         """
@@ -85,11 +85,11 @@ class ToolPolicy:
         # Deny wins
         if self.deny_all or tool_name in self.deny:
             return False
-        
+
         # If allow is set, tool must be in allow list
         if self.allow is not None and not self.allow_all:
             return tool_name in self.allow
-        
+
         return True
 
 
@@ -99,19 +99,19 @@ class ToolPolicy:
 
 class ToolRegistry:
     """Registry for managing tools.
-    
+
     Example:
         registry = ToolRegistry()
         registry.set_policy(ToolPolicy(deny=["http_request"]))
         tools = registry.get_allowed_tools()
     """
-    
+
     def __init__(self):
         self._tools: Dict[str, Tool] = {}
         self._policy: Optional[ToolPolicy] = None
         self._process_tools = {}
         self._process_lock = asyncio.Lock()
-    
+
     def register(self, tool: Tool) -> None:
         """Register an application tool without replacing any existing capability."""
         self._check_registration(tool.name, tool.parameters)
@@ -135,23 +135,23 @@ class ToolRegistry:
             unknown = referenced - (self._tools.keys() | {'http_request'})
             if unknown:
                 raise ValueError(f'Unknown configured tools: {", ".join(sorted(unknown))}')
-    
+
     def get(self, name: str) -> Optional[Tool]:
         """Get tool by name."""
         return self._tools.get(name)
-    
+
     def list_tools(self) -> List[Tool]:
         """List all tools."""
         return list(self._tools.values())
-    
+
     def list_tool_names(self) -> List[str]:
         """List all tool names."""
         return list(self._tools.keys())
-    
+
     def set_policy(self, policy: ToolPolicy) -> None:
         """Set access policy."""
         self._policy = policy
-    
+
     def is_allowed(self, name: str) -> bool:
         """Apply the same policy to Pi tools supplied outside the Python registry."""
         return self._policy is None or self._policy.is_allowed(name)
@@ -163,7 +163,7 @@ class ToolRegistry:
             tools = [t for t in tools if self._policy.is_allowed(t)]
         tools = [t for t in tools if t.enabled]
         return tools
-    
+
     async def connect_process(self, client) -> List[str]:
         """Register an explicit tool server during Bot setup and own its shutdown.
 
@@ -215,7 +215,7 @@ class ToolRegistry:
                 if self._tools.get(tool.name) is tool:
                     self._tools.pop(tool.name)
             client._registry_owner = None
-    
+
     async def cleanup(self) -> None:
         """Cleanup all tools."""
         for tool in list(self._tools.values()):

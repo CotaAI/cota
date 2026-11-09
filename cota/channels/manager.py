@@ -104,18 +104,18 @@ class ChannelManager:
         """验证权限配置"""
         # 不需要验证 allow_from 的 Channel 类型
         optional_channels = {"web", "cmdline"}
-        
+
         for name, ch in self.channels.items():
             # 这些 Channel 可以没有 allow_from 配置
             if name in optional_channels:
                 continue
-            
+
             # 支持字典和对象两种配置方式
             if isinstance(ch.config, dict):
                 allow_from = ch.config.get("allow_from", None)
             else:
                 allow_from = getattr(ch.config, "allow_from", None)
-            
+
             if allow_from is None or allow_from == []:
                 raise SystemExit(
                     f'Error: "{name}" has empty allow_from (denies all). '

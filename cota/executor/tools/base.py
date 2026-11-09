@@ -15,12 +15,12 @@ def create_tool_schema(
     description: Optional[str] = None
 ) -> Dict[str, Any]:
     """Create OpenAI-compatible JSON Schema for tool parameters.
-    
+
     Args:
         properties: Dict of parameter definitions
         required: List of required parameter names
         description: Optional schema description
-        
+
     Returns:
         JSON Schema dict
     """
@@ -36,58 +36,58 @@ def create_tool_schema(
 
 class Tool(ABC):
     """Adapter for explicitly registered Python callables.
-    
+
     Tools are the building blocks that LLM can use to interact with
     the external world. Each tool should:
     1. Have a clear, specific purpose
     2. Define its parameters using JSON Schema
     3. Handle errors gracefully
     4. Return structured results
-    
+
     Example:
         class MyTool(Tool):
             @property
             def name(self) -> str:
                 return "my_tool"
-            
+
             @property
             def description(self) -> str:
                 return "Does something useful"
-            
+
             @property
             def parameters(self) -> Dict[str, Any]:
                 return create_tool_schema(
                     properties={"input": {"type": "string"}},
                     required=["input"]
                 )
-            
+
             async def execute(self, **kwargs) -> Dict[str, Any]:
                 return {"content": [{"type": "text", "text": "done"}], "details": {}}
     """
-    
+
     @property
     @abstractmethod
     def name(self) -> str:
         """Unique tool name (used in LLM function calls)."""
         pass
-    
+
     @property
     @abstractmethod
     def description(self) -> str:
         """Human-readable description for LLM to understand the tool's purpose."""
         pass
-    
+
     @property
     @abstractmethod
     def parameters(self) -> Dict[str, Any]:
         """JSON Schema defining the tool's parameters."""
         pass
-    
+
     @property
     def category(self) -> str:
         """Tool category for grouping (core, web, browser, etc.)."""
         return "general"
-    
+
     @property
     def enabled(self) -> bool:
         """Whether this tool is enabled by default."""
@@ -115,23 +115,23 @@ class Tool(ABC):
     def requires(self) -> List[str]:
         """List of required dependencies (for documentation)."""
         return []
-    
+
     @abstractmethod
     async def execute(self, **kwargs) -> Any:
         """Execute the tool with given parameters.
-        
+
         Args:
             **kwargs: Parameters as defined in the parameters schema
-            
+
         Returns:
             Pi result (content/details/isError) or JSON-serializable application data
         """
         pass
-    
+
     async def cleanup(self) -> None:
         """Clean up any resources held by the tool."""
         pass
-    
+
     def to_openai_schema(self) -> Dict[str, Any]:
         """Convert to OpenAI function calling format."""
         return {
@@ -142,32 +142,32 @@ class Tool(ABC):
                 "parameters": self.parameters
             }
         }
-    
+
     def __repr__(self) -> str:
         return f"<Tool {self.name}>"
 
 
 class ToolWrapper:
     """Wraps a Tool instance for use with PiAgentRuntime.
-    
+
     Handles async/sync execution and result normalization.
     """
-    
+
     def __init__(self, tool: Tool):
         self.tool = tool
-    
+
     @property
     def name(self) -> str:
         return self.tool.name
-    
+
     @property
     def description(self) -> str:
         return self.tool.description
-    
+
     @property
     def parameters(self) -> Dict[str, Any]:
         return self.tool.parameters
-    
+
     async def __call__(self, **kwargs) -> Any:
         """Execute a tool, preserving native values for the execution record.
 
@@ -176,9 +176,9 @@ class ToolWrapper:
         """
         try:
             result = await self.tool.execute(**kwargs)
-            
+
             return result
-                
+
         except Exception as e:
             logger.error(f"Tool {self.name} execution failed: {e}")
             return {"content": [{"type": "text", "text": str(e)}], "details": {}, "isError": True}
@@ -186,13 +186,13 @@ class ToolWrapper:
 
 class FunctionTool(Tool):
     """Create a tool from a simple function.
-    
+
     Useful for quick tool creation without subclassing.
-    
+
     Example:
         async def my_handler(x: int, y: int) -> Dict:
             return {"sum": x + y}
-        
+
         tool = FunctionTool(
             name="add",
             description="Add two numbers",
@@ -206,7 +206,7 @@ class FunctionTool(Tool):
             handler=my_handler
         )
     """
-    
+
     def __init__(
         self,
         name: str,
@@ -220,23 +220,23 @@ class FunctionTool(Tool):
         self._parameters = parameters
         self._handler = handler
         self._category = category
-    
+
     @property
     def name(self) -> str:
         return self._name
-    
+
     @property
     def description(self) -> str:
         return self._description
-    
+
     @property
     def parameters(self) -> Dict[str, Any]:
         return self._parameters
-    
+
     @property
     def category(self) -> str:
         return self._category
-    
+
     async def execute(self, **kwargs) -> Any:
         if asyncio.iscoroutinefunction(self._handler):
             return await self._handler(**kwargs)

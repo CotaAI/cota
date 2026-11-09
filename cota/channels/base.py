@@ -94,7 +94,7 @@ class BaseChannel(ABC):
             allow_list = self.config.get("allow_from", [])
         else:
             allow_list = getattr(self.config, "allow_from", [])
-        
+
         if not allow_list:
             logger.warning(f"{self.name}: allow_from is empty — all access denied")
             return False
