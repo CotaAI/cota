@@ -19,9 +19,10 @@ SQLStore 在现有数据库自动创建缺失的 deliveries 表，不需要额�
 ## 哪些入口使用
 
 - **飞书 Application 入口**：自动启用持久化投递。scope 是 App ID，只恢复当前应用对应的记录；更换 App ID 不会把旧应用的回复投给新应用。
+- **第三方 Channel**：声明 `durable_delivery = True` 与稳定非空的 `delivery_scope` 后，Application 统一接入同一投递器；插件的 `send()` 失败必须抛异常，平台幂等键使用 `event_id`。开发方式见 [Channel 插件](../development/channel-plugins.md)。
 - **Web**：继续使用已保存聊天历史和客户端游标恢复，不为每个 WebSocket 创建投递记录。
 - **SDK / Shell / 显式 on_reply 回调**：由调用方消费回复，不自动创建渠道投递记录。
-- **无关联事件的通知**：使用原来的发送路径，不提供持久化补发。当前仅维护 Web、飞书和命令行三个 Channel。
+- **无关联事件的通知**：使用原来的发送路径，不提供持久化补发。持久化投递针对有 `bot_utter` 事实的回复；启用该能力的插件如只支持此类回复，应明确拒绝缺少 `event_id` 的发送。
 
 ## 顺序、失败和重启
 

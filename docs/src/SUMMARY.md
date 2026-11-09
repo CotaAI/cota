@@ -40,6 +40,7 @@
 - [部署配置入口](deployment/configuration.md)
 - [交付与分享](deployment/sharing.md)
 - [Channel 边界](concepts/channel.md)
+- [自定义 Channel 接入](development/channel-plugins.md)
 - [Application 接入契约](deployment/application.md)
 - [Web HTTP 与 WebSocket](deployment/api.md)
 - [可选聊天应用](deployment/chat-app.md)

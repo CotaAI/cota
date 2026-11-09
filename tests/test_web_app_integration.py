@@ -32,7 +32,7 @@ def latest_turn(messages):
 
 
 @asynccontextmanager
-async def running_app(tmp_path, respond, *, access=None, app_factory=create_app, mode='direct'):
+async def running_app(tmp_path, respond, *, access=None, app_factory=create_app, mode='direct', channel_config=None):
     database = str(tmp_path / 'web.db')
     store, memory = SQLStore(db=database), SQLUserMemory(db=database)
     model = SimpleNamespace(generate_chat=AsyncMock(side_effect=respond))
@@ -43,8 +43,9 @@ async def running_app(tmp_path, respond, *, access=None, app_factory=create_app,
     (tmp_path / 'workspace').mkdir(exist_ok=True)
     agent.user_memory = memory
     agent._tool_registry = ToolRegistry()
-    app = app_factory(agent, config_path=str(tmp_path), **({'access': access} if access else {}), channel_config={
-        'web': {'enabled': True, 'transport': 'websocket', 'concurrency': 2}})
+    app = app_factory(agent, config_path=str(tmp_path), **({'access': access} if access else {}),
+                      channel_config=channel_config if channel_config is not None else {
+                          'web': {'enabled': True, 'transport': 'websocket', 'concurrency': 2}})
     # Sanic's production optimization rewrites shared class methods. Multiple
     # app instances in one pytest process must retain the unmodified handlers.
     app.config.TOUCHUP = False

@@ -111,7 +111,24 @@ embeddings:
 
 CLI 按 `agent.yml`、`endpoints.yml` 的顺序合并每个 channel；后者覆盖同名字段。`Agent.load_from_path()` 本身不会启动或保留一个 ChannelManager。SDK 使用 `create_app(agent, channel_config=...)` 时传入 channels 内部映射，例如 `{"web": {"enabled": True}}`。
 
-当前支持 `web`、`feishu`、`cmdline`；其他名称报错。Web 主要字段如下：
+内置类型包括 `web`、`feishu`、`cmdline`；其他平台可安装独立 Channel 插件。映射键是实例名，`type` 指定实现，省略时使用实例名；也可使用互斥的 `factory: "module:callable"`。`enabled` 必须是布尔值，缺省为 false；安装插件不会自动启用它。类型只在已启用实例创建时加载，未安装的已启用类型会报错。实例名与类型名为最多 64 字符的小写标识符，可使用数字及 `_` / `-` 分隔，从字母开始。内置 Web 保留 `web` 实例名，不能别名或覆盖。
+
+外部插件配置示例（需先在运行 Cota 的 Python 环境安装相应包）：
+
+```yaml
+channels:
+  office_im:
+    enabled: true
+    type: example_im
+    app_id: app-one
+    webhook_secret: replace-with-random-secret
+    api_base: https://gateway.example/v1
+    api_token: replace-with-api-token
+```
+
+该示例是通用可信网关协议，非真实平台的原生实现；完整安装、验签和可靠投递契约见 [Channel 插件开发](../development/channel-plugins.md)。插件 HTTP 回调位于 `/channels/{实例名}`，无需启用 Web Channel。
+
+Web 主要字段如下：
 
 | 字段 | 含义 |
 | --- | --- |

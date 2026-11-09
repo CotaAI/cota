@@ -7,6 +7,7 @@
 """
 
 import asyncio
+import inspect
 from collections import deque
 from typing import Any, Dict, Optional, List
 
@@ -14,6 +15,8 @@ from loguru import logger
 
 from .base import BaseChannel
 from .queue import MessageBus
+from .context import ChannelContext
+from .registry import ChannelRegistry, validate_channels
 
 
 class ChannelManager:
@@ -25,7 +28,8 @@ class ChannelManager:
     - 路由出站消息
     """
 
-    def __init__(self, config: Dict[str, Any], bus: MessageBus, store=None):
+    def __init__(self, config: Dict[str, Any], bus: MessageBus, store=None, *,
+                 registry=None, receive=None, dialogue_mode='direct'):
         """初始化 Channel 管理器
 
         Args:
@@ -36,9 +40,12 @@ class ChannelManager:
         self.bus = bus
         self.channels: Dict[str, BaseChannel] = {}
         self._dispatch_task: Optional[asyncio.Task] = None
-        self._on_message_callback = None  # 消息处理回调
         self._start_tasks = {}
         self.startup_failures = {}
+        self.registry = registry if registry is not None else ChannelRegistry()
+        self._receive = receive
+        self.dialogue_mode = dialogue_mode
+        self._http_mounted = False
         self._routes = {}
         self._route_tasks = {}
         self._outbound_pending = 0
@@ -65,69 +72,35 @@ class ChannelManager:
 
     def _init_channels(self) -> None:
         """根据配置初始化所有启用的 Channel"""
-        channel_configs = self.config.get("channels", {})
-        supported = {'web', 'feishu', 'cmdline'}
-        unsupported = set(channel_configs) - supported
-        if unsupported:
-            raise ValueError(
-                f'Unsupported channel(s): {", ".join(sorted(unsupported))}. '
-                'Supported channels: web, feishu, cmdline.'
-            )
-
-        # Web Channel (浏览器/小程序访问)
-        web_config = channel_configs.get("web", {})
-        if web_config.get("enabled", False):
-            from .web import WebChannel
-            self.channels["web"] = WebChannel(web_config, self.bus)
-            logger.info("Web channel enabled")
-
-        # Feishu (飞书)
-        feishu_config = channel_configs.get("feishu", {})
-        if feishu_config.get("enabled", False):
-            try:
-                from .platforms.feishu import FeishuChannel
-                self.channels["feishu"] = FeishuChannel(feishu_config, self.bus)
-                logger.info("Feishu channel enabled")
-            except ImportError as e:
-                logger.warning(f"Feishu channel not available: {e}")
-
-        # Cmdline (命令行)
-        cmdline_config = channel_configs.get("cmdline", {})
-        if cmdline_config.get("enabled", False):
-            from .cmdline import CmdlineChannel
-            self.channels["cmdline"] = CmdlineChannel(cmdline_config, self.bus)
-            logger.info("Cmdline channel enabled")
-
-        self._validate_allow_from()
-
-    def _validate_allow_from(self) -> None:
-        """验证权限配置"""
-        # 不需要验证 allow_from 的 Channel 类型
-        optional_channels = {"web", "cmdline"}
-
-        for name, ch in self.channels.items():
-            # 这些 Channel 可以没有 allow_from 配置
-            if name in optional_channels:
+        for name, settings in validate_channels(self.config.get('channels', {})).items():
+            if not settings.get('enabled', False):
                 continue
+            channel = self.registry.create(name, settings, self.bus)
+            channel.bind(ChannelContext(name, self.dialogue_mode, self._receive))
+            channel.validate()
+            if channel.durable_delivery:
+                scope = getattr(channel, 'delivery_scope', None)
+                if not isinstance(scope, str) or not scope.strip() or len(scope) > 255:
+                    raise ValueError(f'channels.{name}: durable delivery requires a stable nonempty scope (max 255)')
+            self.channels[name] = channel
+            logger.info('Channel {} enabled', name)
 
-            # 支持字典和对象两种配置方式
-            if isinstance(ch.config, dict):
-                allow_from = ch.config.get("allow_from", None)
-            else:
-                allow_from = getattr(ch.config, "allow_from", None)
-
-            if allow_from is None or allow_from == []:
-                raise SystemExit(
-                    f'Error: "{name}" has empty allow_from (denies all). '
-                    f'Set ["*"] to allow everyone, or add specific user IDs.'
-                )
-
-    def set_message_handler(self, handler) -> None:
-        """设置消息处理回调（用于 CmdlineChannel）"""
-        self._on_message_callback = handler
-        # 如果 cmdline 已初始化，更新回调
-        if "cmdline" in self.channels:
-            self.channels["cmdline"].set_message_handler(handler)
+    def mount_http(self, app):
+        """Register optional adapter routes before the HTTP listener starts."""
+        from sanic import Blueprint
+        if self._http_mounted:
+            raise RuntimeError('Channel HTTP routes are already mounted')
+        for name, channel in self.channels.items():
+            blueprint = channel.http_blueprint()
+            if inspect.isawaitable(blueprint):
+                if inspect.iscoroutine(blueprint):
+                    blueprint.close()
+                raise ValueError(f'{name}.http_blueprint must be synchronous')
+            if blueprint is not None:
+                if not isinstance(blueprint, Blueprint):
+                    raise ValueError(f'{name}.http_blueprint must return a Sanic Blueprint or None')
+                app.blueprint(blueprint, url_prefix=f'/channels/{name}')
+        self._http_mounted = True
 
     def _observe_start(self, name, task):
         if not task.cancelled():
@@ -139,8 +112,7 @@ class ChannelManager:
     async def start_all(self) -> None:
         """Await adapter readiness; supervise long-running platform listeners.
 
-        Web and cmdline start() return once ready. Existing platform start()
-        methods own a listener loop, so their tasks remain managed until stop.
+        Every start() returns once ready; long-running listeners use create_task().
         """
         if self._dispatch_task is not None:
             return
@@ -150,15 +122,15 @@ class ChannelManager:
                 task = asyncio.create_task(channel.start())
                 self._start_tasks[name] = task
                 task.add_done_callback(lambda done, name=name: self._observe_start(name, done))
-            ready = [task for name, task in self._start_tasks.items() if name in {"web", "cmdline"} or getattr(self.channels[name], "startup_ready", False)]
+            ready = list(self._start_tasks.values())
             if ready:
                 timeout = max([self._lifecycle_timeout] + [getattr(channel, 'startup_timeout', 0)
                                                           for channel in self.channels.values()])
-                done, pending = await asyncio.wait(ready, timeout=timeout)
-                if pending:
-                    raise TimeoutError("Channel startup timed out")
+                done, pending = await asyncio.wait(ready, timeout=timeout, return_when=asyncio.FIRST_EXCEPTION)
                 for task in done:
                     task.result()
+                if pending:
+                    raise TimeoutError("Channel startup timed out")
             # Surface immediate platform startup errors without awaiting listener exit.
             await asyncio.sleep(0)
             for task in self._start_tasks.values():
@@ -182,7 +154,13 @@ class ChannelManager:
         for task in tasks:
             task.cancel()
         # Stop adapters concurrently so one unhealthy adapter cannot serialize shutdown.
-        stops = [asyncio.create_task(channel.stop()) for channel in self.channels.values()]
+        async def stop(channel):
+            try:
+                await channel.stop()
+            finally:
+                if isinstance(channel, BaseChannel):
+                    await channel.cancel_tasks()
+        stops = [asyncio.create_task(stop(channel)) for channel in self.channels.values()]
         all_tasks = tasks + stops
         if all_tasks:
             done, pending = await asyncio.wait(all_tasks, timeout=self._lifecycle_timeout)
@@ -268,7 +246,7 @@ class ChannelManager:
             name: {
                 "enabled": True,
                 "running": channel.is_running,
-                "error": self.startup_failures.get(name)
+                "error": self.startup_failures.get(name) or getattr(channel, '_task_error', None)
             }
             for name, channel in self.channels.items()
         }

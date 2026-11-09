@@ -354,6 +354,16 @@ class Store:
         """Read a session cursor without hydrating its history."""
         raise NotImplementedError
 
+    async def session_page(self, *, after=None, limit=100):
+        """Bounded administrative metadata index; never loads event bodies."""
+        if (after is not None and (not isinstance(after, str) or not after or len(after) > 255)
+                or type(limit) is not int or not 1 <= limit <= 100):
+            raise ValueError('Expected a session cursor and 1 <= limit <= 100')
+        rows = await self._session_page(after, limit + 1)
+        page = rows[:limit]
+        return {'sessions': page, 'cursor': page[-1]['session_id'] if page else after,
+                'has_more': len(rows) > limit}
+
     async def event_headers(self, session_id, *, after_sequence=0, limit=100):
         """Bounded execution index; full event payloads are fetched separately."""
         if type(after_sequence) is not int or after_sequence < 0 or type(limit) is not int or not 1 <= limit <= 1000:
@@ -466,6 +476,12 @@ class MemoryStore(MemoryDeliveryStore, Store):
 
     async def session_metadata(self, session_id):
         return deepcopy(self.sessions.get(session_id))
+
+    async def _session_page(self, after, limit):
+        import heapq
+        keys = heapq.nsmallest(limit, (key for key in self.sessions if after is None or key > after))
+        return [{key: self.sessions[sid].get(key) for key in
+                 ('session_id', 'user_id', 'revision', 'last_sequence', 'updated_at')} for sid in keys]
 
     async def snapshot(self, session_id):
         return deepcopy(self.snapshots.get(session_id))
@@ -766,6 +782,18 @@ class SQLStore(SQLDeliveryStore, Store):
             with self.engine.connect() as conn:
                 row = conn.execute(sa.select(table).where(table.c.session_id == session_id)).mappings().first()
                 return dict(row) if row else None
+        return await self._io(query)
+
+    async def _session_page(self, after, limit):
+        def query():
+            table = self.SQLSession.__table__
+            statement = sa.select(table.c.session_id, table.c.user_id, table.c.revision,
+                                  table.c.last_sequence, table.c.updated_at)
+            if after is not None:
+                statement = statement.where(table.c.session_id > after)
+            with self.engine.connect() as conn:
+                return [dict(row) for row in conn.execute(
+                    statement.order_by(table.c.session_id).limit(limit)).mappings()]
         return await self._io(query)
 
     async def snapshot(self, session_id):

@@ -28,6 +28,7 @@ class ChannelRunner:
         concurrency: int = 8,
         max_pending: int = 256,
         shutdown_timeout: float = 5.0,
+        channel_registry=None,
     ):
         for name, value in (("concurrency", concurrency), ("max_pending", max_pending)):
             if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
@@ -42,6 +43,7 @@ class ChannelRunner:
         self.message_receiver = None
         self.message_bus = MessageBus(maxsize=max_pending)
         self.channel_manager: Optional[ChannelManager] = None
+        self.channel_registry = channel_registry
         self._running = False
         self._processor_task: Optional[asyncio.Task] = None
         self.concurrency = concurrency
@@ -64,12 +66,20 @@ class ChannelRunner:
         self._retry_changed = asyncio.Condition()
         self._retry_task: Optional[asyncio.Task] = None
 
+    def prepare_channels(self):
+        """Create adapters without starting I/O, so HTTP routes can be mounted."""
+        if self.channel_manager is None:
+            self.channel_manager = ChannelManager(self.config, self.message_bus, store=self.store,
+                registry=self.channel_registry, receive=self.message_receiver,
+                dialogue_mode=(getattr(self.agent, 'dialogue', None) or {}).get('mode', 'direct'))
+        return self.channel_manager
+
     async def start(self, configure: Optional[Callable[[ChannelManager], Awaitable[None]]] = None) -> None:
         if self._running:
             return
         if self.message_bus.is_closed:
             raise RuntimeError("A stopped runner cannot be restarted")
-        self.channel_manager = ChannelManager(self.config, self.message_bus, store=self.store)
+        self.prepare_channels()
         self._running = True
         self._processor_task = asyncio.create_task(self._process_messages())
         try:

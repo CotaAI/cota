@@ -139,14 +139,16 @@ async def test_bus_close_wakes_blocked_publisher():
 
 
 @pytest.mark.asyncio
-async def test_manager_long_running_start_does_not_block_and_failure_propagates():
+async def test_manager_startup_timeout_and_failure_propagates():
     manager = ChannelManager({}, MessageBus())
     platform = SimpleNamespace(start=AsyncMock(side_effect=lambda: None), stop=AsyncMock())
     async def serve():
         await asyncio.Event().wait()
     platform.start = serve
     manager.channels = {'platform': platform}
-    await asyncio.wait_for(manager.start_all(), .2)
+    manager._lifecycle_timeout = .02
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(manager.start_all(), .2)
     await manager.stop_all()
 
     manager = ChannelManager({}, MessageBus())
@@ -248,17 +250,24 @@ async def test_delayed_platform_failure_is_observed_in_status():
     manager = ChannelManager({}, MessageBus())
     fail = asyncio.Event()
 
-    async def start():
-        await fail.wait()
-        raise ValueError('listener failed')
+    from tests.channels.test_plugin_runtime import PartnerChannel
 
-    manager.channels = {'platform': SimpleNamespace(start=start, stop=AsyncMock(), is_running=False)}
+    class FailingChannel(PartnerChannel):
+        async def start(self):
+            self._running = True
+            self.create_task(self.listen())
+
+        async def listen(self):
+            await fail.wait()
+            raise ValueError('listener failed')
+
+    manager.channels = {'platform': FailingChannel({}, manager.bus)}
     await manager.start_all()
     try:
         fail.set()
         await asyncio.sleep(0)
         await asyncio.sleep(0)
-        assert manager.get_status()['platform']['error'] == 'listener failed'
+        assert manager.get_status()['platform']['error'] == 'ValueError'
     finally:
         await manager.stop_all()
 

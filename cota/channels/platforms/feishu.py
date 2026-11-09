@@ -46,6 +46,10 @@ class FeishuChannel(BaseChannel):
     def delivery_scope(self):
         return self.app_id
 
+    def validate(self):
+        if not self.config.get('allow_from'):
+            raise ValueError(f'{self.name}: allow_from denies all; set ["*"] or specific user IDs')
+
     @property
     def is_running(self):
         return self._running and self._connected and self._process is not None and self._process.returncode is None
@@ -70,7 +74,7 @@ class FeishuChannel(BaseChannel):
             self._running = True
             self._process.stdin.write((json.dumps({'app_id': self.app_id, 'app_secret': self.app_secret}) + '\n').encode())
             await self._process.stdin.drain()
-            self._reader = asyncio.create_task(self._read_worker())
+            self._reader = self.create_task(self._read_worker())
             await asyncio.wait_for(asyncio.shield(self._ready), 30)
         except BaseException:
             await self.stop()
@@ -180,15 +184,19 @@ class FeishuChannel(BaseChannel):
         reply_to = message.get('parent_id') or None
         if reply_to is not None and (not isinstance(reply_to, str) or not reply_to.strip() or len(reply_to) > 255):
             return False
-        user_id = f'feishu:{self.app_id}:{tenant}:{user}'
-        session_id = f'feishu:{self.app_id}:{tenant}:{chat_type}:{chat}'
+        user_id = f'{self.name}:{self.app_id}:{tenant}:{user}'
+        session_id = f'{self.name}:{self.app_id}:{tenant}:{chat_type}:{chat}'
         if max(len(user_id), len(session_id), len(message_id)) > 255:
             return False
-        await self.bus.publish_inbound(InboundMessage(
+        inbound = InboundMessage(
             channel=self.name, sender_id=user_id, chat_id=chat, content=text,
             message_id=message_id, session_key_override=session_id,
             mentioned=mentioned, reply_to=reply_to, conversation_type=self.dialogue_mode,
-            metadata={'platform_user_id': user, 'tenant_key': tenant, 'chat_type': chat_type}))
+            metadata={'platform_user_id': user, 'tenant_key': tenant, 'chat_type': chat_type})
+        if self.context is not None:
+            await self.receive(inbound)
+        else:
+            await self.bus.publish_inbound(inbound)
         return True
 
     async def _load_bot_identity(self):

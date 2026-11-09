@@ -1,9 +1,9 @@
 """BaseChannel - 所有 Channel 的抽象基类
 
-所有 Channel 实现必须继承此类。
-参考 NanoBot 的设计，提供统一的接口。
+内置和插件 Channel 共享此契约；Application 绑定接收入口，Manager 管理资源。
 """
 
+import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Text
 from loguru import logger
@@ -20,6 +20,9 @@ class BaseChannel(ABC):
     """
 
     name: str = "base"  # Channel 标识符
+    dialogue_modes = frozenset({'direct', 'group'})
+    durable_delivery = False
+    startup_timeout = 5.0
 
     def __init__(self, config: Any, bus: MessageBus):
         """初始化 Channel
@@ -31,15 +34,57 @@ class BaseChannel(ABC):
         self.config = config
         self.bus = bus
         self._running = False
+        self.context = None
+        self._tasks = set()
+        self._task_error = None
+
+    def bind(self, context) -> None:
+        """Bind host identity and Bot mode before validation/startup."""
+        self.context = context
+        self.name = context.name
+        self.dialogue_mode = context.dialogue_mode
+        if context.dialogue_mode not in self.dialogue_modes:
+            raise ValueError(f'{self.name} supports dialogue.mode={", ".join(sorted(self.dialogue_modes))} only')
+
+    def validate(self) -> None:
+        """Validate adapter configuration without network or filesystem I/O."""
+
+    def http_blueprint(self):
+        """Optional Sanic Blueprint; Cota mounts it at /channels/{name}."""
+        return None
+
+    async def receive(self, message: InboundMessage):
+        """Submit through Application; safe for webhook admission acknowledgments."""
+        if self.context is None:
+            raise RuntimeError('Channel is not bound to an Application')
+        return await self.context.receive(message)
+
+    def create_task(self, coroutine):
+        """Supervise a listener; failure marks the adapter unhealthy."""
+        task = asyncio.create_task(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._task_done)
+        return task
+
+    def _task_done(self, task):
+        self._tasks.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            self._task_error = type(error).__name__
+            self._running = False
+            logger.error('Channel {} background task failed ({})', self.name, self._task_error)
+
+    async def cancel_tasks(self):
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     @abstractmethod
     async def start(self) -> None:
         """启动 Channel，开始监听消息
 
-        这应该是一个长期运行的异步任务：
-        1. 连接到聊天平台
-        2. 监听传入的消息
-        3. 通过 _handle_message() 将消息转发到总线
+        就绪后返回；监听循环使用 create_task()，由 Manager 监督和清理。
         """
         pass
 
@@ -114,7 +159,11 @@ class BaseChannel(ABC):
         metadata: Optional[Dict[str, Any]] = None,
         session_key: Optional[str] = None,
         message_id: Optional[str] = None,
-    ) -> None:
+        mentioned: bool = False,
+        sender_name: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        conversation_type: Optional[str] = None,
+    ) -> Any:
         """处理收到的消息并推送到消息总线
 
         此方法检查权限并将消息转发到总线。
@@ -147,14 +196,18 @@ class BaseChannel(ABC):
             metadata=metadata or {},
             session_key_override=session_key,
             message_id=message_id,
+            mentioned=mentioned, sender_name=sender_name, reply_to=reply_to,
+            conversation_type=conversation_type,
         )
-
+        if self.context is not None:
+            return await self.receive(msg)
+        # Low-level standalone adapters (including Shell) use the bus directly.
         await self.bus.publish_inbound(msg)
 
     @property
     def is_running(self) -> bool:
         """检查 Channel 是否正在运行"""
-        return self._running
+        return self._running and self._task_error is None
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}(name={self.name}, running={self._running})>"

@@ -43,6 +43,7 @@ asyncio.run(main())
 ## API
 
 - `await app.start()` / `await app.close()`：管理 Runner、Channel 和 Agent 资源；也可使用异步上下文管理器。关闭后不能重启同一实例。
+- `app.prepare_channels()`：同步创建并验证适配器，不启动 I/O；高级嵌入可在自己的 Sanic listener 启动前调用返回值的 `mount_http(sanic_app)`。`cota run` 自动完成准备、挂载和生命周期管理。
 - `await app.submit(user_id=..., session_id=..., text=..., message_id=None)`：先保存 user_utter，再返回 Submission；不等待模型完成。
 - `submission.message_id`：实际输入 ID；`duplicate` 表示已存在同 ID 的接收记录。
 - `await submission.wait()`：返回 `receipt` 和本次输入及其运行产生的聊天消息；不会混入后续轮次。取消等待不取消执行。

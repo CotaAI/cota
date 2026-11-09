@@ -31,6 +31,7 @@ class CmdlineChannel(BaseChannel):
     """
 
     name = "cmdline"
+    dialogue_modes = frozenset({'direct'})
 
     @staticmethod
     def _write_line(text: str) -> None:
@@ -65,7 +66,7 @@ class CmdlineChannel(BaseChannel):
 
     async def start(self) -> None:
         self._running = True
-        self._running_task = asyncio.create_task(self._input_loop())
+        self._running_task = self.create_task(self._input_loop())
         logger.info("Cmdline channel started")
 
     async def stop(self) -> None:
@@ -194,7 +195,10 @@ class CmdlineChannel(BaseChannel):
                         content=message,
                         metadata={},
                     )
-                    await self.bus.publish_inbound(inbound_msg)
+                    if self.context is not None:
+                        await self.receive(inbound_msg)
+                    else:
+                        await self.bus.publish_inbound(inbound_msg)
 
             except asyncio.CancelledError:
                 break

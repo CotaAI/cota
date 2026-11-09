@@ -87,31 +87,45 @@ class Application:
     ``channels`` maps channel names to their configuration. Direct SDK use
     needs no channels; ``channel_limits`` optionally controls outbound delivery.
     """
-    def __init__(self, agent, channels=None, concurrency=8, max_pending=256, *, channel_limits=None):
+    def __init__(self, agent, channels=None, concurrency=8, max_pending=256, *, channel_limits=None,
+                 channel_registry=None):
         self.agent = agent
         dialogue = getattr(agent, 'dialogue', None) or {}
         mode = dialogue.get('mode', 'direct')
         if mode not in ('direct', 'group') or dialogue.get('response', 'passive') not in ('passive', 'proactive'):
             raise ValueError('dialogue requires mode=direct/group and response=passive/proactive')
         channels = {name: dict(settings) for name, settings in (channels or {}).items()}
-        if 'feishu' in channels:
-            channels['feishu']['dialogue_mode'] = mode
-        if mode == 'group' and channels.get('cmdline', {}).get('enabled'):
-            raise ValueError('Cmdline supports dialogue.mode=direct only')
         self.runner = ChannelRunner({'channels': channels or {}, 'channel_limits': channel_limits or {}},
                                     agent, message_handler=self._execute,
-                                    concurrency=concurrency, max_pending=max_pending)
+                                    concurrency=concurrency, max_pending=max_pending,
+                                    channel_registry=channel_registry)
         self.store = self.runner.store
         self.agent.store = self.store
         self._started = False
+        self._starting = False
         self._closed = False
         self._lifecycle_lock = asyncio.Lock()
         self._close_task = None
         self._recovery_task = None
         self._submission_locks = WeakValueDictionary()
+        self._channel_ready = asyncio.Event()
         from cota.group import GroupConversation
         self.group = GroupConversation(self)
-        self.runner.message_receiver = self.submit_message
+        self.runner.message_receiver = self._receive_channel
+
+    async def _receive_channel(self, inbound):
+        # A listener may deliver immediately after its own start() returns,
+        # while other adapters are still starting. Never lose that first input.
+        if self._closed or (not self._starting and not self._started):
+            raise ApplicationUnavailable('Application is not accepting messages')
+        await self._channel_ready.wait()
+        return await self.submit_message(inbound)
+
+    def prepare_channels(self):
+        """Prepare adapters for optional HTTP mounting before start()."""
+        if self._closed:
+            raise RuntimeError('Application is closed')
+        return self.runner.prepare_channels()
 
     async def start(self, configure=None):
         try:
@@ -120,8 +134,13 @@ class Application:
                     raise RuntimeError('A closed application cannot be restarted')
                 if self._started:
                     return self
-                await self.runner.start(configure=configure)
+                self._starting = True
+                try:
+                    await self.runner.start(configure=configure)
+                finally:
+                    self._starting = False
                 self._started = True
+                self._channel_ready.set()
                 self._recovery_task = asyncio.create_task(self._recover_unstarted())
         except BaseException:
             # Teardown owns its lifetime even if startup's caller is cancelled
@@ -134,6 +153,7 @@ class Application:
         # Mark admission closed before the first await. All callers share one
         # retained task; cancelling a waiter cannot abandon channel cleanup.
         self._closed = True
+        self._channel_ready.set()  # Release listeners on partial startup failure.
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._teardown())
         await asyncio.shield(self._close_task)

@@ -16,6 +16,7 @@ from cota.channels.web.service import WebService
 from cota.channels.web.access import ExternalAccess, GuestAccess, load_access_factory
 from cota.inputs import InputConflict
 from cota.runtime.pi_runtime import RunInProgress
+from cota.channels.registry import validate_channels
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +36,7 @@ def _origin(value):
 
 
 def _channels(config):
-    if config is not None and not isinstance(config, dict):
-        raise ValueError('channel_config must be a mapping')
-    channels = {}
-    for name, settings in (config or {}).items():
-        if name not in ('web', 'feishu', 'cmdline') or not isinstance(settings, dict):
-            raise ValueError('channels must contain named mappings for web, feishu or cmdline')
-        if 'enabled' in settings and type(settings['enabled']) is not bool:
-            raise ValueError(f'channels.{name}.enabled must be a boolean')
-        channels[name] = dict(settings)
+    channels = validate_channels({} if config is None else config)
     channels.setdefault('web', {'enabled': not bool(channels), 'transport': 'websocket'})
     if not any(value.get('enabled') for value in channels.values()):
         raise ValueError('cota run requires at least one enabled channel')
@@ -68,7 +61,8 @@ def _cursor(request, name, default=None):
     return int(value)
 
 
-def create_app(agent=None, config_path=None, *, channel_config=None, authenticate=None, authorize=None, access=None):
+def create_app(agent=None, config_path=None, *, channel_config=None, authenticate=None, authorize=None, access=None,
+               channel_registry=None):
     if agent is None:
         raise ValueError('agent is required; load it with Agent.load_from_path before create_app')
     config_path = config_path or getattr(agent, 'config_path', None) or './'
@@ -93,7 +87,8 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
                          'GuestAccess sessions belong to one user')
     application = Application(agent, channels=channels,
                               concurrency=web_config.get('concurrency', 8),
-                              max_pending=web_config.get('max_pending', 256))
+                              max_pending=web_config.get('max_pending', 256),
+                              channel_registry=channel_registry)
     runner = application.runner
     service = WebService(application, access=access) if web_enabled else None
     app = Sanic('cota-' + uuid4().hex[:8])
@@ -106,11 +101,17 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
     app.ctx.agent, app.ctx.runner, app.ctx.web_service = agent, runner, service
     app.ctx.config_path = config_path or './'
     app.ctx.shutdown_task = None
+    app.ctx.debug_viewer = None
+    application.prepare_channels().mount_http(app)
     assets = Path(__file__).parent / 'channels' / 'utils'
     allowed_origins = set(web_config.get('cors_origins', []))
 
     @app.middleware('request')
     async def check_origin(request):
+        if request.path.startswith('/channels/'):
+            if request.method == 'POST' and not application.accepting_messages:
+                raise ServiceUnavailable('Application is not accepting messages')
+            return  # Platform callbacks own their signature/authentication policy.
         origin = request.headers.get('origin')
         if origin:
             parsed = _origin(origin)
@@ -128,7 +129,7 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
         result.headers['Cache-Control'] = 'no-store'
         result.headers['X-Content-Type-Options'] = 'nosniff'
         origin = request.headers.get('origin')
-        if origin and origin in allowed_origins:
+        if not request.path.startswith('/channels/') and origin and origin in allowed_origins:
             result.headers['Access-Control-Allow-Origin'] = origin
             result.headers['Vary'] = 'Origin'
             result.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type'
@@ -177,10 +178,30 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
         if service is not None:
             manager.get_channel('web').get_transport().bind(service)
 
+    async def close_debug():
+        viewer, app.ctx.debug_viewer = app.ctx.debug_viewer, None
+        if viewer is not None:
+            try:
+                await viewer.close()
+            except Exception as error:
+                logger.warning('Cannot close Debug viewer (%s)', type(error).__name__)
+
     @app.listener('before_server_start')
     async def start(app, loop):
         try:
             await application.start(configure=configure)
+            if agent.store.debug_enabled:
+                from cota.debug.inspector import Inspector
+                from cota.debug.server import DebugServer
+                import sys
+                viewer = app.ctx.debug_viewer = DebugServer(Inspector(agent))
+                try:
+                    url = await viewer.start()
+                    sys.stderr.write(f'Cota Debug: {url}\n')
+                    sys.stderr.flush()
+                except Exception as error:
+                    logger.warning('Debug viewer unavailable (%s); Bot service continues', type(error).__name__)
+                    await close_debug()
         except BaseException:
             await stop(app, loop)
             raise
@@ -189,8 +210,11 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
         try:
             await application.close()
         finally:
-            if service is not None:
-                await service.close()
+            try:
+                if service is not None:
+                    await service.close()
+            finally:
+                await close_debug()
 
     @app.listener('before_server_stop')
     async def stop(app, loop):

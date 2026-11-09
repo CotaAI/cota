@@ -5,12 +5,20 @@ export function hasModelDiagnostics(event) {
   return !!(p.llm?.request_id || p.llm_event_id || (event.type === 'bot_utter' && p.tool_event_id));
 }
 
+export function debugRequestURL(path, base, sessionId = null) {
+  const url = new URL('api/' + path, base);
+  if (sessionId && !url.pathname.endsWith('/sessions')) url.searchParams.set('session_id', sessionId);
+  return url;
+}
+
 function boot() {
   const $ = id => document.getElementById(id);
   const headers = [], byID = new Map();
   let cursor = 0, selectedSequence = null, activeTab = 'events', metadataRun = null;
   let visibleCount = 100, busy = false, pending = null, paused = false, timer;
   let copyValue = null, stateSource = 'stored', detailVersion = 0;
+  let selectedSession = null, multiSession = false, sessionsLoaded = false, sessionCursor = null;
+  let sessionVersion = 0;
   const element = (tag, text, className) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -30,7 +38,7 @@ function boot() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
     try {
-      const response = await fetch(new URL('api/' + path, location.href), {signal:controller.signal, cache:'no-store', credentials:'omit'});
+      const response = await fetch(debugRequestURL(path, location.href, selectedSession), {signal:controller.signal, cache:'no-store', credentials:'omit'});
       const data = await response.json();
       if (!response.ok) {
         const failure = new Error(data.error || `HTTP ${response.status}`);
@@ -44,7 +52,7 @@ function boot() {
     if (busy) { if (interactive) pending = job; return; }
     busy = true;
     try { await job(); error(''); }
-    catch (err) { error(`${err.message}。Shell 执行不受影响；可重试或检查 Shell 是否仍在运行。`); }
+    catch (err) { error(`${err.message}。Bot 执行不受影响；可重试或检查服务是否仍在运行。`); }
     finally {
       busy = false;
       if (pending) { const next = pending; pending = null; exclusive(next); }
@@ -262,6 +270,42 @@ function boot() {
     renderEvents();
     exclusive(() => showEvent(sequence, version));
   }
+  function selectDeliveries(after = 0) {
+    const version = ++detailVersion;
+    exclusive(async () => {
+      const data = await api('deliveries?after=' + after + '&limit=100');
+      if (version !== detailVersion) return;
+      setDetail('Deliveries', data);
+      $('detail-body').append(notice('只读投递状态。查询不会重发消息，也不会重新执行模型或工具。'),
+        button('从头刷新', () => selectDeliveries()), jsonView(data));
+      if (data.has_more) $('detail-body').append(button('下一页', () => selectDeliveries(data.cursor)));
+    });
+  }
+  function resetSession(id) {
+    selectedSession = id;
+    ++sessionVersion;
+    headers.length = 0; byID.clear(); cursor = 0; selectedSequence = null; metadataRun = null;
+    visibleCount = 100; ++detailVersion; pending = null;
+    renderEvents();
+    setDetail('Session', null);
+    $('detail-body').append(notice(id ? '已切换会话，请选择左侧视图。' : '暂无会话，发送消息后刷新会话列表。'));
+  }
+  async function loadSessions(after = null) {
+    const data = await api('sessions?limit=100' + (after ? '&after=' + encodeURIComponent(after) : ''));
+    sessionsLoaded = true; sessionCursor = data.cursor;
+    const select = $('session-select'); select.replaceChildren();
+    const rows = data.sessions;
+    if (selectedSession && !rows.some(row => row.session_id === selectedSession)) {
+      rows.unshift({session_id:selectedSession});
+    }
+    for (const row of rows) {
+      const option = element('option', row.session_id);
+      option.value = row.session_id; select.append(option);
+    }
+    if (!selectedSession && rows.length) resetSession(rows[0].session_id);
+    select.value = selectedSession || ''; select.disabled = !rows.length;
+    $('session-next').hidden = !data.has_more;
+  }
   function showStateControls() {
     const controls = element('div', undefined, 'state-controls');
     const select = element('select'); select.setAttribute('aria-label', 'DST 数据来源');
@@ -302,7 +346,7 @@ function boot() {
     $('run-info').textContent = '当前会话 · 按 sequence 展示全部事件';
     const container = $('events'); container.replaceChildren();
     const displayed = events.slice(-visibleCount);
-    if (!displayed.length) container.append(notice(headers.length ? '当前筛选条件下没有事件。' : '等待 Shell 中的第一条消息……'));
+    if (!displayed.length) container.append(notice(headers.length ? '当前筛选条件下没有事件。' : '等待当前会话的第一条消息……'));
     for (const event of displayed) {
       const s = event.summary;
       const failed = ['error', 'blocked', 'failed'].includes(s.status);
@@ -324,11 +368,21 @@ function boot() {
     clearTimeout(timer);
     if (!document.hidden && !paused && !busy) {
       await exclusive(async () => {
+        let version = sessionVersion;
+        let info = await api('info');
+        if (version !== sessionVersion) return;
+        multiSession = !!info.multi_session;
+        $('session-controls').hidden = !multiSession;
+        if (multiSession && !sessionsLoaded) {
+          await loadSessions(); version = sessionVersion;
+          info = await api('info');
+          if (version !== sessionVersion) return;
+        }
         const data = await api('events?after=' + cursor + '&limit=100');
+        if (version !== sessionVersion) return;
         for (const header of data.events) { if (!byID.has(header.event_id)) { headers.push(header); byID.set(header.event_id, header); } }
         cursor = data.after_sequence;
-        const info = await api('info');
-        $('bot-name').textContent = info.bot; $('session').textContent = info.session_id;
+        $('bot-name').textContent = info.bot; $('session').textContent = info.session_id || '暂无会话';
         $('store').textContent = info.store; $('log-path').textContent = info.log_path;
         $('cursor').textContent = `已读取至 #${cursor} / 已提交 #${info.metadata?.last_sequence || 0}`;
         $('connection').textContent = paused ? '已暂停 · 可继续查详情' : '已连接 · 增量刷新'; $('connection-dot').classList.toggle('off', paused);
@@ -343,6 +397,14 @@ function boot() {
     $('connection-dot').classList.toggle('off', paused); if (!paused) poll();
   });
   $('search').addEventListener('input', renderEvents);
+  $('session-select').addEventListener('change', () => {
+    const id = $('session-select').value;
+    // Identity changes cannot compete with replaceable detail requests.
+    // In-flight reads keep their old URL but their results are discarded.
+    resetSession(id);
+  });
+  $('session-refresh').addEventListener('click', () => exclusive(() => loadSessions()));
+  $('session-next').addEventListener('click', () => exclusive(() => loadSessions(sessionCursor)));
   $('more').addEventListener('click', () => { visibleCount += 100; renderEvents(); });
   function selectTab(tab) {
     activeTab = tab; ++detailVersion;
@@ -350,7 +412,7 @@ function boot() {
     setDetail(tab === 'events' ? 'Event details' : tab, null);
     $('detail-body').append(notice('加载中…'));
     document.querySelector('.workspace').classList.toggle('single-view', tab !== 'events');
-    for (const name of ['events', 'skills', 'requests', 'dst']) {
+    for (const name of ['events', 'skills', 'requests', 'dst', 'deliveries']) {
       const node = $('tab-' + name), selected = name === tab;
       node.classList.toggle('selected', selected);
       node.setAttribute('aria-selected', String(selected));
@@ -362,9 +424,10 @@ function boot() {
       else { setDetail('Event details', null); $('detail-body').append(notice('选择事件查看完整 JSON。')); }
     } else if (tab === 'skills') selectRunMetadata();
     else if (tab === 'requests') selectModelDebug();
-    else selectState();
+    else if (tab === 'dst') selectState();
+    else selectDeliveries();
   }
-  const tabs = ['events', 'skills', 'requests', 'dst'];
+  const tabs = ['events', 'skills', 'requests', 'dst', 'deliveries'];
   for (const [index, tab] of tabs.entries()) {
     $('tab-' + tab).addEventListener('click', () => selectTab(tab));
     $('tab-' + tab).addEventListener('keydown', event => {

@@ -15,6 +15,7 @@ Cota 是 **Bot 开发与部署平台**，帮助开发者定义业务能力、注
 | 给别人分享聊天链接或 Bot 文件夹 | [交付与分享](deployment/sharing.md) |
 | 对接网页、小程序或自己的账号体系 | [应用契约](deployment/application.md)、[Web 接入](deployment/api.md) |
 | 接入飞书或群聊 | [飞书](deployment/feishu.md)、[群聊](deployment/group.md) |
+| 接入公司 IM 或自定义 Webhook/REST 平台 | [自定义 Channel 接入](development/channel-plugins.md) |
 | 修改框架或新增测试 | [模块地图](concepts/modules.md)、[开发与验证](development/testing.md) |
 
 ## 六个核心概念

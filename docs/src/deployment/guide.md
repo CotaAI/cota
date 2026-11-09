@@ -11,8 +11,15 @@
 | 已有网页、小程序或 IM 后端 | Web Channel 的 HTTP/WebSocket，提供自己的身份授权适配器 |
 | 已有 Python 后端 | 长期复用 `Application(agent)` |
 | 飞书 | 配置 channels.feishu，使用 `cota run`；可不开放 Web 聊天 |
+| 公司 IM 或其它 Webhook/REST 平台 | 安装自定义 Channel 包，在 endpoints.yml 启用，使用 `cota run` 统一管理 |
 
-当前只保留 cmdline、web、feishu。Web 为 HTTP + WebSocket，同一监听端口；不支持 SSE 或 Socket.IO。
+内置入口为 cmdline、web、feishu；其它平台通过 [自定义 Channel](../development/channel-plugins.md) 接入。插件与内置入口使用相同的生命周期、执行调度和出站路由；需要可靠回复的适配器声明持久化投递能力后，复用 Cota 的投递重试。Web 为 HTTP + WebSocket，同一监听端口；不支持 SSE 或 Socket.IO。
+
+## 接入自定义 Channel
+
+在运行 Cota 的 Python 环境安装适配包，将平台凭据和启用配置放入 Bot 的 `endpoints.yml`，再运行 `cota run --config ./my-bot`。Cota 自动发现适配包声明的 `cota.channels` entry point，创建配置中启用的实例；安装包不会自动连接平台。
+
+Webhook 适配器的路由统一挂在 `/channels/{实例名}`，与 Cota 服务共用监听端口，不要求启用内置 Web Channel。对外回调地址、平台应用设置、验签和用户授权由部署方及适配器负责。安装、配置、多实例、开发契约和可安装示例见 [自定义 Channel 接入](../development/channel-plugins.md)。
 
 ## 配置 Bot 和持久化
 
@@ -63,6 +70,7 @@ CORS 不替代身份鉴权。自己的应用应通过 ExternalAccess/access_fact
 
 - Web：从持久历史按游标补取；断线不会重跑模型。
 - 飞书：保存回复和投递记录，按目标顺序重试；平台接受不等于用户已读。
+- 自定义 Channel：声明持久化投递能力的适配器复用同一套补发机制；平台支持时用稳定的 event_id 去重。
 
 退出时 Application 停止接受输入并有界等待/清理。成功接收的输入已持久化；重启时有界恢复尚未开始的 direct 输入。客户端未收到确认时仍使用原 message_id 重试；已经开始但中断的操作不能盲目自动重跑。
 详见 [应用契约](application.md) 与 [回复投递](delivery.md)。

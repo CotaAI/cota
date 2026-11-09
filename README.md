@@ -35,6 +35,7 @@ Cota 的交付单位是 **Bot**，包含角色、Skill、Policy、工具权限�
 | **对话评测与版本对比** | 用自然语言写回复要求，`cota eval` 通过 LLM 逐项评判，输出报告和结构化执行证据；支持重评已有记录、比较多次评测结果 |
 | **会话与应用接入** | 输入先保存，再按会话排队执行；区分会话历史与个人记忆，处理去重和跨会话并发。Web 支持断线补取历史，飞书支持持久化回复重试 |
 | **单聊、群聊与配套页面** | 提供命令行、Web HTTP/WebSocket 和飞书入口；可选 Web 聊天应用包含会话列表、历史分页、未读和阅读位置 |
+| **自定义 Channel** | 将公司 IM 或业务平台适配器作为独立 Python 包安装，配置后由 Cota 统一管理接收、执行和回复投递。接入方式见 [自定义 Channel 指南](docs/src/development/channel-plugins.md) |
 
 这些能力围绕同一个交付单位工作：**Bot**。
 
@@ -186,6 +187,7 @@ Cota 使用官方 TypeScript Pi Agent Core。会话状态由 DST 根据事件恢
 
 - [定位与架构](docs/src/concepts/raas_architecture.md) · [模块地图](docs/src/concepts/modules.md) · [执行流程](docs/src/concepts/execution-flow.md)
 - [配置参考](docs/src/configuration/overview.md) · [Debug](docs/src/deployment/debug.md) · [Web 接入](docs/src/deployment/api.md)
+- [自定义 Channel 接入与开发](docs/src/development/channel-plugins.md)
 - [测试指南](tests/README.md) · [发布流程](docs/releases/README.md)
 
 在源码开发环境中运行完整检查：

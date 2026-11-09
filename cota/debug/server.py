@@ -61,22 +61,32 @@ class DebugServer:
         async with self.query_lock:
             try:
                 kind = request.match_info.get('kind', 'event')
+                inspector = self.inspector
+                if inspector.session_id is None and request.query.get('session_id'):
+                    inspector = inspector.for_session(request.query['session_id'])
                 if kind == 'info':
-                    data = await self.inspector.info()
+                    data = await inspector.info()
+                    data['multi_session'] = self.inspector.session_id is None
+                elif kind == 'sessions' and self.inspector.session_id is None:
+                    data = await self.inspector.store.session_page(after=request.query.get('after'),
+                                                                   limit=int(request.query.get('limit', 100)))
                 elif kind == 'events':
-                    data = await self.inspector.events(int(request.query.get('after', 0)),
+                    data = await inspector.events(int(request.query.get('after', 0)),
                                                       int(request.query.get('limit', 100)))
                 elif kind == 'event':
-                    data = await self.inspector.event_view(int(request.match_info['sequence']))
+                    data = await inspector.event_view(int(request.match_info['sequence']))
+                elif kind == 'deliveries':
+                    data = await inspector.deliveries(int(request.query.get('after', 0)),
+                                                     int(request.query.get('limit', 100)))
                 elif kind == 'model-debug':
                     sequence = request.query.get('event_sequence')
-                    data = await self.inspector.model_debug(
+                    data = await inspector.model_debug(
                         request.query.get('request_id'),
                         event_sequence=int(sequence) if sequence is not None else None)
                 elif kind == 'run-metadata':
-                    data = await self.inspector.run_metadata(request.query.get('run_id'))
+                    data = await inspector.run_metadata(request.query.get('run_id'))
                 elif kind == 'state':
-                    data = await self.inspector.state(request.query.get('source', 'stored'))
+                    data = await inspector.state(request.query.get('source', 'stored'))
                 else:
                     raise web.HTTPNotFound()
                 text = await asyncio.to_thread(json.dumps, data, ensure_ascii=False, allow_nan=False)

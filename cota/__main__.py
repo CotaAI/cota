@@ -439,7 +439,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
     parser_run.add_argument('--port', default=5005, type=int, help="Port to run the service")
     parser_run.add_argument('--config', default='./', type=str, help="agent config")
     parser_run.add_argument('--chat-app', action='store_true', help="Enable the optional chat application at /chat/ (requires Web channel)")
-    parser_run.add_argument('--debug', action='store_true', help="Capture model request diagnostics in Store and write execution events to workspace/debug/execution.log")
+    parser_run.add_argument('--debug', action='store_true', help="Start a local read-only Debug page for service sessions, capture model diagnostics and write execution events to workspace/debug/execution.log")
     parser_run.add_argument('--log', default='INFO', type=str, help="Set the logging level")
     parser_run.add_argument('--ssl-cert', type=str, help="SSL certificate file path")
     parser_run.add_argument('--ssl-key', type=str, help="SSL private key file path")

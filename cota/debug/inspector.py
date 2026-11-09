@@ -1,4 +1,4 @@
-"""Read projections of a single Shell session, without invoking the Agent."""
+"""Read projections of Shell or service sessions without invoking the Agent."""
 from pathlib import Path
 import logging
 
@@ -11,18 +11,36 @@ class ModelDiagnosticsUnavailable(LookupError):
 
 
 class Inspector:
-    def __init__(self, agent, session_id, live_tracker):
+    def __init__(self, agent, session_id=None, live_tracker=None):
+        self.agent = agent
         self.store = agent.store
         self.session_id = session_id
-        self.live_tracker = live_tracker
+        self.live_tracker = live_tracker or (lambda: None)
         self.bot_name = agent.name
         self.log_path = str(Path(agent.workspace_path) / 'debug' / 'execution.log')
 
     async def info(self):
-        metadata = await self.store.session_metadata(self.session_id)
+        metadata = await self.store.session_metadata(self.session_id) if self.session_id else None
         return {'bot': self.bot_name, 'session_id': self.session_id,
                 'store': type(self.store).__name__, 'metadata': metadata,
                 'log_path': self.log_path}
+
+    def for_session(self, session_id):
+        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 255:
+            raise ValueError('session_id must contain 1–255 characters')
+        return Inspector(self.agent, session_id)
+
+    async def deliveries(self, after=0, limit=100):
+        """Inspect bounded delivery rows referenced by persisted Bot facts."""
+        events = await self.store.events(self.session_id, after_sequence=after, limit=limit)
+        rows = []
+        for event in events:
+            if event['type'] == 'bot_utter':
+                row = await self.store.delivery(self.session_id, event['event_id'])
+                if row is not None:
+                    rows.append(row)
+        return {'deliveries': rows, 'cursor': events[-1]['sequence'] if events else after,
+                'has_more': len(events) == limit}
 
     async def events(self, after=0, limit=100):
         headers = await self.store.event_headers(self.session_id, after_sequence=after, limit=limit)
