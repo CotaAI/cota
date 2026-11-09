@@ -1,6 +1,6 @@
 # 安装 Cota
 
-先区分当前源码开发和安装发布包。本手册按仓库当前实现编写，不假定任意已有 PyPI 版本都包含这些功能。
+需要 Python 3.12+。使用已发布版本可通过 PyPI 安装；参与开发或使用仓库最新代码时，选择源码安装。
 
 ## 当前源码开发
 
@@ -25,15 +25,15 @@ editable 安装不自动构建发布包内的运行环境；不要省略源码�
 
 ## 安装带运行时的发布包
 
-本版以 GitHub 源码发布，不附加安装包。以下 pip 方式仅适用于已经单独发布到 PyPI 的版本，不代表本版 2.0 已上传：
+从 [PyPI](https://pypi.org/project/cota/) 安装已发布版本：
 
 ```bash
-python -m pip install cota
+python -m pip install -U cota
 # 飞书为可选能力
-python -m pip install 'cota[feishu]'
+python -m pip install -U 'cota[feishu]'
 ```
 
-wheel 内包含 Cota 与固定版本 Node/Pi，无需在首次对话时下载执行引擎。
+带内置运行时的平台 wheel 包含 Cota 与固定版本 Node/Pi，无需额外安装 Node.js/npm，也无需在首次对话时下载执行引擎。
 一条 pip 解决的是框架安装，不包括模型服务密钥、外部 MCP 服务、浏览器等业务工具，也不替你创建服务器。
 
 发布构建当前覆盖 macOS 11+ 的 arm64/x86_64、Linux glibc 2.28+ 的 arm64/x86_64。

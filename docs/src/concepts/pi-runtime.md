@@ -16,7 +16,7 @@ Node 要求为 **>= 22.19.0**。源码开发在准备好 Node 后执行：
 python -m cota.runtime.pi_setup
 ```
 
-运行时只定位和校验已有依赖，不在收到请求时下载或安装。本地或 CI 构建可把私有 Node 和 Pi 依赖装入平台 wheel；本版只发布 GitHub 源码，不上传这些安装包。安装方式见 [部署指南](../deployment/guide.md)。
+运行时只定位和校验已有依赖，不在收到请求时下载或安装。平台 wheel 内置专用 Node 和 Pi 依赖；源码开发使用自行准备的 Node 和 npm 依赖。安装方式见 [部署指南](../deployment/guide.md)。
 
 ## 构建发布包
 
@@ -32,7 +32,7 @@ COTA_RUNTIME_DIR="$PWD/.build/pi-runtime" python -m build
 
 `python -m build` 输出 sdist 和平台 wheel 到 `dist/`；仅需 wheel 时加 `--wheel`。构建钩子校验 runtime 的平台、版本和输入文件哈希，将它装入 `cota/runtime/_vendor`。构建阶段需要下载资源，但安装后运行不依赖系统 Node/npm，也不会在线补装 runtime。
 
-当前发布 target 为 macOS arm64/x64 和 Linux arm64/x64，必须在对应平台原生构建，不能把一个平台的 bundle 用于另一个平台的 wheel。`.github/workflows/runtime-wheels.yml` 为这些 target 设置原生 runner，构建后在新 venv 安装 wheel、运行 `pip check`，再从源码目录外执行 `scripts/smoke_installed.py`。smoke 隐藏系统 Node/npm 并禁止运行时网络，验证内置 runtime、模板和离线执行；这项 CI 检查不代表已向 PyPI 发布。
+当前发布 target 为 macOS arm64/x64 和 Linux arm64/x64，必须在对应平台原生构建，不能把一个平台的 bundle 用于另一个平台的 wheel。`.github/workflows/runtime-wheels.yml` 为这些 target 设置原生 runner，构建后在新 venv 安装 wheel、运行 `pip check`，再从源码目录外执行 `scripts/smoke_installed.py`。smoke 隐藏系统 Node/npm 并禁止运行时网络，验证内置 runtime、模板和离线执行。发布步骤见 [发布流程](https://github.com/CotaAI/cota/blob/main/docs/releases/README.md)。
 
 ## Python 与 Node 的边界
 

@@ -25,14 +25,38 @@ Cota 帮助不需要掌握完整 Agent 工程体系的开发者，把业务知�
 
 使用官方 TypeScript Pi Agent Core，不接入 Pi AgentSession。会话历史与上下文恢复由 Cota 管理，不依赖 Pi 的本地会话文件。
 
-## 从当前源码开始
+## 安装
 
-本版 **2.0.0 以 GitHub 源码发布**，不附加大型安装包，也不发布 PyPI。源码开发需要 Python 3.12+、Node.js 22.19+ 和 npm：
+需要 Python 3.12 或更高版本。
+
+### 从 PyPI 安装
 
 ```bash
-# 在仓库根目录，激活你的 Python 虚拟环境后
+python -m pip install -U cota
+# 使用飞书渠道时安装可选依赖
+python -m pip install -U 'cota[feishu]'
+```
+
+以上命令安装 [PyPI 上的已发布版本](https://pypi.org/project/cota/)。带内置运行时的平台 wheel 包含固定版本 Node/Pi，无需额外安装 Node.js 或 npm。支持的平台和环境要求见 [安装说明](docs/src/installation/install.md)。
+
+### 从源码开发
+
+参与开发或使用仓库中的最新代码时，准备 Python 虚拟环境、Node.js 22.19+ 和 npm；固定 Node 版本见 `.node-version`。
+
+```bash
+git clone https://github.com/CotaAI/cota.git
+cd cota
+python -m venv .venv
+source .venv/bin/activate
 python -m pip install -e '.[dev]'
 npm ci --prefix cota/runtime/pi
+```
+
+## 创建并运行 Bot
+
+安装完成后，在希望保存 Bot 的目录执行：
+
+```bash
 cota init
 ```
 
@@ -48,7 +72,7 @@ llms:
     model: "填写模型名称"
 ```
 
-不需要 `COTA_API_KEY`。保留模板中的 SQLite 存储配置，然后启动：
+保留模板中的 SQLite 存储配置，然后启动：
 
 ```bash
 cota shell --config cota_projects/weather --debug
@@ -57,11 +81,11 @@ cota run --config cota_projects/weather --chat-app --host 127.0.0.1 --port 5005
 ```
 
 聊天页面在 `http://127.0.0.1:5005/chat/`；shell 的 Debug 页面地址由终端输出。
-唯一分发的示例 `weather` 组合当前天气与预报、活动查询、出行规划三个 Skill，并附带30个对话评测案例。
+`weather` 示例组合当前天气与预报、活动查询、出行规划三个 Skill，并附带 30 个对话评测案例。
 
 在 `agent.yml` 中用 `deploy: personal` 表示自己使用（本机或个人云服务器），用 `deploy: service` 表示对外提供服务。模板及省略配置时均为 service，不开放机器原生文件和 Shell。personal 默认复用 Pi 工具操作部署机器，起始目录为 Bot 下的 `files/`；它不是沙箱。模式与执行环境配置见 [Agent 配置](docs/src/configuration/agent.md)。
 
-保留将固定版本 Node/Pi 构建进平台 wheel 的能力，用于本地或 CI 安装验证；生成物不提交 Git，也不随本版上传。模型凭据、外部工具及 Bot 特有依赖由部署者配置。安装方式与构建说明见 [安装说明](docs/src/installation/install.md)，本版变更见 [2.0.0 发布说明](docs/releases/2.0.0.md)。
+模型凭据、外部工具及 Bot 特有依赖由部署者配置。版本变更见 [2.0.0 发布说明](docs/releases/2.0.0.md)。
 
 ## 像编写对话一样标注业务流程
 
