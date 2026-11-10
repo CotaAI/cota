@@ -13,8 +13,8 @@ BOTS = Path(__file__).resolve().parents[1] / 'bots'
 
 
 def test_catalog_has_maintained_examples():
-    assert {p.name for p in BOTS.iterdir() if p.is_dir()} == {'weather'}
-    for bot in ('weather',):
+    assert {p.name for p in BOTS.iterdir() if p.is_dir()} == {'weather', 'picture-book'}
+    for bot in ('weather', 'picture-book'):
         cfg = yaml.safe_load((BOTS / bot / 'agent.yml').read_text())
         endpoints = yaml.safe_load((BOTS / bot / 'endpoints.yml').read_text())
         assert cfg['dialogue']['runtime'] == 'pi'
@@ -94,7 +94,7 @@ def test_init_copies_catalog_without_overwriting_local_readme(tmp_path, monkeypa
     cli.init(SimpleNamespace())
     catalog = tmp_path / 'cota_projects' / 'README.md'
     assert catalog.read_text() == (BOTS / 'README.md').read_text()
-    assert {p.name for p in catalog.parent.iterdir() if p.is_dir()} == {'weather'}
+    assert {p.name for p in catalog.parent.iterdir() if p.is_dir()} == {'weather', 'picture-book'}
     catalog.write_text('local notes')
     cli.init(SimpleNamespace())
     assert catalog.read_text() == 'local notes'

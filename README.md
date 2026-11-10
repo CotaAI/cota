@@ -98,6 +98,10 @@ cota eval
 
 weather 自带 **30 个对话评测案例**，覆盖多轮条件变更、预算约束、业务回复和异常处理。天气查询使用外部接口，活动查询使用随示例提供的活动目录，便于复现验证。详见 [weather 示例](bots/weather/README.md)。
 
+想验证更长的制作流程，可以使用 [绘本工坊](bots/picture-book/README.md)：组合故事与分镜、图像生成/编辑、视觉审校和中文 PDF，并通过配套 Web 应用下载成品。它是 personal 示例，需要自行配置图像/视觉服务及可选排版依赖。
+
+对话支持[文件附件](docs/src/concepts/attachments.md)：Shell 用 `/file "路径"` 添加文件，Web 支持上传和授权下载；两者沿用统一的会话与历史链路。personal Bot 可交付工作区中的报告、图片或 PDF，文件内容独立于事件数据库保存。
+
 需要浏览器聊天入口时，在 Bot 目录启动：
 
 ```bash

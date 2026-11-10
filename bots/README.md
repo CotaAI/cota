@@ -1,12 +1,15 @@
 # Cota Bot 示例
 
-官方仅分发 weather 模板，通过当前 Pi Agent Core 执行链路验证。
+官方分发 weather 入门模板和 picture-book 长流程示例，均沿用 Pi Agent Core 执行链路。
 
 weather 显式使用 `deploy: service`，可以在 shell 验证或通过服务入口分享。自用且需要操作部署机器时，改为 `deploy: personal`；默认工作目录是 Bot 下的 `files/`。本机和个人云服务器均属于 personal，用户隔离执行环境与客户端执行端尚未实现。
 
 | Bot | 用途 | 工具与数据 |
 | --- | --- | --- |
 | `weather` | 当前天气与预报、活动查询、出行规划三个 Skill；业务分支、多轮变化与对话评测 | 真实天气 HTTP + Skill 附带活动 JSON，SQLite |
+| `picture-book` | 儿童绘本：故事、参考图、图像生成/编辑、视觉审校、中文 PDF 和 Web 下载交付 | personal；Pi 文件/Shell工具，独立图像/视觉接口，可选 PDF 依赖，SQLite |
+
+picture-book 面向部署者自己的工作环境，不能直接作为不可信多人共用的公共服务。完整携带绘本 Skill；图像服务、字体与排版依赖需要准备。交付复用 Cota 的通用附件能力，使用标准 `cota run --chat-app`，详见 [绘本工坊](picture-book/README.md)。
 
 ## 使用
 
@@ -63,4 +66,4 @@ python -m pytest tests/test_bot_templates.py tests/integration/test_example_bots
 
 ## 旧示例迁移
 
-当前仅保留 weather 作为入门、业务规则、Skill、工具调用及评测示例。其它历史示例不再随包分发；`cota init` 不会删除或修改用户以前生成的项目。基础聊天、会话隔离和业务取消的回归覆盖保留在测试专用配置中。
+weather 用于入门、业务规则、Skill、工具调用及评测；picture-book 用于更复杂的本地制作与文件交付。其它历史示例不再随包分发；`cota init` 不会删除或修改用户以前生成的项目。基础聊天、会话隔离和业务取消的回归覆盖保留在测试专用配置中。

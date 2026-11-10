@@ -25,7 +25,9 @@ await processor.handle_message(message)
 
 默认 `session_key` 为 `channel:chat_id`；可信应用可通过 `session_key_override` 绑定已有会话。Bot mention 是适配器识别的结构化信号，不由正文字符串猜测。群消息应交给 `Application.submit_message()`。
 
-`OutboundMessage` 包含目标 channel/chat、正文、媒体和 metadata，以及可选的持久化 `event_id`、`sequence`、`session_id`。这些事件标识用于重放、去重和投递关联。
+`OutboundMessage` 包含目标 channel/chat、正文、附件和 metadata，以及可选的持久化 `event_id`、`sequence`、`session_id`。这些事件标识用于重放、去重和投递关联。
+
+SDK Message、Channel 消息和 user_utter/bot_utter 均支持可选 attachments，保存稳定 ID、name、mime_type、size。旧 media 地址字段不是完整附件能力；新接入使用 [会话附件](attachments.md) 的上传、授权下载与传递契约。
 
 ## Web 身份与回复
 

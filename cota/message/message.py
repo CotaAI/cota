@@ -11,6 +11,7 @@ class Message:
             text: Optional[Text] = None,
             metadata: Optional[Dict] = None,
             message_id: Optional[Text] = None,
+            attachments=None,
     ) -> None:
 
         if sender is not None:
@@ -41,6 +42,8 @@ class Message:
 
         self.text = text.strip() if text else text
         self.metadata = metadata
+        from cota.files import validate_attachments
+        self.attachments = validate_attachments([] if attachments is None else attachments)
         from cota.inputs import message_id as normalize_message_id
         self.message_id = normalize_message_id(message_id)
 
@@ -53,5 +56,6 @@ class Message:
             'session_id': self.session_id,
             'text': self.text,
             'metadata': self.metadata,
-            'message_id': self.message_id
+            'message_id': self.message_id,
+            **({'attachments': self.attachments} if self.attachments else {})
         }

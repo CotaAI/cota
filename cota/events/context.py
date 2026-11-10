@@ -42,11 +42,15 @@ def user_content(event):
     """Single-chat text stays plain; group identity remains structured user data."""
     metadata = event.payload.get('metadata') or {}
     if metadata.get('mode') != 'group':
+        if event.payload.get('attachments'):
+            return json.dumps({'text': event.text, 'attachments': event.payload['attachments']}, ensure_ascii=False)
         return event.text
     identity = {'id': metadata['sender_id']}
     if metadata.get('sender_name'):
         identity['name'] = metadata['sender_name']
     value = {'speaker': identity, 'text': event.text}
+    if event.payload.get('attachments'):
+        value['attachments'] = event.payload['attachments']
     if metadata.get('mentioned'):
         value['mentions_bot'] = True
     if metadata.get('reply_to'):
@@ -73,10 +77,14 @@ def apply_context(messages, event, *, active_run, trigger_event=None, deferred_i
             trigger = {'role': 'user', 'content': user_content(trigger_event),
                        'timestamp': int(trigger_event.timestamp * 1000),
                        'cotaEventId': trigger_event.event_id}
+            if trigger_event.payload.get('attachments'):
+                trigger['cotaAttachments'] = trigger_event.payload['attachments']
         immediate = [m for m in immediate if m['cotaEventId'] != p['input_event_id']]
         return immediate + [trigger] + deferred
     if kind == 'user_utter':
         message = {'role': 'user', 'content': user_content(event)}
+        if p.get('attachments'):
+            message['cotaAttachments'] = p['attachments']
         if active_run:
             message['cotaDeferred'] = True
     elif kind == 'bot_utter':

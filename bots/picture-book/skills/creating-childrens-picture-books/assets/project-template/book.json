@@ -1,0 +1,62 @@
+{
+  "title": "",
+  "audience_age": "3-5岁",
+  "book_type": "behavior-story",
+  "language": "zh-CN",
+  "page_count": 0,
+  "format": {
+    "paper": "A5",
+    "width_mm": 210,
+    "height_mm": 148,
+    "orientation": "landscape",
+    "bleed_mm": 0,
+    "safe_margin_mm": 10,
+    "requires_trimming": false
+  },
+  "binding": "ring",
+  "printing": {
+    "home": true,
+    "professional": false,
+    "duplex": "mixed",
+    "tested_flip_mode": "",
+    "profile": "separate-covers-title",
+    "title_single_sided": true,
+    "sheets": 0,
+    "jobs": [],
+    "delivery_mode": "single-pdf"
+  },
+  "visual_bible": {
+    "character_reference": "illustrations/references/character-reference.png",
+    "style_guide": "视觉圣经.md"
+  },
+  "pages": [],
+  "deliverables": {
+    "reading_pdf": "",
+    "home_print_pdf": "",
+    "professional_print_pdf": "",
+    "printing_instructions": "打印说明.md",
+    "full_preview": "previews/全书预览.jpg",
+    "cover_back_preview": "previews/封面与封底.png",
+    "print_shop_instructions": "打印店交付/00_打印制作说明.pdf"
+  },
+  "qa": {
+    "story_reviewed": false,
+    "language_reviewed": false,
+    "visual_continuity_reviewed": false,
+    "pdf_rendered_reviewed": false,
+    "print_tested": false
+  },
+  "themes": [],
+  "reading_experience": "",
+  "reality_mode": "",
+  "editorial_review": "内容审校.md",
+  "language_review": "内容审校.md",
+  "theme_guides": [
+    "references/themes/behavior-story.md"
+  ],
+  "theme_principles": "主题创作约定.md",
+  "content_page_count": 0,
+  "blank_page_count": 0,
+  "print_status": "pending-physical-proof",
+  "sheet_map": []
+}

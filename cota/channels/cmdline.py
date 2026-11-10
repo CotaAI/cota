@@ -5,12 +5,16 @@
 
 import asyncio
 import os
+from pathlib import Path
+import shlex
 import sys
 import threading
 import uuid
 from typing import Any, Callable, Dict, Optional
 
 from loguru import logger
+
+from cota.files import MAX_ATTACHMENTS
 
 from .base import BaseChannel
 from .events import InboundMessage, OutboundMessage
@@ -31,6 +35,7 @@ class CmdlineChannel(BaseChannel):
     """
 
     name = "cmdline"
+    supports_attachments = True
     dialogue_modes = frozenset({'direct'})
 
     @staticmethod
@@ -52,6 +57,7 @@ class CmdlineChannel(BaseChannel):
         self._debug = debug
         self._stdin_buffer = b''
         self._stdin_eof = False
+        self._input_directory = Path.cwd()
 
     def set_message_handler(self, handler: Callable) -> None:
         self._message_handler = handler
@@ -94,6 +100,10 @@ class CmdlineChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         self._print_message(msg)
+        files = getattr(self, 'files', None)
+        for item in msg.attachments:
+            path = await asyncio.to_thread(files.resolve, msg.session_id, item['id']) if files else item['id']
+            self._write_line(f"File: {item['name']} — {path}")
 
     def flush_output(self) -> None:
         """Show input prompt after a turn (debug mode only).
@@ -175,9 +185,25 @@ class CmdlineChannel(BaseChannel):
         threading.Thread(target=read, name='cota-stdin', daemon=True).start()
         return await result
 
+    async def _load_attachment(self, argument: str):
+        paths = shlex.split(argument)
+        if len(paths) != 1:
+            raise ValueError('用法：/file "文件路径"；路径含空格时请加引号')
+        files = getattr(self, 'files', None)
+        if files is None:
+            raise ValueError('未配置附件存储，无法添加文件')
+        path = self._input_directory / Path(paths[0]).expanduser()
+        # The local user explicitly selects this file, independently of the
+        # model's workspace. Reuse bounded copying and regular-file validation.
+        references = await asyncio.to_thread(files.import_paths, self.session_key,
+                                             'default_user', path.parent, [path.name])
+        return references[0]
+
     async def _input_loop(self) -> None:
         self._write_line(f"Session: {self.name}:{self._session_id}")
+        self._write_line('附件：/file "路径" 添加，/clear 清空；输入文字或直接回车发送。/stop 退出。')
         self._write_line("Input message:")
+        pending = []
 
         while self._running:
             try:
@@ -187,18 +213,38 @@ class CmdlineChannel(BaseChannel):
                 if message == "/stop":
                     break
 
-                if message:
+                if message == '/clear':
+                    pending.clear()
+                    self._write_line('已清空待发送附件。')
+                    continue
+
+                command = message.split(maxsplit=1)
+                if command and command[0] == '/file':
+                    try:
+                        if len(pending) >= MAX_ATTACHMENTS:
+                            raise ValueError(f'每条消息最多 {MAX_ATTACHMENTS} 个附件，请先发送或 /clear')
+                        item = await self._load_attachment(command[1] if len(command) > 1 else '')
+                    except (OSError, ValueError, RuntimeError) as error:
+                        self._write_line(f'附件错误：{error}')
+                    else:
+                        pending.append(item)
+                        self._write_line(f'已添加：{item["name"]}（待发送 {len(pending)}/{MAX_ATTACHMENTS}）')
+                    continue
+
+                if message or pending:
                     inbound_msg = InboundMessage(
                         channel=self.name,
                         sender_id="default_user",
                         chat_id=self._session_id,
                         content=message,
                         metadata={},
+                        attachments=pending,
                     )
                     if self.context is not None:
                         await self.receive(inbound_msg)
                     else:
                         await self.bus.publish_inbound(inbound_msg)
+                    pending.clear()
 
             except asyncio.CancelledError:
                 break

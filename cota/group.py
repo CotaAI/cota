@@ -134,7 +134,7 @@ class GroupConversation:
                     if getattr(inbound, key) is not None:
                         metadata[key] = getattr(inbound, key)
                 event = UserUtterEvent(event_id=input_event_id(inbound.message_id),
-                                       text=inbound.content, metadata=metadata)
+                                       text=inbound.content, metadata=metadata, attachments=inbound.attachments)
                 committed = await self.store.append_conversation_event(sid, event, agent=self.agent)
                 if on_input:
                     try:

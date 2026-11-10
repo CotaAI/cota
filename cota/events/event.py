@@ -120,6 +120,9 @@ class Event:
             validate_execution(self.payload)
         if self.type in (EventType.USER_UTTER, EventType.BOT_UTTER):
             required = {'text': str}
+            if 'attachments' in self.payload:
+                from cota.files import validate_attachments
+                validate_attachments(self.payload['attachments'])
         elif self.type == EventType.TOOL_STARTED:
             required = {'tool_call_id': str, 'tool': str, 'arguments': dict}
             if set(self.payload) - {'tool_call_id', 'tool', 'arguments', 'requested_arguments', 'llm', 'llm_event_id'}:
@@ -208,13 +211,24 @@ class Event:
 
 
 class UserUtterEvent(Event):
-    def __init__(self, text: str, metadata=None, **kw):
-        super().__init__(EventType.USER_UTTER, {'text': text, 'metadata': metadata or {}}, **kw)
+    def __init__(self, text: str, metadata=None, *, attachments=None, **kw):
+        payload = {'text': text, 'metadata': metadata or {}}
+        if attachments is not None:
+            from cota.files import validate_attachments
+            attachments = validate_attachments(attachments)
+        if attachments:
+            payload['attachments'] = attachments
+        super().__init__(EventType.USER_UTTER, payload, **kw)
 
 
 class BotUtterEvent(Event):
-    def __init__(self, text: str, metadata=None, *, llm=None, tool_event_id=None, **kw):
+    def __init__(self, text: str, metadata=None, *, llm=None, tool_event_id=None, attachments=None, **kw):
         payload = {'text': text, 'metadata': metadata or {}}
+        if attachments is not None:
+            from cota.files import validate_attachments
+            attachments = validate_attachments(attachments)
+        if attachments:
+            payload['attachments'] = attachments
         if llm is not None:
             payload['llm'] = llm
         if tool_event_id is not None:

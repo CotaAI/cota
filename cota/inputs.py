@@ -31,14 +31,19 @@ def canonical_input(message):
     if hasattr(message, 'content'):
         value = deepcopy({'sender': 'user', 'sender_id': message.sender_id,
                          'text': message.content or '', 'media': message.media, 'execute': True})
+        if getattr(message, 'attachments', None):
+            value['attachments'] = deepcopy(message.attachments)
         if getattr(message, 'conversation_type', None) == 'group':
             value.pop('execute')
             value.update(mode='group', mentioned=message.mentioned, reply_to=message.reply_to,
                          sender_name=message.sender_name)
         return value
-    return deepcopy({'sender': message.sender or 'user', 'sender_id': message.sender_id,
+    value = deepcopy({'sender': message.sender or 'user', 'sender_id': message.sender_id,
                      'text': message.text or '', 'media': (message.metadata or {}).get('media', []),
                      'execute': message.receiver == 'bot'})
+    if getattr(message, 'attachments', None):
+        value['attachments'] = deepcopy(message.attachments)
+    return value
 
 
 def event_input(event):
@@ -47,6 +52,8 @@ def event_input(event):
     value = {'sender': metadata.get('sender', 'user'), 'sender_id': metadata.get('sender_id'),
             'text': payload.get('text', ''), 'media': metadata.get('media', []),
             'execute': metadata.get('execute', True)}
+    if payload.get('attachments'):
+        value['attachments'] = deepcopy(payload['attachments'])
 
     if metadata.get('mode') == 'group':
         value.pop('execute')

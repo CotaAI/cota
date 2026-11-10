@@ -249,6 +249,8 @@ class WebSocketTransport:
             code, message = 'invalid_request', 'Message identity conflicts with an existing input'
         elif isinstance(error, RunInProgress):
             code, message = 'run_in_progress', 'Conversation execution is already in progress'
+        elif isinstance(error, FileNotFoundError):
+            code, message = 'not_found', 'File not found in this conversation'
         elif isinstance(error, ValueError):
             code, message = 'invalid_request', str(error)
         elif isinstance(error, asyncio.TimeoutError):
@@ -307,8 +309,9 @@ class WebSocketTransport:
                         raise ValueError('Identity is bound by resume')
                     if target not in connection.sessions:
                         raise ValueError('Subscribe to the conversation before sending')
-                    receipt = await self.service.submit(user_id, target, frame.get('message_id'), frame.get('text'),
-                                                        mentioned=frame.get('mentioned', False), reply_to=frame.get('reply_to'))
+                    receipt = await self.service.submit(user_id, target, frame.get('message_id'), frame.get('text', ''),
+                                                        mentioned=frame.get('mentioned', False), reply_to=frame.get('reply_to'),
+                                                        attachments=frame.get('attachments'))
                     connection.queue.put_nowait({'type': 'receipt', **receipt})
                 except PermissionError:
                     raise

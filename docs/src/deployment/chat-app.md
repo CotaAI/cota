@@ -1,5 +1,7 @@
 # 可选聊天应用
 
+聊天页面支持选择附件、纯附件消息和授权下载。文件选择后先上传，确认发送时才写入会话；重连只重提文件 ID。完整边界与限制见 [会话附件](../concepts/attachments.md)。
+
 Cota 的配套聊天应用为没有现成前端的 Bot 提供访问入口。它是应用层模块，位于 `cota/webapp/`，与 `cota/channels/` 并列；Web Channel、Application、DST、Store 和 Pi 不依赖它。
 
 ## 启动与分享

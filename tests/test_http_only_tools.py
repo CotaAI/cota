@@ -1,4 +1,4 @@
-"""Only HTTP is shipped as a custom capability; ordinary replies need no tools."""
+"""Service tools remain HTTP/resource read; personal adds explicit file delivery."""
 import importlib.util
 
 import pytest

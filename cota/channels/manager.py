@@ -188,6 +188,9 @@ class ChannelManager:
             while queue:
                 message = queue.popleft()
                 try:
+                    if message.attachments and not channel.supports_attachments:
+                        from cota.files import UnsupportedAttachments
+                        raise UnsupportedAttachments('Channel does not support attachments')
                     await asyncio.wait_for(channel.send(message), self._send_timeout)
                 except Exception as error:
                     logger.error(f"Error sending to {key}: {error}")

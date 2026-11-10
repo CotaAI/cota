@@ -34,6 +34,9 @@ cota run --config cota_projects/weather --chat-app --host 127.0.0.1 --port 5005
 
 通道选择使用 agent.yml/endpoints.yml 的 channels，不使用旧 --channel 参数。
 shell 仅支持 direct，输入 `/stop` 退出；没有 --session 参数，每次启动新会话。
+
+输入 `/file "文件路径"` 添加待发送附件，支持绝对路径、`~` 和相对启动目录的路径。可以连续添加多个文件，再输入说明并回车发送；直接回车发送纯附件，`/clear` 清空待发送列表。每条最多8个文件，每个1字节至20 MiB。添加时复制文件，不触发模型，详见[会话附件](../concepts/attachments.md#cmdline-输入)。
+
 完整调试说明见 [Debug](debug.md)。
 
 ## train

@@ -2,6 +2,7 @@
 import { createSkillResources } from './skills.mjs';
 import { createHttpTool } from './http.mjs';
 import { createNativeTools } from './tools.mjs';
+import { createSendFilesTool } from './files.mjs';
 import { Agent } from '@earendil-works/pi-agent-core';
 import piPackage from '@earendil-works/pi-agent-core/package.json' with {type: 'json'};
 import { createAssistantMessageEventStream, getCurrentSystemPrompt } from '@earendil-works/pi-ai';
@@ -59,14 +60,19 @@ export async function runAgent(options, rpc, signal) {
   await request('skills_loaded', {skills: resources.skills, diagnostics: resources.diagnostics,
     ...(options.environment?.type === 'machine' ? {nativeTools: native.inventory} : {})});
   const http = createHttpTool();
+  const files = createSendFilesTool(async (toolCallId, args) => {
+    const result = await request('send_files', {toolCallId, args});
+    await request('tool_result', {toolCallId, name: 'send_files', args, result});
+    return result;
+  });
   const localTools = [...native.tools, {...http, execute: async (toolCallId, args, signal, onUpdate) => {
     const result = await http.execute(toolCallId, args, signal, onUpdate);
     await request('tool_result', {toolCallId, name: http.name, args, result});
     return result;
-  }}];
-  const extensionTools = [{type: 'function', function: {
-    name: http.name, description: http.description, parameters: http.parameters,
-  }}];
+  }}, files];
+  const extensionTools = [http, files].map(tool => ({type: 'function', function: {
+    name: tool.name, description: tool.description, parameters: tool.parameters,
+  }}));
   const toolsFor = definitions => definitions.map(({function: fn}) => localTools.find(tool => tool.name === fn.name) ?? ({
     name: fn.name, label: fn.name, description: fn.description ?? '', parameters: fn.parameters,
     execute: async (toolCallId, args) => {

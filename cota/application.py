@@ -182,13 +182,14 @@ class Application:
     def accepting_messages(self):
         return self._started and not self._closed and self.runner._running
 
-    async def submit(self, *, user_id, session_id, text, message_id=None, mentioned=False, sender_name=None, reply_to=None):
+    async def submit(self, *, user_id, session_id, text='', message_id=None, mentioned=False, sender_name=None, reply_to=None,
+                     attachments=None):
         _identifier('user_id', user_id)
         _identifier('session_id', session_id)
         return await self.submit_message(InboundMessage(
             channel='application', sender_id=user_id, chat_id=session_id, content=text,
             session_key_override=session_id, message_id=message_id, mentioned=mentioned,
-            sender_name=sender_name, reply_to=reply_to))
+            sender_name=sender_name, reply_to=reply_to, attachments=[] if attachments is None else attachments))
 
     async def submit_message(self, inbound, on_input=None, on_reply=None):
         if not isinstance(inbound, InboundMessage):
@@ -196,8 +197,14 @@ class Application:
         _identifier('user_id', inbound.sender_id)
         _identifier('session_id', inbound.session_key)
         normalize_message_id(inbound.message_id)
-        if not isinstance(inbound.content, str) or not inbound.content.strip() or len(inbound.content) > 32768:
-            raise ValueError('text must contain 1–32768 characters')
+        if (not isinstance(inbound.content, str) or len(inbound.content) > 32768
+                or not inbound.content.strip() and not inbound.attachments):
+            raise ValueError('Provide text (up to 32768 characters) or attachments')
+        if inbound.attachments:
+            references = await asyncio.to_thread(self.agent.files.references, inbound.session_key,
+                                                  [item['id'] for item in inbound.attachments])
+            if references != inbound.attachments:
+                raise ValueError('Attachment references do not match stored files')
         if not self.accepting_messages:
             raise ApplicationUnavailable('Application is not accepting messages')
         mode = (getattr(self.agent, 'dialogue', None) or {}).get('mode', 'direct')
@@ -220,7 +227,7 @@ class Application:
                         'received_at': inbound.timestamp.isoformat(),
                         'message_id': inbound.message_id, 'accepted': True}
             event = UserUtterEvent(event_id=input_event_id(inbound.message_id),
-                                   text=inbound.content, metadata=metadata)
+                                   text=inbound.content, metadata=metadata, attachments=inbound.attachments)
             committed = await self.store.append_conversation_event(inbound.session_key, event, agent=self.agent)
             if on_input is not None:
                 try:
@@ -242,7 +249,8 @@ class Application:
             sender_id=metadata['sender_id'], chat_id=metadata.get('chat_id', event['session_id']),
             content=event['payload']['text'], media=metadata.get('media', []),
             metadata=metadata.get('channel_metadata', {}), session_key_override=event['session_id'],
-            message_id=metadata['message_id'], conversation_type='direct')
+            message_id=metadata['message_id'], conversation_type='direct',
+            attachments=event['payload'].get('attachments', []))
 
     async def _recover_session(self, session_id, exclude=None):
         # Schedule old committed work before a newly arriving turn in this room.

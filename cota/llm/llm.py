@@ -19,6 +19,9 @@ class LLM:
         Args:
             config: Configuration dictionary containing client type and parameters
         """
+        self.supports_images = config.get('vision', False)
+        if type(self.supports_images) is not bool:
+            raise ValueError('endpoints.yml llms.<name>.vision must be boolean')
         self.client = LLMClientFactory.create_client(config)
         self.name = config.get('model')
 

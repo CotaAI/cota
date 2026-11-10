@@ -253,6 +253,9 @@ class FeishuChannel(BaseChannel):
     async def send(self, message: OutboundMessage):
         if self._http_client is None:
             raise RuntimeError('Feishu channel is not started')
+        if message.attachments:
+            from cota.files import UnsupportedAttachments
+            raise UnsupportedAttachments('Feishu file delivery is not implemented')
         if message.media:
             raise ValueError('Feishu currently supports text replies only')
         identity = str(uuid5(NAMESPACE_URL, f'{self.app_id}:{message.session_id}:{message.event_id}')) if message.event_id else str(uuid4())

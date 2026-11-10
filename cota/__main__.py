@@ -250,6 +250,7 @@ async def shell(args):
         bus=message_bus,
         debug=is_debug,
     )
+    cmdline_channel.files = getattr(agent, 'files', None)
 
     # Local observation only: no Runtime hooks or extra persistence path.
     latest_processor = None

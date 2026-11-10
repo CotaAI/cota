@@ -113,6 +113,7 @@ class Processor:
         self.dst.append_event(UserUtterEvent(
             event_id=input_event_id(message.message_id),
             text=message.text or "",
+            attachments=getattr(message, 'attachments', []),
             metadata={
                 "sender": message.sender or "user",
                 "sender_id": message.sender_id,
@@ -163,6 +164,7 @@ class Processor:
         self.dst.append_event(UserUtterEvent(
             event_id=input_event_id(inbound.message_id),
             text=inbound.content or "",
+            attachments=inbound.attachments,
             metadata={
                 "sender": "user",
                 "sender_id": inbound.sender_id,
@@ -203,6 +205,7 @@ class Processor:
                     event_id=msg.get("event_id") if isinstance(msg, dict) else None,
                     sequence=msg.get("sequence") if isinstance(msg, dict) else None,
                     session_id=inbound.session_key,
+                    attachments=msg.get('attachments', []) if isinstance(msg, dict) else [],
                 )
                 await self.message_bus.publish_outbound(outbound)
             runtime.set_channel_callback(_bus_reply_cb)

@@ -93,7 +93,8 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
     service = WebService(application, access=access) if web_enabled else None
     app = Sanic('cota-' + uuid4().hex[:8])
     # Match WebSocket's limit, including JSON escaping of a valid 32768-char text.
-    app.config.REQUEST_MAX_SIZE = 256 * 1024
+    from cota.files import MAX_FILE_BYTES
+    app.config.REQUEST_MAX_SIZE = MAX_FILE_BYTES
     app.config.WEBSOCKET_MAX_SIZE = 256 * 1024
     app.config.WEBSOCKET_PING_INTERVAL = 20
     app.config.WEBSOCKET_PING_TIMEOUT = 20
@@ -108,6 +109,11 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
 
     @app.middleware('request')
     async def check_origin(request):
+        if not request.path.endswith('/files') and len(request.body) > 256 * 1024:
+            raise SanicException('Request exceeds 256 KiB', status_code=413)
+        if not request.path.endswith('/files') and request.headers.get('content-length', '').isdecimal():
+            if int(request.headers['content-length']) > 256 * 1024:
+                raise SanicException('Request exceeds 256 KiB', status_code=413)
         if request.path.startswith('/channels/'):
             if request.method == 'POST' and not application.accepting_messages:
                 raise ServiceUnavailable('Application is not accepting messages')
@@ -132,7 +138,7 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
         if not request.path.startswith('/channels/') and origin and origin in allowed_origins:
             result.headers['Access-Control-Allow-Origin'] = origin
             result.headers['Vary'] = 'Origin'
-            result.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type'
+            result.headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type, X-File-Name'
             result.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
             result.headers['Access-Control-Expose-Headers'] = 'Location, Retry-After'
 
@@ -257,6 +263,35 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
         session_id = await service.access.create_conversation(user_id)
         return response.json({'session_id': session_id}, status=201)
 
+    @app.post('/api/conversations/<session_id>/files')
+    async def upload_file(request, session_id):
+        user_id = await principal(request)
+        session_id = unquote(session_id, errors='strict')
+        await service.authorize(user_id, session_id)
+        if request.content_type.split(';', 1)[0].lower() != 'application/octet-stream':
+            raise SanicException('Upload raw bytes as application/octet-stream', status_code=415)
+        name = unquote(request.headers.get('x-file-name', ''), errors='strict')
+        value = await asyncio.to_thread(agent.files.put, session_id, user_id, name, request.body)
+        return response.json(value, status=201)
+
+    @app.get('/api/conversations/<session_id>/files/<file_id>')
+    async def download_file(request, session_id, file_id):
+        user_id = await principal(request)
+        session_id = unquote(session_id, errors='strict')
+        await service.authorize(user_id, session_id)
+        try:
+            item = (await asyncio.to_thread(agent.files.references, session_id, [file_id]))[0]
+            path = await asyncio.to_thread(agent.files.resolve, session_id, file_id)
+        except FileNotFoundError:
+            raise SanicException('File not found', status_code=404) from None
+        # Recheck membership after disk I/O; never put the user's bearer in a URL.
+        await service.authorize(user_id, session_id)
+        value = await response.file(path, mime_type=item['mime_type'])
+        value.headers['Content-Disposition'] = "attachment; filename=download; filename*=UTF-8''" + quote(item['name'], safe='')
+        value.headers['Content-Security-Policy'] = "default-src 'none'; sandbox"
+        value.headers['Referrer-Policy'] = 'no-referrer'
+        return value
+
     @app.get('/api/conversations/<session_id>/messages')
     async def history(request, session_id):
         user_id = await principal(request)
@@ -280,11 +315,14 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
         body = request.json
         if not isinstance(body, dict):
             raise ValueError('Expected a JSON object')
-        if set(body) - {'text', 'message_id', 'mentioned', 'reply_to'}:
-            raise ValueError('Allowed fields: text, message_id, mentioned, reply_to; identity comes from authorization')
+        if set(body) - {'text', 'message_id', 'mentioned', 'reply_to', 'attachments'}:
+            raise ValueError('Allowed fields: text, message_id, mentioned, reply_to, attachments; identity comes from authorization')
         try:
-            value = await service.submit(user_id, session_id, body.get('message_id'), body.get('text'),
-                                         mentioned=body.get('mentioned', False), reply_to=body.get('reply_to'))
+            value = await service.submit(user_id, session_id, body.get('message_id'), body.get('text', ''),
+                                         mentioned=body.get('mentioned', False), reply_to=body.get('reply_to'),
+                                         attachments=body.get('attachments'))
+        except FileNotFoundError:
+            raise SanicException('File not found in this conversation', status_code=404) from None
         except RuntimeError:
             # Shutdown may win while authorization or Store admission awaits.
             if not application.accepting_messages:

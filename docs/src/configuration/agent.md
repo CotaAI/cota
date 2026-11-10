@@ -92,7 +92,7 @@ service 默认 none，只允许通过 read 阅读已发现 Skill 资源，业务
 
 ## tools、policy 与 knowledge
 
-`tools.allow` / `deny` 是工具名称或分组名称列表，建议直接使用 `http_request`。它是唯一内置自定义工具，使用 Pi 标准工具定义在 Node 中执行；`group:network` 和 `group:all` 可用于分组配置。省略 allow 表示允许当前启用的自定义工具，空 allow 不提供自定义工具；deny 优先。Pi 原生工具与 Skill 资源读取由 environment 决定。
+`tools.allow` / `deny` 是工具名称或分组名称列表。内置 `http_request` 使用 Pi 标准工具定义；personal 的 machine 环境还可配置 `send_files`，用于交付工作区文件到当前会话，见 [附件](../concepts/attachments.md)。`group:network` 只包含 HTTP，`group:all` 可用于所有当前可用工具。省略 allow 表示允许当前启用的自定义工具，空 allow 不提供自定义工具；deny 优先。Pi 原生工具与 Skill 资源读取由 environment 决定。
 
 未知分组在加载配置时拒绝；具体名称在应用完成工具注册后的运行入口校验，未注册或拼错的工具会在调用模型前报错。应用可在注册结束后调用 `agent.get_tool_registry().validate()` 提前检查。业务 API 凭据、身份鉴权与幂等由外围适配器或工具服务负责，Cota 不新增凭据管理配置，见 [Tool 适配](../concepts/tool-adapters.md)。
 

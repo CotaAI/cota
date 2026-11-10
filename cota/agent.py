@@ -40,6 +40,7 @@ class Agent:
         knowledge: Optional[Knowledge] = None,
         environment: Optional[ExecutionEnvironment] = None,
         deploy: str = DEFAULT_DEPLOY,
+        file_storage=None,
     ) -> None:
         self.name = name
         self.description = description
@@ -65,6 +66,16 @@ class Agent:
 
         self.user_memory = None
         self._tool_registry: Optional[ToolRegistry] = None
+        self._files = file_storage
+
+    @property
+    def files(self):
+        from cota.files import FileStorage
+        if self._files is None:
+            if not self.config_path:
+                raise ValueError('Set Agent.config_path before using file storage')
+            self._files = FileStorage(os.path.join(self.config_path, '.cota', 'files'))
+        return self._files
 
     @classmethod
     def load_from_path(

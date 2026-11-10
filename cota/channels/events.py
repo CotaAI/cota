@@ -27,8 +27,11 @@ class InboundMessage:
     sender_name: Optional[str] = None
     reply_to: Optional[str] = None
     conversation_type: Optional[str] = None
+    attachments: List[Dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self):
+        from cota.files import validate_attachments
+        self.attachments = validate_attachments(self.attachments)
         if type(self.mentioned) is not bool:
             raise ValueError('mentioned must be boolean')
         for key in ('sender_name', 'reply_to'):
@@ -61,3 +64,8 @@ class OutboundMessage:
     event_id: Optional[str] = None
     sequence: Optional[int] = None
     session_id: Optional[str] = None
+    attachments: List[Dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self):
+        from cota.files import validate_attachments
+        self.attachments = validate_attachments(self.attachments)

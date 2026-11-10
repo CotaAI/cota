@@ -46,8 +46,9 @@
       <div id="messages" class="messages" role="log" aria-label="聊天消息" aria-live="polite" aria-relevant="additions"></div>
       <form id="composer" class="composer" hidden>
         <div id="quote" class="quote" hidden><span id="quote-text"></span><button id="cancel-quote" class="subtle" type="button" aria-label="取消引用">×</button></div>
+        <div id="selected-files" class="selected-files" aria-live="polite"></div>
         <div class="compose-row"><textarea id="draft" aria-label="消息" placeholder="写下你的消息…" rows="2" maxlength="32768"></textarea><button id="send" class="primary" type="submit">发送 <span aria-hidden="true">↑</span></button></div>
-        <div class="compose-options"><label id="mention-wrap" class="mention-control" hidden><input id="mention" type="checkbox"><span id="mention-label">@Bot</span></label><small id="mode-help"></small></div>
+        <div class="compose-options"><label class="attachment-picker">添加附件<input id="file-input" type="file" multiple aria-label="添加附件"></label><label id="mention-wrap" class="mention-control" hidden><input id="mention" type="checkbox"><span id="mention-label">@Bot</span></label><small id="mode-help"></small></div>
       </form>
     </section>
   </main>

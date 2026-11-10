@@ -69,6 +69,8 @@ OpenAI 类型的 `apibase` 为 API base URL；custom 类型直接 POST 到该 UR
 
 `max_tokens` 等每轮对话设置放在 `agent.yml` 的 `dialogue` 中；它们不是 openai factory 自动透传的额外字段。LLM 使用完成后由 Agent cleanup 关闭。
 
+`vision: true` 是可选的 Cota 模型能力声明，默认 false。启用后，上传的小图片可作为真实视觉输入传给该对话模型；该字段不作为供应商请求参数发送。纯文本主模型可保持 false，使用 Skill 的专门视觉服务，详见 [附件与模型理解](../concepts/attachments.md)。
+
 ### 评测模型
 
 `cota eval` 和 `cota eval judge` 自动优先选择 `llms.evaluator`；未定义 evaluator 时使用 `llms.default`。不需要命令行指定评委。被测 Bot 仍使用 agent.yml 中的 `dialogue.llm`，评委配置不会替换 Bot 的对话模型。

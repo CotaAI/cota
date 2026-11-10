@@ -5,6 +5,7 @@ from .transport import TransportFactory
 
 class WebChannel(BaseChannel):
     name = 'web'
+    supports_attachments = True
 
     def __init__(self, config, bus):
         super().__init__(config, bus)

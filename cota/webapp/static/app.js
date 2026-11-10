@@ -178,10 +178,10 @@
     }
     async send(text, options = {}) {
       if (!this.identity || !this.client) throw new Error('请先建立访客身份并打开会话');
-      if (!text.trim()) return;
+      if (!text.trim() && !options.attachments?.length) return;
       const client = this.client, epoch = this.epoch;
       let id;
-      const fingerprint = JSON.stringify([text, options.mentioned, options.reply_to]);
+      const fingerprint = JSON.stringify([text, options.mentioned, options.reply_to, options.attachments]);
       const messageId = client.failedDraft?.fingerprint === fingerprint ? client.failedDraft.id : crypto.randomUUID();
       try {
         id = await client.chat(text, messageId, options);
@@ -257,7 +257,27 @@
       this.notice = notice; this.update();
     }
   }
-  root.CotaChat = {Controller, captureInvite, acceptInvite};
+  function messageParts(text) {
+    const parts = [], pattern = /\[([^\]\n]+)\]\(([^\s)]+)\)/g;
+    let offset = 0;
+    for (const match of text.matchAll(pattern)) {
+      const href = match[2];
+      let safe = !/[\\\u0000-\u0020]/.test(href);
+      if (href.startsWith('/')) safe &&= !href.startsWith('//');
+      else {
+        try {
+          const url = new URL(href);
+          safe &&= ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+        } catch (_) {safe = false;}
+      }
+      if (!safe) continue;
+      if (match.index > offset) parts.push({text: text.slice(offset, match.index)});
+      parts.push({label: match[1], href}); offset = match.index + match[0].length;
+    }
+    if (offset < text.length) parts.push({text: text.slice(offset)});
+    return parts;
+  }
+  root.CotaChat = {Controller, captureInvite, acceptInvite, messageParts};
   if (typeof document === 'undefined') return;
 
   const $ = id => document.getElementById(id);
@@ -270,6 +290,7 @@
   };
   let invite = captureInvite(location, history, sessionStorage), inviteBusy = false;
   let quote = null, displayedRoom = null, displayedIdentity = null, memberNames = new Map();
+  let selectedFiles = [], uploading = false;
   const app = new Controller({fetch: (...args) => fetch(...args), Client: CotaClient, storage: localStorage, changed: render});
   const statuses = {recorded: '已记录', limited: '已达到处理限制', queued: '排队中', running: '处理中', completed: '已完成', succeeded: '已完成', failed: '处理失败', interrupted: '处理已中断'};
   function author(message) {
@@ -294,6 +315,7 @@
     const current = app.room?.session_id || null;
     if (displayedRoom !== current) {
       displayedRoom = current; quote = null; $('draft').value = ''; $('mention').checked = false; $('invite-panel').hidden = true;
+      selectedFiles = []; $('file-input').value = '';
     }
     $('conversation-list').replaceChildren();
     for (const room of app.conversations) {
@@ -301,7 +323,8 @@
       row.setAttribute('aria-current', room.session_id === current ? 'true' : 'false');
       row.append(make('span', room.mode === 'group' ? '群聊' : '私聊', 'room-kind'));
       if (room.unread) row.append(make('span', String(room.unread) + ' 未读', 'room-kind'));
-      if (room.last_message) row.append(make('small', room.last_message.text.slice(0, 80), 'room-preview'));
+      if (room.last_message) row.append(make('small', (room.last_message.text ||
+        (room.last_message.attachments || []).map(file => file.name).join('、')).slice(0, 80), 'room-preview'));
       if (room.last_active) row.append(make('small', new Date(room.last_active * 1000).toLocaleString('zh-CN'), 'room-preview'));
       $('conversation-list').append(row);
     }
@@ -322,6 +345,12 @@
     $('quote-text').textContent = quote ? '回复 ' + author(quote) + '：' + quote.text : '';
     $('older-messages').hidden = !app.room || app.client?.hasMore === false;
     renderMessages(); renderMembers();
+    $('selected-files').replaceChildren();
+    for (const file of selectedFiles) {
+      const row = make('span', file.name + ' ', 'selected-file');
+      row.append(button('移除', () => {selectedFiles = selectedFiles.filter(f => f.id !== file.id); render();}));
+      $('selected-files').append(row);
+    }
   }
   function renderMessages() {
     const list = $('messages'); const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 90;
@@ -336,7 +365,29 @@
         const original = messagesById.get(message.reply_to);
         row.append(make('blockquote', original ? author(original) + '：' + original.text : '引用的消息'));
       }
-      row.append(make('div', message.text, 'message-text'));
+      const body = make('div', undefined, 'message-text');
+      for (const part of messageParts(message.text)) {
+        if (!part.href) body.append(document.createTextNode(part.text));
+        else {
+          const link = make('a', part.label); link.setAttribute('href', part.href);
+          link.target = '_blank'; link.rel = 'noopener noreferrer'; link.referrerPolicy = 'no-referrer';
+          body.append(link);
+        }
+      }
+      row.append(body);
+      for (const file of message.attachments || []) {
+        const item = button(file.name + ' · ' + Math.ceil(file.size / 1024) + ' KiB ↓', () => run(async () => {
+          const client = app.client;
+          if (!client) throw new Error('请先打开会话');
+          const downloaded = await client.download(file);
+          if (client !== app.client) return;
+          const url = URL.createObjectURL(downloaded.blob);
+          const anchor = make('a'); anchor.href = url; anchor.download = downloaded.name;
+          document.body.append(anchor); anchor.click(); anchor.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }), 'attachment');
+        row.append(item);
+      }
       if (message.mentioned) row.append(make('span', '@' + (app.config.bot_name || 'Bot'), 'mention-tag'));
       row.append(button('回复', () => {quote = message; render(); $('draft').focus();}, 'reply-button'));
       const receipt = app.receipts[message.message_id];
@@ -346,7 +397,8 @@
     for (const [id, pending] of Object.entries(app.pending)) {
       if (submittedIds.has(id)) continue;
       const row = make('article', undefined, 'message mine pending');
-      row.append(make('div', '你', 'author'), make('div', typeof pending === 'string' ? pending : pending.text, 'message-text'));
+      row.append(make('div', '你', 'author'), make('div', typeof pending === 'string' ? pending :
+        (pending.text || (pending.attachments?.length ? `附件消息（${pending.attachments.length}个文件）` : '')), 'message-text'));
       row.append(make('small', statuses[app.receipts[id]?.status] || '待确认 · 重连后继续提交', 'message-status')); list.append(row);
     }
     list.scrollTop = nearBottom ? list.scrollHeight : previousTop;
@@ -414,15 +466,32 @@
   $('leave').onclick = () => {if (confirm('确定退出此群聊？再次加入需要邀请链接。')) run(() => app.leave());};
   $('cancel-quote').onclick = () => {quote = null; render();};
   $('composer').onsubmit = event => {
-    event.preventDefault(); const text = $('draft').value; if (!text.trim()) return;
+    event.preventDefault(); const text = $('draft').value; if (uploading || !text.trim() && !selectedFiles.length) return;
     const epoch = app.epoch; const options = {mentioned: app.room?.mode === 'group' && $('mention').checked};
     if (quote) options.reply_to = quote.event_id;
+    if (selectedFiles.length) options.attachments = selectedFiles.map(file => file.id);
     $('send').disabled = true;
     run(async () => {
       await app.send(text, options);
-      if (epoch === app.epoch && $('draft').value === text) {$('draft').value = ''; quote = null; render();}
+      if (epoch === app.epoch && $('draft').value === text) {$('draft').value = ''; quote = null; selectedFiles = []; render();}
     }).finally(() => {$('send').disabled = false;});
   };
+  $('file-input').onchange = () => run(async () => {
+    const files = [...$('file-input').files], client = app.client, epoch = app.epoch;
+    if (!client || uploading) return;
+    if (files.length + selectedFiles.length > 8) throw new Error('每条消息最多8个附件');
+    if (files.some(file => file.size < 1 || file.size > 20 * 1024 * 1024)) throw new Error('每个文件须为1字节至20 MiB');
+    uploading = true; $('send').disabled = true; $('file-input').disabled = true;
+    try {
+      for (const file of files) {
+        const uploaded = await client.upload(file);
+        if (epoch !== app.epoch || client !== app.client) return;
+        selectedFiles.push(uploaded); render();
+      }
+    } finally {
+      uploading = false; $('send').disabled = false; $('file-input').disabled = false; $('file-input').value = '';
+    }
+  });
   $('draft').onkeydown = event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {event.preventDefault(); if (!$('send').disabled) $('composer').requestSubmit();}
   };

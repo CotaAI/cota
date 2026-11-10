@@ -20,6 +20,8 @@ Node.js 至少 22.19，固定版本见 `.node-version`。统一入口依次检�
 不需要模型密钥，但需要允许创建子进程和监听 localhost 随机端口。
 不会通过这些测试推定真实飞书权限、生产数据库或模型业务质量已经验证。
 
+绘本复杂流程示例位于 [bots/picture-book](https://github.com/CotaAI/cota/tree/main/bots/picture-book)：复用 Pi 原生工具，独立连接图片生成/编辑与视觉接口，再制作中文 PDF。`tests/test_picture_book_bot.py` 覆盖协议、资产复用、PDF 留白与渲染、限时下载、真实 Pi 多步执行与 SQLite 恢复、WebSocket 历史。PDF 相关用例需要该 Bot 的可选 requirements、Poppler 和中文 TrueType 字体；缺少时明确跳过。实际创作质量需要另行配置模型、逐页审校；reply-review 不代替图像质量评测。
+
 ## 修改时选取测试
 
 ```bash

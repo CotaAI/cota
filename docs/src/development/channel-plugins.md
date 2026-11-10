@@ -1,5 +1,7 @@
 # 自定义 Channel 接入
 
+需要收发附件时，适配器使用统一 attachments 引用并声明 `supports_attachments = True`，从绑定的 `channel.files` 读取当前会话副本，再调用平台上传/发送 API。未声明支持时不会丢弃附件后当作文字成功发送。详见 [会话附件](../concepts/attachments.md)。
+
 Channel 负责平台身份、会话、输入协议与回复投递。Cota 负责排队、持久化、Bot 执行和失败投递恢复。平台接入可以作为独立 Python 包交付，无需修改 Cota 内置 Channel 清单。
 
 如果已经有适配包，按下文安装、配置并启动即可。如果要接入公司 IM（例如 SeaTalk）或新的业务平台，先参考仓库中的独立 Webhook/REST 示例实现适配器，再声明 entry point 并打包；接入方使用同一套安装流程。

@@ -1,6 +1,6 @@
 # Tool 适配与能力边界
 
-Skill 描述业务做法，Tool 执行具体操作。Pi 提供 read、write、edit、bash、grep、find、ls、powershell 八个底层工具，Cota 为它们绑定执行环境；唯一内置自定义工具 `http_request` 使用 Pi 标准工具定义在 Node 中执行；应用仍可通过 Python 注册自定义扩展。Pi 选择和校验调用，Cota 在执行前检查许可并保存开始事件。
+Skill 描述业务做法，Tool 执行具体操作。Pi 提供 read、write、edit、bash、grep、find、ls、powershell 八个底层工具，Cota 为它们绑定执行环境；`http_request` 和附件交付原语 `send_files` 使用 Pi 标准工具定义。send_files 由 Cota 校验 personal 工作区并提交当前会话附件，不承担普通文字回复或业务执行。应用仍可通过 Python 注册自定义扩展。Pi 选择和校验调用，Cota 在执行前检查许可并保存开始事件。详见 [会话附件](attachments.md)。
 
 ## Pi 原生工具与执行环境
 
@@ -64,7 +64,7 @@ Shell 命令超时取模型请求和 `timeout_seconds` 上限的较小值；省�
 
 ## HTTP 工具
 
-`http_request` 是唯一随 Cota 提供的自定义工具，定义位于 `cota/runtime/pi/http.mjs`，直接符合 Pi `AgentTool` 契约。参数由 TypeBox 声明并由 Pi 校验，Node 执行 HTTP/HTTPS 请求，返回 `content` / `details` / `isError`，不再经过 Python HTTP 工具类。
+`http_request` 定义位于 `cota/runtime/pi/http.mjs`，直接符合 Pi `AgentTool` 契约。参数由 TypeBox 声明并由 Pi 校验，Node 执行 HTTP/HTTPS 请求，返回 `content` / `details` / `isError`，不再经过 Python HTTP 工具类。附件原语 `send_files` 在 `files.mjs` 使用同一 Pi 契约，由 Cota 绑定会话与文件持久化。
 
 personal 与 service 均可使用；可用 `tools.allow: [http_request]` 仅开放 HTTP，或 `tools.deny: [http_request]` 关闭它。`tools.allow: []` 关闭自定义工具，但不改变环境决定的 Pi 机器工具与 Skill 读取能力。
 

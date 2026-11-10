@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 
-function harness(options = {}) {
+function harness(options = {}, fetch = undefined) {
   const sockets = [], timers = new Map(), stored = new Map();
   stored.set('cota.chat.v1:', JSON.stringify({token:'valid-token',session_id:'s',cursor:0,messages:[],pending:{}}));
   class Socket {
@@ -13,7 +13,7 @@ function harness(options = {}) {
     frame(data) {this.onmessage({data:JSON.stringify(data)});}
   }
   let nextTimer=0;
-  const context=vm.createContext({options,URL,WebSocket:Socket,location:{href:'http://localhost/'},crypto:{randomUUID:()=> 'id1'},
+  const context=vm.createContext({options,fetch,URL,WebSocket:Socket,location:{href:'http://localhost/'},crypto:{randomUUID:()=> 'id1'},
     localStorage:{getItem:key=>stored.get(key),setItem:(key,value)=>stored.set(key,value)},
     setTimeout:fn=>{timers.set(++nextTimer,fn);return nextTimer;},clearTimeout:id=>timers.delete(id)});
   vm.runInContext(readFileSync('cota/channels/utils/cota.js','utf8')+'\nglobalThis.client=new CotaClient(options);',context);
@@ -105,6 +105,36 @@ test('invalid group options reject before sending or persisting',async()=>{
     assert.equal(client.state.pending.invalid,undefined);
   }
   assert.equal(ws.sent.filter(frame=>frame.type==='send').length,0);
+  client.close();
+});
+
+test('attachment-only submissions keep stable file IDs across reconnect', async () => {
+  const {client,sockets} = harness(); await client.ready;
+  const file = 'f_' + 'a'.repeat(32);
+  const ws = sockets[0]; ws.onopen(); ws.frame({type:'ready',cursor:0});
+  await client.chat('', 'file-only', {attachments:[file]});
+  assert.deepEqual(ws.sent.at(-1), {type:'send',message_id:'file-only',text:'',attachments:[file]});
+  assert.deepEqual([...client.state.pending['file-only'].attachments], [file]);
+  for (const attachments of ['url', ['../../secret'], Array(9).fill(file)])
+    await assert.rejects(client.chat('', 'invalid', {attachments}), /attachment/i);
+  client.close();
+});
+
+test('file APIs authenticate headers and keep bearer credentials out of URLs', async () => {
+  const calls = [], item = {id:'f_' + 'a'.repeat(32), name:'参考.txt', size:4, mime_type:'text/plain'};
+  const {client} = harness({}, async (url, options) => {
+    calls.push({url, options});
+    return {ok:true, json:async()=>item, blob:async()=>({bytes:'test'})};
+  });
+  await client.ready;
+  const file = {name:'参考.txt', size:4};
+  assert.equal((await client.upload(file)).id, item.id);
+  assert.equal((await client.download(item)).name, '参考.txt');
+  assert.equal(calls[0].options.headers['X-File-Name'], encodeURIComponent(file.name));
+  for (const call of calls) {
+    assert.equal(call.options.headers.Authorization, 'Bearer valid-token');
+    assert.ok(!call.url.includes('valid-token') && !call.url.includes('?'));
+  }
   client.close();
 });
 

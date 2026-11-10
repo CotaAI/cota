@@ -10,5 +10,6 @@ def message_record(session_id, event):
     return {'type': 'message', 'session_id': session_id, 'event_id': event['event_id'],
             'sequence': event['sequence'], 'timestamp': event['timestamp'], 'role': 'user' if event['type'] == 'user_utter' else 'bot',
             'text': text, 'message_id': metadata.get('message_id'),
+            **({'attachments': payload['attachments']} if payload.get('attachments') else {}),
             **({key: metadata[key] for key in ('sender_id', 'sender_name', 'mentioned', 'reply_to')
                 if key in metadata} if metadata.get('mode') == 'group' else {})}

@@ -5,7 +5,8 @@ artifact before the worker proceeds. Policy guidance is separate from user text;
 Environment authorization and backend operations enforce native tool access.
 """
 import asyncio
-from copy import copy
+from copy import copy, deepcopy
+import base64
 import json
 import logging
 import time
@@ -120,6 +121,18 @@ class PiAgentRuntime:
         return (self._tool_registry.is_allowed('http_request')
                 and self.agent.get_tool_registry().is_allowed('http_request'))
 
+    def _files_allowed(self):
+        event = self.dst.latest_user_event
+        channel = event.metadata.get('channel') if event is not None else None
+        return (self._deploy == 'personal' and self._environment.type == 'machine'
+                and getattr(self.agent, '_attachment_channels', {}).get(channel, True)
+                and getattr(self.agent, 'deploy', DEFAULT_DEPLOY) == self._deploy
+                and getattr(self.agent, 'environment', ExecutionEnvironment()) == self._environment
+                and (getattr(self.agent, 'config_path', None) or getattr(self.agent, '_files', None))
+                and getattr(self.agent, 'files', None) is not None
+                and self._tool_registry.is_allowed('send_files')
+                and self.agent.get_tool_registry().is_allowed('send_files'))
+
     def _get_tools_schema(self):
         return [tool.to_openai_schema() for tool in self._allowed_tools()]
 
@@ -138,6 +151,7 @@ class PiAgentRuntime:
                 else 'Not selected by environment.shell')
             add(name, 'pi', name in self._native_tools, reason)
         add('http_request', 'cota', self._http_allowed(), 'Disabled by tools policy')
+        add('send_files', 'cota', bool(self._files_allowed()), 'Requires personal machine execution, tool permission and a file-capable channel')
         allowed = {tool.name for tool in self._allowed_tools()}
         for tool in sorted(self._tool_registry.list_tools(), key=lambda tool: tool.name):
             add(tool.name, 'application', tool.name in allowed,
@@ -173,6 +187,7 @@ class PiAgentRuntime:
                          if (self._group or self.group_trigger) and self._store else None)
             message = {'sender': 'bot', 'sender_id': 'default_bot', 'text': event.text,
                        'metadata': event.metadata, 'event_id': event.event_id,
+                       **({'attachments': event.payload['attachments']} if event.payload.get('attachments') else {}),
                        'sequence': committed['sequence'] if committed else event.sequence, 'session_id': self.session_id}
             try:
                 await self._channel_callback(message)
@@ -235,10 +250,12 @@ class PiAgentRuntime:
         if len(set(names)) != len(names) or set(names) != self._native_tools:
             raise ValueError('Pi native tools do not match the bound execution environment')
         extension_tools = payload.get('extensionTools', [])
-        if [item['function']['name'] for item in extension_tools] != ['http_request']:
-            raise ValueError('Pi extension tools must contain only http_request')
-        if self._http_allowed():
-            tools += extension_tools
+        names = [item['function']['name'] for item in extension_tools]
+        if len(names) != len(set(names)) or set(names) - {'http_request', 'send_files'}:
+            raise ValueError('Unexpected Pi extension tool definitions')
+        tools += [tool for tool in extension_tools if
+                  tool['function']['name'] == 'http_request' and self._http_allowed()
+                  or tool['function']['name'] == 'send_files' and self._files_allowed()]
         tools += native_tools
         from cota.policy.base import digest
         self._trace.policy = {
@@ -310,7 +327,8 @@ class PiAgentRuntime:
             allowed = (getattr(self.agent, 'deploy', DEFAULT_DEPLOY) == self._deploy
                        and current == self._environment
                        and (payload['name'] in self._native_tools
-                            or payload['name'] == 'http_request' and self._http_allowed()))
+                            or payload['name'] == 'http_request' and self._http_allowed()
+                            or payload['name'] == 'send_files' and self._files_allowed()))
             return {'allowed': allowed, 'reason': 'Tool permission or execution binding is unavailable or changed'}
         if method == 'tool_result':
             result = payload['result']
@@ -323,9 +341,25 @@ class PiAgentRuntime:
             return {}
         if method == 'prepare':
             return await self._prepare(payload)
+        if method == 'send_files':
+            self._trace.require_started(payload['toolCallId'], 'send_files', payload['args'])
+            try:
+                if not self._files_allowed():
+                    raise ValueError('File delivery is unavailable for this deployment or tool policy')
+                references = await asyncio.to_thread(self.agent.files.import_paths, self.session_id,
+                    self.dst.user_id, self._environment.workspace, payload['args']['paths'])
+            except (OSError, ValueError) as error:
+                return {'content': [{'type': 'text', 'text': str(error)}], 'details': {}, 'isError': True}
+            self.dst.append_event(BotUtterEvent(payload['args'].get('text', ''), attachments=references,
+                metadata={'source': 'tool'}, tool_event_id=self._trace.tool_source(payload['toolCallId']),
+                run_id=self.dst.execution['run_id']))
+            await self._checkpoint()
+            return {'content': [{'type': 'text', 'text': json.dumps({'attachments': references,
+                'status': 'committed'}, ensure_ascii=False)}], 'details': {}, 'isError': False}
         if method == 'model':
             try:
-                response = await self._call_llm(to_openai(payload['messages'], payload['systemPrompt']), payload['tools'])
+                messages = await self._attachment_context(payload['messages'])
+                response = await self._call_llm(to_openai(messages, payload['systemPrompt']), payload['tools'])
             except Exception as error:
                 if self._checkpoint_failed:
                     raise
@@ -357,6 +391,43 @@ class PiAgentRuntime:
             await self._trace.link_model_debug(recorded)
             return acknowledgement
         raise ValueError(f'Unknown Pi request: {method}')
+
+    async def _attachment_context(self, messages):
+        """Hydrate current scoped files at the provider boundary, never in Event/DST.
+
+        PDFs remain references. Image-capable providers receive bounded image
+        inputs; personal tools can read the scoped local copy when appropriate.
+        """
+        result = deepcopy(messages)
+        vision = getattr(self.agent.llm_instance(self.llm), 'supports_images', False) is True
+        for message in result:
+            if message.get('role') != 'user' or not message.get('cotaAttachments'):
+                continue
+            blocks = [{'type': 'text', 'text': message['content']}] if isinstance(message['content'], str) else message['content']
+            for item in message['cotaAttachments']:
+                try:
+                    path = await asyncio.to_thread(self.agent.files.resolve, self.session_id, item['id'])
+                    if (vision and item['mime_type'] in ('image/png', 'image/jpeg', 'image/webp', 'image/gif')
+                            and item['size'] <= 2 * 1024 * 1024):
+                        value = await asyncio.to_thread(path.read_bytes)
+                        blocks.append({'type': 'image', 'mimeType': item['mime_type'],
+                                       'data': base64.b64encode(value).decode()})
+                    else:
+                        if item['mime_type'].startswith('image/'):
+                            note = ('Image exceeds automatic model-input limit of 2 MiB; process it with appropriate image tools before interpretation.'
+                                    if item['size'] > 2 * 1024 * 1024 else
+                                    'Selected model is not configured for image input; use an appropriate vision tool before interpretation.')
+                        else:
+                            note = 'File contents have not been parsed; use appropriate tools before claiming to understand this file.'
+                        info = {'attachment_id': item['id'], 'name': item['name'], 'note': note}
+                        if self._environment.type == 'machine':
+                            info['local_copy'] = str(path)
+                        blocks.append({'type': 'text', 'text': json.dumps(info, ensure_ascii=False)})
+                except (OSError, AttributeError):
+                    blocks.append({'type': 'text', 'text': f"Attachment unavailable: {item['id']}"})
+            message['content'] = (blocks if any(b.get('type') == 'image' for b in blocks)
+                                  else '\n'.join(b.get('text', '') for b in blocks))
+        return result
 
     @staticmethod
     def _pi_tool_result_value(name, result):

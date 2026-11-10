@@ -22,6 +22,7 @@ class BaseChannel(ABC):
     name: str = "base"  # Channel 标识符
     dialogue_modes = frozenset({'direct', 'group'})
     durable_delivery = False
+    supports_attachments = False
     startup_timeout = 5.0
 
     def __init__(self, config: Any, bus: MessageBus):
@@ -117,6 +118,8 @@ class BaseChannel(ABC):
             chat_id=str(recipient_id),
             content=text,
             metadata=message.get("metadata", {}),
+            attachments=message.get('attachments', []),
+            event_id=message.get('event_id'), session_id=message.get('session_id', str(recipient_id)),
         )
         await self.send(out)
 

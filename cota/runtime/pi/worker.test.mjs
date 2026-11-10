@@ -130,7 +130,7 @@ test('native HTTP tool is validated, authorized, recorded and returned to the ne
   const h = httpHarness();
   const result = await runAgent({messages: [user], maxIterations: 3}, h.rpc);
   assert.equal(result.status, 'completed');
-  assert.deepEqual(h.preparations[0].extensionTools.map(schema => schema.function.name), ['http_request']);
+  assert.deepEqual(h.preparations[0].extensionTools.map(schema => schema.function.name), ['http_request', 'send_files']);
   assert.equal(h.contexts[0].tools[0].function.parameters.properties.timeout_seconds.maximum, 60);
   assert.equal(h.authorizations.length, 1);
   assert.deepEqual(h.authorizations[0], {toolCallId: 'http-1', name: 'http_request', args: {url: 'http://127.0.0.1'}});

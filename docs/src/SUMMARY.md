@@ -23,6 +23,7 @@
 - [一次对话的执行流程](concepts/execution-flow.md)
 - [Pi Core 与桥接](concepts/pi-runtime.md)
 - [消息与身份](concepts/message.md)
+- [会话附件](concepts/attachments.md)
 - [DST、事件、Store 与 Trace](concepts/dst.md)
 - [模型与 Knowledge](concepts/llm.md)
 - [用户记忆](components/user_memory.md)

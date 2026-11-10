@@ -28,6 +28,18 @@ function setup() {
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test('reply links preserve text and allow only explicit HTTP or same-origin paths', () => {
+  const {api} = setup();
+  assert.equal(typeof api.messageParts, 'function');
+  const parts = api.messageParts('绘本：[PDF](/books/token/book.pdf) 和 [说明](https://example.com/print)\n<b>原样</b>');
+  assert.equal(parts.filter(part => part.href).length, 2);
+  assert.equal(parts.find(part => part.label === 'PDF').href, '/books/token/book.pdf');
+  assert.ok(parts.some(part => part.text?.includes('<b>原样</b>')));
+  for (const url of ['javascript:alert(1)', 'data:text/html,bad', 'file:///etc/passwd', '//evil.com/a', '/\\evil.com/a', 'https://u:p@example.com/a']) {
+    assert.equal(api.messageParts(`[bad](${url})`).filter(part => part.href).length, 0);
+  }
+});
+
 test('late conversation fetch cannot replace the current room', async () => {
   const {app,requests,clients} = setup();
   const first=app.open('old'); const second=app.open('new');

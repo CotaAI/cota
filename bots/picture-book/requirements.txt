@@ -1,0 +1,4 @@
+# Optional production dependencies for this Bot only; Cota core does not need them.
+Pillow>=10,<13
+reportlab>=4,<5
+pypdf>=5,<7

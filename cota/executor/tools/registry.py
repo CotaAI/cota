@@ -121,7 +121,7 @@ class ToolRegistry:
     def _check_registration(self, name, parameters):
         if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', name):
             raise ValueError('Invalid tool name')
-        if name in NATIVE_TOOLS | {'http_request'}:
+        if name in NATIVE_TOOLS | {'http_request', 'send_files'}:
             raise ValueError(f'Tool name {name} is reserved for Pi tools')
         if name in self._tools:
             raise ValueError(f'Tool {name} is already registered')
@@ -132,7 +132,7 @@ class ToolRegistry:
         """Check references after application setup, before starting a model run."""
         if self._policy is not None:
             referenced = (self._policy.allow or set()) | self._policy.deny
-            unknown = referenced - (self._tools.keys() | {'http_request'})
+            unknown = referenced - (self._tools.keys() | {'http_request', 'send_files'})
             if unknown:
                 raise ValueError(f'Unknown configured tools: {", ".join(sorted(unknown))}')
 

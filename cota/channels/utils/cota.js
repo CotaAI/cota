@@ -158,7 +158,7 @@ class CotaClient {
     // Existing guest sessions may still have string-valued pending messages.
     const data = typeof pending === 'string' ? {text: pending} : pending;
     const frame = {type: 'send', message_id, text: data.text};
-    for (const key of ['mentioned', 'reply_to'])
+    for (const key of ['mentioned', 'reply_to', 'attachments'])
       if (Object.hasOwn(data, key)) frame[key] = data[key];
     socket.send(JSON.stringify(frame));
   }
@@ -167,6 +167,13 @@ class CotaClient {
     if (options === null || typeof options !== 'object' || Array.isArray(options))
       throw new TypeError('chat options must be an object');
     const pending = {text};
+    if (Object.hasOwn(options, 'attachments')) {
+      if (!Array.isArray(options.attachments) || options.attachments.length > 8 ||
+          options.attachments.some(id => typeof id !== 'string' || !/^f_[0-9a-f]{32}$/.test(id)) ||
+          new Set(options.attachments).size !== options.attachments.length)
+        throw new TypeError('attachments must contain at most eight unique file IDs');
+      pending.attachments = [...options.attachments];
+    }
     if (Object.hasOwn(options, 'mentioned')) {
       if (typeof options.mentioned !== 'boolean') throw new TypeError('mentioned must be boolean');
       pending.mentioned = options.mentioned;
@@ -176,7 +183,7 @@ class CotaClient {
         throw new TypeError('reply_to must contain 1–255 characters');
       pending.reply_to = options.reply_to;
     }
-    if (typeof text !== 'string' || !text.trim()) return;
+    if (typeof text !== 'string' || !text.trim() && !pending.attachments?.length) return;
     if (text.length > 32768) throw new Error('Message exceeds 32768 characters');
     if (!Object.hasOwn(this.state.pending, message_id) && Object.keys(this.state.pending).length >= this.maxPending)
       throw new Error('Too many unsent messages; wait for delivery before sending more');
@@ -185,6 +192,28 @@ class CotaClient {
     if (!this.save()) throw new Error('Browser storage unavailable; your unsent message remains in this tab. Keep this tab open and retry.');
     if (this.connected) this.sendPending(message_id);
     return message_id;
+  }
+  async upload(file) {
+    await this.ready;
+    if (!file || typeof file.name !== 'string' || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 20 * 1024 * 1024)
+      throw new Error('附件必须为 1 字节至 20 MiB 的文件');
+    const response = await fetch(this.base + '/api/conversations/' + encodeURIComponent(this.state.session_id) + '/files', {
+      method:'POST', headers:{Authorization:'Bearer ' + this.state.token, 'Content-Type':'application/octet-stream',
+                            'X-File-Name':encodeURIComponent(file.name)}, body:file});
+    const value = await response.json();
+    if (this.stopped) throw new Error('会话已切换，请重新选择附件');
+    if (!response.ok) throw new Error(value.message || '附件上传失败');
+    return value;
+  }
+  async download(file) {
+    await this.ready;
+    if (!file || !/^f_[0-9a-f]{32}$/.test(file.id)) throw new Error('无效附件');
+    const response = await fetch(this.base + '/api/conversations/' + encodeURIComponent(this.state.session_id) + '/files/' + file.id,
+                                 {headers:{Authorization:'Bearer ' + this.state.token}});
+    if (!response.ok) throw new Error('附件不可用或已无访问权限');
+    const blob = await response.blob();
+    if (this.stopped) throw new Error('会话已切换，下载已取消');
+    return {blob, name:file.name};
   }
   async loadOlder(limit = 50) {
     await this.ready;

@@ -81,7 +81,7 @@ async def test_web_socket_binds_identity_and_forwards_group_intent(spoof):
     if spoof:
         service.submit.assert_not_awaited()
     else:
-        service.submit.assert_awaited_once_with('alice', 'room', 'input', 'hello', mentioned=True, reply_to='parent')
+        service.submit.assert_awaited_once_with('alice', 'room', 'input', 'hello', mentioned=True, reply_to='parent', attachments=None)
     await transport.stop()
 
 

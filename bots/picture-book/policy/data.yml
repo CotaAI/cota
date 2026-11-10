@@ -1,0 +1,64 @@
+policies:
+  - name: brief-before-production
+    steps:
+      - user: 给我家孩子做一本绘本。
+      - bot:
+          - thought: 先了解影响创作的年龄和题材，不重复追问已知信息，不急于批量绘图或固定页数。
+          - skills: [creating-childrens-picture-books]
+          - reply: 想给多大的孩子看？有没有特别喜欢的角色或想讲的主题？
+  - name: text-only
+    steps:
+      - user: 给四岁孩子写个小兔找云朵的故事，先不要画图。
+      - bot:
+          - thought: 用户只要文稿，沿用年龄与题材；选择幻想体验，不强加教育总结。不调用图像模型，不要求配置绘图账号。
+          - skills: [creating-childrens-picture-books]
+          - reply: 我先写故事和分页，让小兔在一片片变化的云朵里展开小冒险。
+  - name: sample-before-batch
+    steps:
+      - user: 故事确定了，按这个角色继续画完整本。
+      - bot:
+          - thought: 检查实际环境与角色参考；新环境先验证角色、参考图生成/编辑与一张中文样页。参考图必须传真实图片。
+          - skills: [creating-childrens-picture-books]
+          - result: 环境检查显示没有配置绘图接口。
+          - thought: 说明具体缺项，保存已完成分镜和提示词；不能声称已开始绘图或用占位图冒充成品。
+          - reply: 分镜可以继续整理。生成插图还需要在配置里补上绘图服务；已确定的角色和故事我会保留下来。
+  - name: continue-after-interruption
+    steps:
+      - user: 接着做 rabbit-cloud-v1，昨天已经画了前四页。
+      - bot:
+          - thought: 读取实际项目状态、输入/输出哈希和已确认分镜；复用有效图片。结果未知的请求先核查，不推测成功也不盲目重复扣费。
+          - skills: [creating-childrens-picture-books]
+          - result: 前三页校验成功，第四页生成记录为 started，但没有本地图片。
+          - thought: 保留前三页，明确第四页结果未知并请求核查；其余可继续准备，不把未知写成失败或完成。
+          - reply: 前三页已保存。第四页的请求结果还不能确认，需要先核查生成记录，避免重复生成；我先保留现有成果。
+  - name: targeted-revision
+    steps:
+      - user: 只把第五页的红帽子改成蓝帽子，其它页和文字都不要动。
+      - bot:
+          - thought: 保存用户确认内容；使用第五页已有图和角色参考做编辑，输出新版本，比较实际修改。更新清单后只重做受影响审校，并重新渲染完整成书。
+          - skills: [creating-childrens-picture-books]
+          - result: 编辑图帽子已变蓝，但脸型也发生变化。
+          - thought: 修改没有满足要求，不能当作完成交付。修复角色一致性后再验收，不重新随机生成整本。
+          - reply: 帽子的颜色已经改了，但角色外形还需要修正到与前面一致。我会保留其它页面和文字。
+  - name: validated-delivery
+    steps:
+      - user: 做好了就把可以打印的 PDF 发给我。
+      - bot:
+          - thought: 核对最终内容、页序、全部页面渲染和审校证据；validate 成功后通过 deliverables 取得文件清单，再调用 send_files 交付附件。不能因为脚本成功就宣称实物试印完成。
+          - skills: [creating-childrens-picture-books]
+          - result: 数字包验证通过，实物打印未测试；文件清单包含实际 PDF、预览和说明。
+          - thought: 简洁给出文件、尺寸、PDF面数和必要打印提示；附件来自本次实际清单，不照抄案例或构造链接。
+          - reply: 绘本的数字版已检查好。下面是 PDF、全书预览和打印说明；按实际大小打印，第一次请先试印确认翻转方向。
+  - name: respectful-child-guidance
+    steps:
+      - user: 写个故事吓唬孩子，让他以后都不敢哭。
+      - bot:
+          - thought: 保留帮助孩子调节情绪的目标，避免羞辱与恐吓。不承诺绘本能消除哭泣，提供适龄的替代故事方向。
+          - skills: [creating-childrens-picture-books]
+          - reply: 可以写成小熊难过时学会表达、找人陪伴的故事。哭也可以被接纳，同时慢慢找到舒服一点的办法。
+  - name: cancel-production
+    steps:
+      - user: 先停下来，保留已有的，不要继续画了。
+      - bot:
+          - thought: 尊重停止后续制作的指令，不启动新的付费请求；当前输入在执行队列中处理，不声称已经即时撤销供应商请求。记录现有文件与未完成项。
+          - reply: 好的，接下来不再启动绘图。现有故事、分镜和已保存的图片会保留，之后可以从这些成果继续。

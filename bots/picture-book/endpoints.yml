@@ -1,0 +1,34 @@
+base_store:
+  type: sql
+  dialect: sqlite
+  db: workspace/sessions.db
+
+# 主对话模型需要工具调用能力；可以是纯文本模型，视觉审校可由下面的独立模型完成。
+llms:
+  default:
+    type: openai
+    # 只有主模型支持真实图片输入、且希望直接看上传图片时才设为 true。
+    # 不启用时可由 picture_book.vision 通过脚本审校图片。
+    vision: false
+    key: ""
+    apibase: ""
+    model: ""
+  # 可选 evaluator 与 weather 相同：不添加时评测使用 default。
+
+# 本 Bot 的脚本读取以下配置；它们不是 Cota 通用文本 LLM 配置。
+# 不设置环境变量；key/apibase/model 直接填入服务商提供的实际值。
+picture_book:
+  image:
+    key: ""
+    apibase: ""
+    model: ""
+    size: 1536x1024
+    # 有些兼容服务需要 response_format: b64_json；GPT Image 一类接口可直接返回 base64。
+    # response_format: b64_json
+  vision:
+    key: ""
+    apibase: ""
+    model: ""
+  # 可选：可嵌入的中文 TrueType 字体文件，绝对路径或相对 Bot 目录。
+  # 不随 Bot 分发第三方字体。macOS 可自动发现系统宋体，其他环境建议明确填写。
+  # font: /path/to/chinese-font.ttf

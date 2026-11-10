@@ -48,13 +48,17 @@ class WebService:
         await self.authorize(user_id, session_id)
         return await self.application.conversation_summary(session_id, after=after, exclude_sender=user_id)
 
-    async def submit(self, user_id, session_id, message_id=None, text=None, *, mentioned=False, reply_to=None):
+    async def submit(self, user_id, session_id, message_id=None, text=None, *, mentioned=False, reply_to=None,
+                     attachments=None):
         await self.authorize(user_id, session_id)
-        if not isinstance(text, str) or not text.strip() or len(text) > 32768:
-            raise ValueError('text must contain 1–32768 characters')
+        references = (await asyncio.to_thread(self.agent.files.references, session_id, attachments)
+                      if attachments is not None else [])
+        if (not isinstance(text, str) or len(text) > 32768 or not text.strip() and not references):
+            raise ValueError('Provide text (up to 32768 characters) or attachments')
         inbound = InboundMessage(channel='web', sender_id=user_id, chat_id=session_id,
                                  session_key_override=session_id, content=text, message_id=message_id,
                                  mentioned=mentioned, reply_to=reply_to,
+                                 attachments=references,
                                  conversation_type=(getattr(self.agent, 'dialogue', None) or {}).get('mode', 'direct'))
         async def input_committed(event):
             if self.transport:

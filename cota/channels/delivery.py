@@ -117,11 +117,16 @@ class DeliveryDispatcher:
             message = OutboundMessage(
                 channel=row['channel'], chat_id=row['chat_id'], content=event['payload']['text'],
                 metadata=event['payload'].get('metadata') or {},
+                attachments=event['payload'].get('attachments', []),
                 event_id=eid, sequence=event['sequence'], session_id=sid)
+            if message.attachments and not getattr(channel, 'supports_attachments', False):
+                from cota.files import UnsupportedAttachments
+                raise UnsupportedAttachments('Channel does not support attachments')
             await asyncio.wait_for(channel.send(message), self.send_timeout)
         except Exception as error:
             error_type = type(error).__name__
-            if row['attempts'] < self.max_attempts:
+            from cota.files import UnsupportedAttachments
+            if row['attempts'] < self.max_attempts and not isinstance(error, UnsupportedAttachments):
                 delay = min(self.max_retry_delay, self.retry_delay * 2 ** min(row['attempts'] - 1, 30))
                 retry_at = time.time() + delay
             logger.warning('Reply {} delivery {} ({})', eid,

@@ -72,6 +72,12 @@ class ChannelRunner:
             self.channel_manager = ChannelManager(self.config, self.message_bus, store=self.store,
                 registry=self.channel_registry, receive=self.message_receiver,
                 dialogue_mode=(getattr(self.agent, 'dialogue', None) or {}).get('mode', 'direct'))
+            for channel in self.channel_manager.channels.values():
+                channel.files = (getattr(self.agent, '_files', None) or
+                                 (getattr(self.agent, 'files', None) if getattr(self.agent, 'config_path', None) else None))
+            if self.agent is not None:
+                self.agent._attachment_channels = {name: channel.supports_attachments
+                    for name, channel in self.channel_manager.channels.items()}
         return self.channel_manager
 
     async def start(self, configure: Optional[Callable[[ChannelManager], Awaitable[None]]] = None) -> None:

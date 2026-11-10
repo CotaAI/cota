@@ -20,13 +20,16 @@ _WorksheetDumper.add_representer(str, _string)
 def export_worksheet(dst):
     steps = []
     for event in dst.events:
-        if event.type == 'user_utter' and event.text.strip():
-            steps.append({'user': event.text})
-        elif event.type == 'bot_utter' and event.text.strip():
+        text = event.text
+        if event.payload.get('attachments'):
+            text = (text + '\n' if text else '') + '[附件：' + '、'.join(a['name'] for a in event.payload['attachments']) + ']'
+        if event.type == 'user_utter' and text.strip():
+            steps.append({'user': text})
+        elif event.type == 'bot_utter' and text.strip():
             if steps and 'bot' in steps[-1]:
-                steps[-1]['bot'].append({'reply': event.text})
+                steps[-1]['bot'].append({'reply': text})
             else:
-                steps.append({'bot': [{'reply': event.text}]})
+                steps.append({'bot': [{'reply': text}]})
     # Observed reads are not prescribed business behavior, and model reasoning
     # is never exported as an operator-authored thought. Tool outputs are not
     # automatically attributed to a Skill or summarized as an authored result.
