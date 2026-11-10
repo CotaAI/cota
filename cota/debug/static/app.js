@@ -11,15 +11,6 @@ export function debugRequestURL(path, base, sessionId = null) {
   return url;
 }
 
-export function modelRequestSummary(record, now = Date.now() / 1000) {
-  const seconds = record.status === 'running' ? Math.max(0, now - record.started_at) : record.duration_ms / 1000;
-  const duration = Number.isFinite(seconds) ? `${seconds.toFixed(1)}s` : '';
-  const usage = record.usage;
-  return [record.purpose || 'model', record.status === 'running' ? 'waiting for model' : record.status, duration,
-    usage && `input ${usage.prompt_tokens ?? '?'} · cache ${usage.cached_tokens ?? '?'} · output ${usage.completion_tokens ?? '?'} · reasoning ${usage.reasoning_tokens ?? '?'}`,
-  ].filter(Boolean).join(' · ');
-}
-
 function boot() {
   const $ = id => document.getElementById(id);
   const headers = [], byID = new Map();
@@ -27,7 +18,10 @@ function boot() {
   let visibleCount = 100, busy = false, pending = null, paused = false, timer;
   let copyValue = null, stateSource = 'stored', detailVersion = 0;
   let selectedSession = null, multiSession = false, sessionsLoaded = false, sessionCursor = null;
-  let sessionVersion = 0, selectedRequest = null, requestRecord = null, requestStatusNode = null;
+  let sessionVersion = 0;
+  const typeClasses = {user_utter:'type-user', bot_utter:'type-bot', run_started:'type-run',
+    run_finished:'type-run', tool_started:'type-tool', tool_result:'type-tool',
+    user_context_updated:'type-meta', context_compaction:'type-meta'};
   const element = (tag, text, className) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -213,7 +207,6 @@ function boot() {
   }
 
   function selectModelDebug(requestId = null) {
-    selectedRequest = requestId;
     const version = ++detailVersion;
     exclusive(async () => {
       const detail = requestId !== null;
@@ -232,19 +225,11 @@ function boot() {
       const body = $('detail-body');
       body.append(element('div', 'Store 独立诊断记录 · 仅 Debug 采集，不属于 Events，不参与 DST 恢复。', 'source-note'));
       if (detail) {
-        requestRecord = data;
-        requestStatusNode = element('div', modelRequestSummary(data), 'meta');
-        body.append(button('返回请求列表', () => selectModelDebug()),
-          button('刷新请求', () => selectModelDebug(requestId)),
-          requestStatusNode);
-        if (data.request_size) body.append(section('Request size · characters / image bytes', data.request_size, true));
-        const budget = data.preparation?.context_budget;
-        if (budget) body.append(section('Context budget · Pi estimates, not provider usage', budget, true));
-        body.append(jsonView(data));
+        body.append(button('返回请求列表', () => selectModelDebug()), jsonView(data));
       } else {
         body.append(button('刷新请求', () => selectModelDebug()), element('div', '最近 100 次模型调用（包括尚未结束的请求）', 'meta'));
         for (const row of data.records) body.append(button(
-          `${modelRequestSummary(row)} · ${row.request_id}`, () => selectModelDebug(row.request_id), 'entry'));
+          `${row.purpose} · ${row.status} · ${row.request_id}`, () => selectModelDebug(row.request_id), 'entry'));
         if (!data.records.length) body.append(notice('没有模型请求详情。非 Debug 模式不采集完整 prompt。'));
       }
     });
@@ -288,20 +273,7 @@ function boot() {
     renderEvents();
     exclusive(() => showEvent(sequence, version));
   }
-  function selectDeliveries(after = 0) {
-    const version = ++detailVersion;
-    exclusive(async () => {
-      const data = await api('deliveries?after=' + after + '&limit=100');
-      if (version !== detailVersion) return;
-      setDetail('Deliveries', data);
-      $('detail-body').append(notice('只读投递状态。查询不会重发消息，也不会重新执行模型或工具。'),
-        button('从头刷新', () => selectDeliveries()), jsonView(data));
-      if (data.has_more) $('detail-body').append(button('下一页', () => selectDeliveries(data.cursor)));
-    });
-  }
   function resetSession(id) {
-    selectedRequest = null;
-    requestRecord = null; requestStatusNode = null;
     selectedSession = id;
     ++sessionVersion;
     headers.length = 0; byID.clear(); cursor = 0; selectedSequence = null; metadataRun = null;
@@ -370,15 +342,21 @@ function boot() {
     for (const event of displayed) {
       const s = event.summary;
       const failed = ['error', 'blocked', 'failed'].includes(s.status);
+      const tCls = event.type === 'bot_utter' ? (s.tool && !s.text ? 'type-tool' : 'type-bot')
+        : (typeClasses[event.type] || 'type-meta');
       const item = button('', () => selectEvent(event.sequence), 'entry' +
         (event.sequence === selectedSequence ? ' selected' : '') +
         (failed ? ' error' : '') + (['user_utter','bot_utter'].includes(event.type) ? ' message' : ''));
       const top = element('div', undefined, 'entry-top');
-      top.append(element('span', '#' + event.sequence, 'entry-seq'), element('span', event.type, 'entry-label'), element('span', s.status || (failed ? 'error' : ''), 'entry-status'));
+      top.append(element('span', '#' + event.sequence, 'entry-seq'),
+        element('span', event.type, 'entry-label ' + tCls),
+        element('span', s.status || (failed ? 'error' : ''), 'entry-status'));
       item.append(top);
-      const summary = s.text || (s.resource_kind
-        ? `${s.tool} · ${s.resource_kind}: ${s.resource_skill}` : s.skill || s.tool || s.purpose || '');
-      if (summary) item.append(element('span', summary, 'entry-sub'));
+      const sub = s.text || (s.tool
+        ? s.tool + (s.skill && s.skill !== s.tool ? ' · ' + s.skill : '')
+          + (s.resource_kind ? ' · ' + s.resource_kind + ': ' + (s.resource_skill || '') : '')
+        : s.skill || s.purpose || s.error_type || '');
+      if (sub) item.append(element('span', sub, 'entry-sub'));
       item.append(element('time', new Date(event.timestamp * 1000).toLocaleTimeString()));
       container.append(item);
     }
@@ -386,7 +364,6 @@ function boot() {
   }
   async function poll() {
     clearTimeout(timer);
-    let requestCompleted = false;
     if (!document.hidden && !paused && !busy) {
       await exclusive(async () => {
         let version = sessionVersion;
@@ -404,22 +381,11 @@ function boot() {
         for (const header of data.events) { if (!byID.has(header.event_id)) { headers.push(header); byID.set(header.event_id, header); } }
         cursor = data.after_sequence;
         $('bot-name').textContent = info.bot; $('session').textContent = info.session_id || '暂无会话';
-        $('store').textContent = info.store; $('log-path').textContent = info.log_path;
         $('cursor').textContent = `已读取至 #${cursor} / 已提交 #${info.metadata?.last_sequence || 0}`;
         $('connection').textContent = paused ? '已暂停 · 可继续查详情' : '已连接 · 增量刷新'; $('connection-dot').classList.toggle('off', paused);
         if (data.events.length) { renderEvents(); }
-        if (activeTab === 'requests' && selectedRequest && requestRecord?.status === 'running') {
-          // Poll small headers while waiting, not multi-megabyte prompt bodies.
-          const records = await api('model-debug');
-          if (version !== sessionVersion) return;
-          const row = records.records.find(r => r.request_id === selectedRequest);
-          requestCompleted = !!row && row.status !== 'running';
-          if (!requestCompleted && requestStatusNode) requestStatusNode.textContent = modelRequestSummary(requestRecord);
-        }
       }, false);
     }
-    if (activeTab === 'requests' && !paused && !busy && !document.hidden && (!selectedRequest || requestCompleted))
-      selectModelDebug(selectedRequest);
     clearTimeout(timer); timer = setTimeout(poll, 1000);
   }
   $('pause').addEventListener('click', () => {
@@ -443,7 +409,7 @@ function boot() {
     setDetail(tab === 'events' ? 'Event details' : tab, null);
     $('detail-body').append(notice('加载中…'));
     document.querySelector('.workspace').classList.toggle('single-view', tab !== 'events');
-    for (const name of ['events', 'skills', 'requests', 'dst', 'deliveries']) {
+    for (const name of ['events', 'skills', 'requests', 'dst']) {
       const node = $('tab-' + name), selected = name === tab;
       node.classList.toggle('selected', selected);
       node.setAttribute('aria-selected', String(selected));
@@ -456,9 +422,8 @@ function boot() {
     } else if (tab === 'skills') selectRunMetadata();
     else if (tab === 'requests') selectModelDebug();
     else if (tab === 'dst') selectState();
-    else selectDeliveries();
   }
-  const tabs = ['events', 'skills', 'requests', 'dst', 'deliveries'];
+  const tabs = ['events', 'skills', 'requests', 'dst'];
   for (const [index, tab] of tabs.entries()) {
     $('tab-' + tab).addEventListener('click', () => selectTab(tab));
     $('tab-' + tab).addEventListener('keydown', event => {
