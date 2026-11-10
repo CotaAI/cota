@@ -5,6 +5,7 @@ surface deliberately exposes conversation messages, never raw DST/tool data.
 """
 import asyncio
 import logging
+from inspect import isawaitable
 import os
 from pathlib import Path
 from urllib.parse import urlsplit, unquote, quote
@@ -84,9 +85,11 @@ def _cursor(request, name, default=None):
 
 
 def create_app(agent=None, config_path=None, *, channel_config=None, authenticate=None, authorize=None, access=None,
-               channel_registry=None):
+               channel_registry=None, session_api_authorize=None):
     if agent is None:
         raise ValueError('agent is required; load it with Agent.load_from_path before create_app')
+    if session_api_authorize is not None and not callable(session_api_authorize):
+        raise ValueError('session_api_authorize must be an application authorization callback')
     config_path = config_path or getattr(agent, 'config_path', None) or './'
     channels = _channels(channel_config)
     web_config = channels['web']
@@ -274,79 +277,90 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
         from cota import __version__
         return response.json({'version': __version__})
 
-    # ── Generic session / event read API ─────────────────────────────────
+    # Management reads are separate from chat membership and disabled by default.
+    if session_api_authorize is not None:
+        @app.middleware('request')
+        async def authorize_session_reads(request):
+            if request.path == '/api/sessions' or request.path.startswith('/api/sessions/'):
+                allowed = session_api_authorize(request)
+                if isawaitable(allowed):
+                    allowed = await allowed
+                if allowed is not True:
+                    raise PermissionError('Management access denied')
 
-    @app.get('/api/sessions')
-    async def list_sessions(request):
-        return response.json(await agent.store.session_page(
-            after=request.args.get('after'), limit=_cursor(request, 'limit', 100)))
+        # ── Generic session / event read API ─────────────────────────────────
 
-    @app.get('/api/sessions/<session_id>')
-    async def get_session(request, session_id):
-        session_id = unquote(session_id, errors='strict')
-        metadata = await agent.store.session_metadata(session_id)
-        if metadata is None:
-            return response.json({'error': 'not_found'}, status=404)
-        return response.json(metadata)
+        @app.get('/api/sessions')
+        async def list_sessions(request):
+            return response.json(await agent.store.session_page(
+                after=request.args.get('after'), limit=_cursor(request, 'limit', 100)))
 
-    @app.get('/api/sessions/<session_id>/events')
-    async def list_session_events(request, session_id):
-        session_id = unquote(session_id, errors='strict')
-        after = _cursor(request, 'after', 0)
-        limit = _cursor(request, 'limit', 100)
-        headers = await agent.store.event_headers(session_id, after_sequence=after, limit=limit)
-        return response.json({'events': headers,
-                              'cursor': headers[-1]['sequence'] if headers else after,
-                              'has_more': len(headers) == limit})
+        @app.get('/api/sessions/<session_id>')
+        async def get_session(request, session_id):
+            session_id = unquote(session_id, errors='strict')
+            metadata = await agent.store.session_metadata(session_id)
+            if metadata is None:
+                return response.json({'error': 'not_found'}, status=404)
+            return response.json(metadata)
 
-    @app.get('/api/sessions/<session_id>/events/<sequence>')
-    async def get_session_event(request, session_id, sequence):
-        session_id = unquote(session_id, errors='strict')
-        if not sequence.isdecimal() or not sequence:
-            raise ValueError('sequence must be a positive integer')
-        sequence = int(sequence)
-        if sequence < 1:
-            raise ValueError('sequence must be a positive integer')
-        events = await agent.store.events(session_id, after_sequence=sequence - 1, limit=1)
-        if not events or events[0]['sequence'] != sequence:
-            return response.json({'error': 'not_found'}, status=404)
-        return response.json(events[0])
+        @app.get('/api/sessions/<session_id>/events')
+        async def list_session_events(request, session_id):
+            session_id = unquote(session_id, errors='strict')
+            after = _cursor(request, 'after', 0)
+            limit = _cursor(request, 'limit', 100)
+            headers = await agent.store.event_headers(session_id, after_sequence=after, limit=limit)
+            return response.json({'events': headers,
+                                  'cursor': headers[-1]['sequence'] if headers else after,
+                                  'has_more': len(headers) == limit})
 
-    @app.get('/api/sessions/<session_id>/history')
-    async def session_history(request, session_id):
-        session_id = unquote(session_id, errors='strict')
-        limit = _cursor(request, 'limit', 100)
-        messages = await agent.store.history(
-            session_id, include_execution='include_execution' in request.args,
-            offset=_cursor(request, 'offset', 0), limit=limit)
-        return response.json({'messages': messages, 'has_more': len(messages) == limit})
+        @app.get('/api/sessions/<session_id>/events/<sequence>')
+        async def get_session_event(request, session_id, sequence):
+            session_id = unquote(session_id, errors='strict')
+            if not sequence.isdecimal() or not sequence:
+                raise ValueError('sequence must be a positive integer')
+            sequence = int(sequence)
+            if sequence < 1:
+                raise ValueError('sequence must be a positive integer')
+            events = await agent.store.events(session_id, after_sequence=sequence - 1, limit=1)
+            if not events or events[0]['sequence'] != sequence:
+                return response.json({'error': 'not_found'}, status=404)
+            return response.json(events[0])
 
-    @app.get('/api/sessions/<session_id>/runs/<run_id>')
-    async def get_session_run(request, session_id, run_id):
-        session_id = unquote(session_id, errors='strict')
-        metadata = await agent.store.run_metadata(session_id, run_id)
-        if metadata is None:
-            return response.json({'error': 'not_found'}, status=404)
-        return response.json({'run_id': run_id, **metadata})
+        @app.get('/api/sessions/<session_id>/history')
+        async def session_history(request, session_id):
+            session_id = unquote(session_id, errors='strict')
+            limit = _cursor(request, 'limit', 100)
+            messages = await agent.store.history(
+                session_id, include_execution='include_execution' in request.args,
+                offset=_cursor(request, 'offset', 0), limit=limit)
+            return response.json({'messages': messages, 'has_more': len(messages) == limit})
 
-    @app.get('/api/sessions/<session_id>/runs/<run_id>/trace')
-    async def get_session_trace(request, session_id, run_id):
-        session_id = unquote(session_id, errors='strict')
-        return response.json(await agent.store.trace(session_id, run_id))
+        @app.get('/api/sessions/<session_id>/runs/<run_id>')
+        async def get_session_run(request, session_id, run_id):
+            session_id = unquote(session_id, errors='strict')
+            metadata = await agent.store.run_metadata(session_id, run_id)
+            if metadata is None:
+                return response.json({'error': 'not_found'}, status=404)
+            return response.json({'run_id': run_id, **metadata})
 
-    @app.get('/api/sessions/<session_id>/export')
-    async def export_session_data(request, session_id):
-        session_id = unquote(session_id, errors='strict')
-        dst = await agent.store.load(session_id, agent=agent)
-        if dst is None:
-            return response.json({'error': 'not_found'}, status=404)
-        if not dst.events:
-            return response.json({'error': 'empty_session'}, status=400)
-        from cota.annotation_files import export_worksheet, worksheet_text
-        document = export_worksheet(dst)
-        if request.args.get('format') == 'yaml':
-            return response.text(worksheet_text(document), content_type='text/yaml; charset=utf-8')
-        return response.json(document)
+        @app.get('/api/sessions/<session_id>/runs/<run_id>/trace')
+        async def get_session_trace(request, session_id, run_id):
+            session_id = unquote(session_id, errors='strict')
+            return response.json(await agent.store.trace(session_id, run_id))
+
+        @app.get('/api/sessions/<session_id>/export')
+        async def export_session_data(request, session_id):
+            session_id = unquote(session_id, errors='strict')
+            dst = await agent.store.load(session_id, agent=agent)
+            if dst is None:
+                return response.json({'error': 'not_found'}, status=404)
+            if not dst.events:
+                return response.json({'error': 'empty_session'}, status=400)
+            from cota.annotation_files import export_worksheet, worksheet_text
+            document = export_worksheet(dst)
+            if request.args.get('format') == 'yaml':
+                return response.text(worksheet_text(document), content_type='text/yaml; charset=utf-8')
+            return response.json(document)
 
     if service is None:
         return app

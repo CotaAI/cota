@@ -65,6 +65,33 @@ cota run --config ./bots/weather --chat-app --host 127.0.0.1 --port 5005
 
 仅使用核心 Web API 且没有配置外围身份适配器时，仍可使用轻量的 GuestAccess：`POST /api/guests` 签发 30 天访客凭据，`POST /api/conversations` 签发绑定该用户的私有会话 ID，签名密钥保存在 `.cota/web.key`，不需要应用数据表。它不支持群聊或会话列表，与配套应用的 ChatAccess 是两种独立选择。密钥不应放进分享的 Bot 包。
 
+## 管理与回放 API
+
+普通聊天接口只返回经过会话授权的消息。读取完整 Events、工具结果、运行 Trace 或导出标注文件的 `/api/sessions` 系列接口属于管理能力，默认不注册。外围应用需要时，在组合服务时显式提供 `session_api_authorize`：
+
+```python
+async def authorize_management(request):
+    # 使用外围应用已有的管理身份/权限检查，不与普通聊天会话权限混用。
+    return await management.can_inspect_bot(request)
+
+app = create_app(agent, session_api_authorize=authorize_management)
+```
+
+`management` 是外围应用服务。回调接收当前 HTTP 请求，可同步或异步返回；只有明确返回 `True` 才放行，False、None 和其他值均返回 403。Cota 不新增管理员账号、登录或凭证存储。未传入回调时以下路径返回 404；传入后每次读取都经过外围授权。
+
+| GET 路径 | 内容 |
+| --- | --- |
+| `/api/sessions` | Store 会话分页 |
+| `/api/sessions/{session_id}` | 会话元数据 |
+| `/api/sessions/{session_id}/events` | 事件头分页，支持 after / limit |
+| `/api/sessions/{session_id}/events/{sequence}` | 原始事件 JSON |
+| `/api/sessions/{session_id}/history` | 历史消息，支持 offset / limit |
+| `/api/sessions/{session_id}/runs/{run_id}` | 运行目录元数据 |
+| `/api/sessions/{session_id}/runs/{run_id}/trace` | 运行 Trace |
+| `/api/sessions/{session_id}/export` | 对话标注文件；format=yaml 返回 YAML |
+
+这些只读接口不会执行模型、重放工具或修改会话。会话、事件和运行 ID 在 URL 中须按路径段编码。
+
 ## 数据与输入状态
 
 核心 Store 不创建或使用 `web_credentials`、`web_conversations`、`web_inputs`。配套聊天应用的元数据位于独立应用数据库，不是 Store 的替代表。已有数据库中的旧表不会被自动删除。Store 的 deliveries 表只承接渠道回复投递，不管理账号、会话权限或输入去重；Web 本身不创建投递记录。

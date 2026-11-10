@@ -42,6 +42,8 @@ Pi 只持有本轮暂态上下文。每次 `prepare` 都重新加入当前 syste
 
 每次模型请求前，Node 适配层复用 Pi 的 `estimateTokens`、`shouldCompact`、`findCutPoint` 和 `compact`，结合实际供应商 usage 检查 token 预算。图片采用 Pi 的独立估算，不按 Base64 字符数计算；工具定义也计入预算。usage 推导预算会保守预留当前 system/工具大小，以覆盖 Policy 等指令变化，可能提前压缩，不代表精确计费。超过模型容量减预留 token 的阈值时，Pi 选择安全切分点并生成摘要，支持在同一个用户任务中切分，保留最近的工具调用与结果配对。摘要请求通过 Cota 现有模型适配器发出，输出最多2000 token且不超过预留预算；摘要输入本身过大时在调用供应商前拒绝。
 
+Cota 同时检查序列化体积（默认 32 MiB，可用 `dialogue.compaction.max_request_bytes` 配置），包括 Base64 图片和工具定义。体积超限时仍由 Pi 选择安全切点和生成摘要；按需降低其最近 token 保留目标，让最近完整工具批次留在字节预算内。这不改变图片的 token 估算。
+
 Cota 验证替换范围是当前上下文的准确前缀，保存 `context_compaction` 并提交 Store，再从 DST 投影重新准备 Policy 和上下文。原始事件不删除；无须 AgentSession 或 Pi 会话文件。空摘要、截断、取消、提交失败时不继续模型/工具执行；无法缩减的单条输入或最近工具批次明确报错。旧摘要前的 usage 不用于新的上下文预算。模型容量优先来自 `endpoints.yml` 的 `context_window`，其次是 Pi 内置目录；未知型号使用标记为 fallback 的 65,536 token 运行预算，部署者可按供应商确认值覆盖。
 
 实现入口：`cota/processor.py`、`cota/runtime/pi_runtime.py`、`cota/runtime/pi/engine.mjs`、`cota/runtime/pi_trace.py`。

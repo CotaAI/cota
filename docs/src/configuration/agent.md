@@ -43,9 +43,12 @@ policy:
 | `dialogue.run_timeout_seconds` | 整轮 Pi bridge 超时，默认 300，正有限数值 |
 | `dialogue.compaction.reserve_tokens` | 上下文预留 token；默认取输出上限与 `min(16384, context_window/4)` 中较大者，必须覆盖 `max_tokens` 且小于模型容量 |
 | `dialogue.compaction.keep_recent_tokens` | Pi 切分时尽量保留的最近 token；默认 `min(20000, (context_window-reserve_tokens)/2)`，须小于剩余预算 |
+| `dialogue.compaction.max_request_bytes` | 序列化工作上下文（含工具定义、图片 Base64 与待注入图片的估计体积）的字节预算，默认 32 MiB（33554432），正整数且不超过 64 MiB；超出时也复用 Pi 压缩 |
 | `dialogue.pi_node` | 可选 Node 路径或可执行文件名称 |
 
 `mode` 和 `response` 的行为需结合 [群聊](../deployment/group.md) 与 Application 使用。`use_proxy_user`、`max_proxy_step`、`proxy_prompt` 和顶层 `user_proxy.description` 仍被配置校验接受，但当前带输入标识的 Processor 路径明确拒绝启用 proxy 模拟，不作为可部署对话方案。
+
+Token 预算与字节预算分别检查：图片 Base64 不当作文本 token，但会占用传输体积。任一预算超限都触发 Pi 摘要；图片较多时会降低 Pi 的最近 token 保留目标，直到完整的最近工具调用/结果批次能放下。旧 Events 与图片不删除。单个最近批次仍过大时明确失败，需读取较小图片或在已确认服务限制后调整预算，不会静默丢图。32 MiB 是 Cota 的运行预算，不是供应商声明的请求上限；供应商限制更小时应相应降低。
 
 ## Prompt 变量
 

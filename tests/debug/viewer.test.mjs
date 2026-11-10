@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {runInNewContext} from 'node:vm';
 const source = await readFile(new URL('../../cota/debug/static/app.js', import.meta.url), 'utf8');
+const markup = await readFile(new URL('../../cota/debug/static/index.html', import.meta.url), 'utf8');
+const elementIds = new Set([...markup.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]));
 const {hasModelDiagnostics, debugRequestURL, modelRequestSummary} = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
 test('model request summaries distinguish waiting time from actual provider token usage', () => {
   assert.match(modelRequestSummary({status: 'running', started_at: 10}, 95), /waiting for model.*85.0s/);
@@ -39,14 +41,17 @@ function viewerHarness(script = source) {
   const nodes = new Map(), requests = [];
   const node = () => ({
     value: '', textContent: '', handlers: {}, children: [],
-    classList: {toggle() {}, contains() { return false; }},
+    classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }},
     addEventListener(kind, handler) { this.handlers[kind] = handler; },
     setAttribute() {},
     append(...children) { this.children.push(...children); },
     replaceChildren(...children) { this.children = children; },
   });
   const document = {
-    getElementById(id) { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); },
+    getElementById(id) {
+      if (!elementIds.has(id)) return null;
+      if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id);
+    },
     querySelector: node, createElement: node, addEventListener() {},
   };
   const context = {
@@ -68,11 +73,28 @@ function viewerHarness(script = source) {
   const select = document.getElementById('session-select'); select.value = 'A';
   return {viewer: context.viewer, requests, changeSession(id) {
     select.value = id; select.handlers.change();
-  }, click(id) { document.getElementById(id).handlers.click(); }, select};
+  }, click(id) { document.getElementById(id).handlers.click(); },
+  text(id) { return document.getElementById(id).textContent; }, select};
 }
 
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const info = {bot: 'test', session_id: 'A', multi_session: true, metadata: {last_sequence: 1}};
+
+test('poll renders against the current HTML without referencing removed sidebar fields', async () => {
+  async function check(script) {
+    const ui = viewerHarness(script);
+    const poll = ui.viewer.poll();
+    ui.requests[0].reply(info);
+    await settle();
+    ui.requests[1].reply({events: [], after_sequence: 0});
+    await poll; await settle();
+    assert.match(ui.text('connection'), /已连接/);
+  }
+  await check(source);
+  const oldSidebar = source.replace("        $('cursor').textContent", "        $('store').textContent = 'removed';\n        $('cursor').textContent");
+  assert.notEqual(oldSidebar, source);
+  await assert.rejects(check(oldSidebar), {name: 'AssertionError'});
+});
 
 async function checkSessionSwitch(script) {
   const ui = viewerHarness(script);

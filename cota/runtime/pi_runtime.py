@@ -25,6 +25,8 @@ from cota.policy import PolicyContext, PolicyServices
 from cota.llm.observation import model_trace, model_purpose, observe_model_call
 
 logger = logging.getLogger(__name__)
+_IMAGE_ATTACHMENT_MIMES = ('image/png', 'image/jpeg', 'image/webp', 'image/gif')
+_IMAGE_ATTACHMENT_MAX_BYTES = 2 * 1024 * 1024
 
 
 def validate_runtime_selection(dialogue):
@@ -392,15 +394,15 @@ class PiAgentRuntime:
             for item in message['cotaAttachments']:
                 try:
                     path = await asyncio.to_thread(self.agent.files.resolve, self.session_id, item['id'])
-                    if (vision and item['mime_type'] in ('image/png', 'image/jpeg', 'image/webp', 'image/gif')
-                            and item['size'] <= 2 * 1024 * 1024):
+                    if (vision and item['mime_type'] in _IMAGE_ATTACHMENT_MIMES
+                            and item['size'] <= _IMAGE_ATTACHMENT_MAX_BYTES):
                         value = await asyncio.to_thread(path.read_bytes)
                         blocks.append({'type': 'image', 'mimeType': item['mime_type'],
                                        'data': base64.b64encode(value).decode()})
                     else:
                         if item['mime_type'].startswith('image/'):
                             note = ('Image exceeds automatic model-input limit of 2 MiB; process it with appropriate image tools before interpretation.'
-                                    if item['size'] > 2 * 1024 * 1024 else
+                                    if item['size'] > _IMAGE_ATTACHMENT_MAX_BYTES else
                                     'Selected model is not configured for image input; use an appropriate vision tool before interpretation.')
                         else:
                             note = 'File contents have not been parsed; use appropriate tools before claiming to understand this file.'
@@ -495,6 +497,10 @@ class PiAgentRuntime:
                 identity = getattr(llm, 'name', None)
             capacity = getattr(llm, 'context_window', None)
             model = {'maxTokens': self.agent.dialogue.get('max_tokens', DEFAULT_DIALOGUE_MAX_TOKENS)}
+            model['attachmentImages'] = {
+                'mimeTypes': list(_IMAGE_ATTACHMENT_MIMES) if getattr(llm, 'supports_images', False) is True else [],
+                'maxBytes': _IMAGE_ATTACHMENT_MAX_BYTES,
+            }
             if isinstance(identity, str):
                 model['id'] = identity
             if type(capacity) is int:

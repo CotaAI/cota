@@ -103,6 +103,7 @@ async def test_pi_receives_provider_model_id_instead_of_endpoint_alias(mock_agen
     await runtime.run()
     assert runtime._bridge.run.call_args.args[0]['model']['id'] == 'actual-provider-model'
     assert runtime._bridge.run.call_args.args[0]['pythonExecutable'] == sys.executable
+    assert runtime._bridge.run.call_args.args[0]['model']['attachmentImages']['mimeTypes'] == []
 
 
 @pytest.mark.asyncio
@@ -158,6 +159,60 @@ async def test_single_turn_long_chain_compacts_and_keeps_image_for_next_request(
         replayed = DST.from_events('image', [e.as_dict() for e in dst.events], agent=mock_agent,
                                    run_metadata=dst.run_metadata)
         assert restored.state_dict() == replayed.state_dict() == dst.state_dict()
+    finally:
+        if backend == 'sqlite':
+            store.engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('backend', ['memory', 'sqlite'])
+async def test_large_image_bytes_compact_before_token_capacity_and_replay(mock_agent, tmp_path, backend):
+    import base64
+    import io
+    import random
+    Image = pytest.importorskip('PIL.Image')
+    from cota.dst import DST
+    from cota.events import UserUtterEvent
+    from cota.executor.tools import FunctionTool
+    from cota.runtime.pi_runtime import PiAgentRuntime
+    from cota.store import MemoryStore, SQLStore
+    from tests.test_pi_runtime import call
+
+    image = Image.frombytes('RGB', (768, 768), random.Random(7).randbytes(768 * 768 * 3))
+    output = io.BytesIO()
+    image.save(output, format='PNG')
+    encoded = base64.b64encode(output.getvalue()).decode()
+    mock_agent._llm_mock.context_window = 1000000
+    mock_agent.dialogue['compaction'] = {'max_request_bytes': 5 * 1024 * 1024}
+    mock_agent.get_tool_registry().register(FunctionTool('picture', 'Read the current page image',
+        {'type': 'object', 'properties': {}},
+        lambda: {'content': [{'type': 'image', 'mimeType': 'image/png', 'data': encoded}]}))
+    dialogue = iter([{'tool_calls': [call('picture', {}, f'image{i}')]} for i in range(3)] + [{'content': 'Images inspected.'}])
+    seen, summaries = [], []
+
+    async def model(**kwargs):
+        if 'context summarization assistant' in kwargs['messages'][0]['content']:
+            summaries.append(kwargs)
+            assert encoded not in str(kwargs)
+            return {'content': 'Make a book. The earlier page was inspected; continue from the latest images.'}
+        seen.append(kwargs)
+        return next(dialogue)
+
+    mock_agent._llm_mock.generate_chat.side_effect = model
+    store = MemoryStore() if backend == 'memory' else SQLStore(db=str(tmp_path / 'byte-budget.db'))
+    dst = DST('bytes', mock_agent)
+    dst.append_event(UserUtterEvent('Make a book.'))
+    try:
+        await PiAgentRuntime(mock_agent, dst, 'bytes', checkpoint=store.save, store=store).run()
+        assert dst.execution['status'] == 'completed'
+        assert len(summaries) == 1 and len(seen) == 4
+        assert sum(e.type == 'tool_result' for e in dst.events) == 3
+        assert any(e.type == 'context_compaction' for e in dst.events)
+        assert encoded in str(seen[-1]['messages'])
+        assert len(str(seen[-1]['messages'])) < 5 * 1024 * 1024
+        restored = await store.load('bytes', agent=mock_agent)
+        replay = DST.from_events('bytes', dst.events, agent=mock_agent, run_metadata=dst.run_metadata)
+        assert restored.state_dict() == replay.state_dict() == dst.state_dict()
     finally:
         if backend == 'sqlite':
             store.engine.dispose()

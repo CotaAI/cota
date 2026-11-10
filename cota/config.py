@@ -38,10 +38,12 @@ def validate_bot_config(config):
         if key in dialogue and (type(dialogue[key]) is not int or dialogue[key] < 1):
             raise ValueError(f'dialogue.{key} must be a positive integer')
     compaction = dialogue.get('compaction', {})
-    _object(compaction, {'reserve_tokens', 'keep_recent_tokens'}, 'dialogue.compaction')
+    _object(compaction, {'reserve_tokens', 'keep_recent_tokens', 'max_request_bytes'}, 'dialogue.compaction')
     for key, value in compaction.items():
         if type(value) is not int or value < 1:
             raise ValueError(f'dialogue.compaction.{key} must be a positive integer')
+    if compaction.get('max_request_bytes', 0) > 64 * 1024 * 1024:
+        raise ValueError('dialogue.compaction.max_request_bytes must not exceed 64 MiB')
     if 'run_timeout_seconds' in dialogue:
         value = dialogue['run_timeout_seconds']
         if type(value) not in (int, float) or not isfinite(value) or value <= 0:

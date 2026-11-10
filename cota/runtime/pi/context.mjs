@@ -12,22 +12,26 @@ export function resolveContextModel(options = {}) {
   return {id, name: id, api: 'openai-completions', provider: 'cota', baseUrl: '', reasoning: false,
     input: ['text', 'image'], contextWindow, maxTokens,
     capacitySource: options.contextWindow ? 'configured' : candidates.length ? 'pi_catalog' : 'fallback',
+    attachmentImages: options.attachmentImages ?? {},
     cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0}};
 }
 
 export function compactionSettings(model, options = {}) {
   const reserveTokens = options.reserve_tokens ?? Math.max(model.maxTokens, Math.min(16384, Math.floor(model.contextWindow / 4)));
   const keepRecentTokens = options.keep_recent_tokens ?? Math.min(20000, Math.floor((model.contextWindow - reserveTokens) / 2));
+  const maxRequestBytes = options.max_request_bytes ?? 32 * 1024 * 1024;
   if (!Number.isInteger(reserveTokens) || reserveTokens < model.maxTokens || reserveTokens >= model.contextWindow
       || !Number.isInteger(keepRecentTokens) || keepRecentTokens < 1 || keepRecentTokens >= model.contextWindow - reserveTokens)
     throw new Error('Invalid compaction budget: reserve_tokens must cover output; keep_recent_tokens must fit remaining context');
-  return {enabled: true, reserveTokens, keepRecentTokens};
+  if (!Number.isInteger(maxRequestBytes) || maxRequestBytes < 1 || maxRequestBytes > 64 * 1024 * 1024)
+    throw new Error('compaction.max_request_bytes must be a positive integer no larger than 64 MiB');
+  return {enabled: true, reserveTokens, keepRecentTokens, maxRequestBytes};
 }
 
-export function estimateRequest(messages, tools = []) {
+export function estimateRequest(messages, tools = [], model = {}) {
   const sections = {system: 0, user: 0, assistant: 0, tool_results: 0,
     tool_definitions: tools.length ? Math.ceil(JSON.stringify(tools).length / 4) : 0};
-  let images = 0, imageBytes = 0;
+  let images = 0, imageBytes = 0, attachmentBytes = 0;
   for (const message of messages) {
     const section = message.role === 'toolResult' ? 'tool_results' : message.role;
     if (section in sections) sections[section] += estimateTokens(message);
@@ -39,9 +43,11 @@ export function estimateRequest(messages, tools = []) {
       }
     }
     // Incoming attachments are hydrated by Cota only at the provider boundary.
-    if (!Array.isArray(message.content)) for (const file of message.cotaAttachments ?? []) {
-      if (file.mime_type?.startsWith('image/') && file.size <= 2 * 1024 * 1024) {
+    if (message.role === 'user') for (const file of message.cotaAttachments ?? []) {
+      if (model.attachmentImages?.mimeTypes?.includes(file.mime_type)
+          && file.size <= model.attachmentImages.maxBytes) {
         images++; imageBytes += file.size;
+        attachmentBytes += Math.ceil(file.size / 3) * 4 + 128;
         sections[section] += estimateTokens({role: 'user', content: [{type: 'image'}]});
       }
     }
@@ -58,18 +64,32 @@ export function estimateRequest(messages, tools = []) {
   const usage = last < 0 ? 0 : calculateContextTokens(messages[last].usage) + instructionReserve
     + messages.slice(last + 1).reduce((n, m) => n + estimateTokens(m), 0);
   return {estimated_tokens: estimated, budget_tokens: Math.max(estimated, usage),
+    serialized_bytes: Buffer.byteLength(JSON.stringify({messages, tools}), 'utf8') + attachmentBytes,
     sections, images, image_bytes: imageBytes, usage_based_tokens: usage || null,
     instruction_reserve_tokens: last < 0 ? 0 : instructionReserve};
 }
 
-export async function compactContext(messages, model, settings, streamFn, signal) {
+export async function compactContext(messages, model, settings, streamFn, signal, tools = []) {
   signal?.throwIfAborted();
   const history = messages.filter(m => m.role !== 'system');
   const entries = history.map((message, i) => ({type: 'message', id: message.cotaEventId,
     parentId: i ? history[i - 1].cotaEventId : null,
     timestamp: new Date(message.timestamp ?? 0).toISOString(), message}));
   if (entries.some(e => !e.id)) throw new Error('Compaction requires durable Cota message identities');
-  const cut = findCutPoint(entries, 0, entries.length, settings.keepRecentTokens);
+  let keep = settings.keepRecentTokens;
+  let cut = findCutPoint(entries, 0, entries.length, keep);
+  // Pi still chooses legal boundaries. Its token heuristic intentionally ignores
+  // Base64 length, so lower the retention target separately for wire-size pressure.
+  if (settings.maxRequestBytes) {
+    const systems = messages.filter(m => m.role === 'system');
+    const byteTarget = settings.maxRequestBytes - Math.min(65536, Math.floor(settings.maxRequestBytes / 4));
+    while (estimateRequest([...systems, ...history.slice(cut.firstKeptEntryIndex)], tools, model).serialized_bytes > byteTarget) {
+      if (keep <= 1)
+        throw new Error('Latest message/tool batch exceeds the byte budget; read a smaller image or increase compaction.max_request_bytes');
+      keep = Math.max(1, Math.floor(keep / 2));
+      cut = findCutPoint(entries, 0, entries.length, keep);
+    }
+  }
   if (cut.firstKeptEntryIndex <= 0) throw new Error('Context cannot be compacted at a safe message boundary; narrow the task or increase context_window');
   const prefix = history.slice(0, cut.firstKeptEntryIndex);
   const fileOps = {read: new Set(), written: new Set(), edited: new Set()};
@@ -81,7 +101,9 @@ export async function compactContext(messages, model, settings, streamFn, signal
   const summaryStream = async (...args) => {
     // Imported histories can already exceed the provider window. Pi bounds
     // tool excerpts, but long user/assistant text must also fit the summary call.
-    if (estimateRequest(args[1].messages).estimated_tokens > model.contextWindow - Math.min(2000, settings.reserveTokens))
+    const budget = estimateRequest(args[1].messages);
+    if (budget.estimated_tokens > model.contextWindow - Math.min(2000, settings.reserveTokens)
+        || settings.maxRequestBytes && budget.serialized_bytes > settings.maxRequestBytes)
       throw new Error('Pi summary input exceeds the available model budget; use a larger context_window or reduce imported history');
     const stream = await streamFn(...args);
     const response = await stream.result();

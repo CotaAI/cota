@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {estimateRequest, compactContext, resolveContextModel} from './context.mjs';
+import {estimateRequest, compactContext, resolveContextModel, compactionSettings} from './context.mjs';
 import {createAssistantMessageEventStream} from '@earendil-works/pi-ai';
 
 const msg = (role, content, id) => ({role, content, cotaEventId: id, timestamp: 1});
@@ -93,4 +93,57 @@ test('usage-based budgets reserve room for current system and tool changes', () 
       usage: {input: 3400, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 3500}}];
   const budget = estimateRequest(messages);
   assert(budget.budget_tokens >= 5000);
+});
+
+function imageHistory() {
+  const messages = [msg('user', 'Make a book and preserve its constraints.', 'u')];
+  for (let i = 0; i < 6; i++) {
+    messages.push(msg('assistant', [{type: 'toolCall', id: `image${i}`, name: 'read',
+      arguments: {path: `/book/page${i}.png`}}], `a${i}`));
+    messages.push({...msg('toolResult', [{type: 'image', mimeType: 'image/png', data: 'x'.repeat(1024 * 1024)}], `r${i}`),
+      toolCallId: `image${i}`, toolName: 'read'});
+  }
+  return messages;
+}
+
+test('serialized-byte accounting includes image encoding without counting it as tokens', () => {
+  const messages = imageHistory();
+  const budget = estimateRequest(messages);
+  assert(budget.serialized_bytes >= 6 * 1024 * 1024);
+  assert(budget.estimated_tokens < 10000);
+});
+
+test('Pi shrinks its retained token target when image bytes exceed the request budget', async () => {
+  const messages = imageHistory(), calls = [];
+  const largeModel = {...model, contextWindow: 1000000};
+  const limits = compactionSettings(largeModel, {keep_recent_tokens: 20000, max_request_bytes: 3 * 1024 * 1024});
+  const result = await compactContext(messages, largeModel, limits, summaryStream(calls));
+  assert(result.replaced_message_ids.length > 0);
+  const kept = messages.slice(result.replaced_message_ids.length);
+  assert(estimateRequest(kept).serialized_bytes < limits.maxRequestBytes);
+  assert.equal(kept[0].role, 'assistant');
+  assert.equal(kept.at(-1).toolCallId, 'image5');
+  assert.equal(calls.length, 1);
+  assert(!JSON.stringify(calls).includes('x'.repeat(1000)));
+  assert.equal(messages.at(-1).content[0].data.length, 1024 * 1024);
+});
+
+test('an indivisible latest image fails explicitly without dropping it or requesting a summary', async () => {
+  const messages = imageHistory().slice(0, 3), calls = [];
+  const limits = compactionSettings({...model, contextWindow: 1000000}, {max_request_bytes: 128 * 1024});
+  await assert.rejects(compactContext(messages, {...model, contextWindow: 1000000}, limits, summaryStream(calls)),
+    /latest.*(batch|message).*byte|smaller image/i);
+  assert.equal(calls.length, 0);
+  assert.equal(messages.at(-1).content[0].data.length, 1024 * 1024);
+});
+
+test('attachment bytes follow the actual model hydration MIME and size policy', () => {
+  const files = Array.from({length: 8}, (_, i) => ({id: `file${i}`, mime_type: 'image/png', size: 2 * 1024 * 1024}));
+  const messages = [{...msg('user', 'Inspect these files with the appropriate tool.', 'u'), cotaAttachments: files}];
+  const textModel = resolveContextModel({attachmentImages: {mimeTypes: [], maxBytes: 2 * 1024 * 1024}});
+  assert(estimateRequest(messages, [], textModel).serialized_bytes < 4096);
+  const visionModel = resolveContextModel({attachmentImages: {mimeTypes: ['image/png'], maxBytes: 2 * 1024 * 1024}});
+  assert(estimateRequest(messages, [], visionModel).serialized_bytes > 20 * 1024 * 1024);
+  const svg = [{...messages[0], cotaAttachments: [{id: 'svg', mime_type: 'image/svg+xml', size: 2 * 1024 * 1024}]}];
+  assert(estimateRequest(svg, [], visionModel).serialized_bytes < 4096);
 });

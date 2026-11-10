@@ -38,6 +38,8 @@ COTA_RUNTIME_DIR="$PWD/.build/pi-runtime" python -m build
 
 `PiBridge` 为每轮启动 worker，通过有序、带确认的 JSON-lines 消息交换请求。Pi 发出 `prepare`、`model`、`tool`、`authorize_tool`、`tool_result` 和事件通知；Python 在成功处理并提交需要持久化的状态后回复。连接关闭、超时或错误会结束本轮；先通过输入流关闭触发 AbortSignal，让 Pi 清理命令进程，再回收 worker。
 
+桥接以 64 KiB 缓冲分段收发，独立限制每条 JSON 帧最多 128 MiB；不会把 asyncio 的行缓冲上限当作模型上下文容量。超长、截断或无效帧明确报错，不确认未完成的请求。模型工作上下文另受 token 和默认 32 MiB 序列化体积预算约束，复用 Pi 压缩后再继续请求。传输帧硬上限、工作上下文字节预算与模型 token 容量是三个不同边界。
+
 | Pi | Cota |
 | --- | --- |
 | 模型—工具循环、参数校验、顺序工具执行 | LLM 客户端与 Python 扩展工具能力 |

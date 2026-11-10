@@ -89,13 +89,17 @@ export async function runAgent(options, rpc, signal) {
         toolPrompt: native.prompt, nativeTools: native.schemas, extensionTools});
       let prepared = await prepare(context.messages);
       for (let attempt = 0; ; attempt++) {
-        contextBudget = {...estimateRequest(prepared.messages, prepared.tools), context_window: model.contextWindow,
-          capacity_source: model.capacitySource, reserve_tokens: settings.reserveTokens};
-        if (estimateRequest(prepared.messages.filter(m => m.role === 'system'), prepared.tools).budget_tokens
-            >= model.contextWindow - settings.reserveTokens)
+        contextBudget = {...estimateRequest(prepared.messages, prepared.tools, model), context_window: model.contextWindow,
+          capacity_source: model.capacitySource, reserve_tokens: settings.reserveTokens,
+          max_request_bytes: settings.maxRequestBytes};
+        const fixed = estimateRequest(prepared.messages.filter(m => m.role === 'system'), prepared.tools, model);
+        if (fixed.budget_tokens >= model.contextWindow - settings.reserveTokens)
           throw new Error('System prompt and tool definitions exceed the model budget; reduce guidance or increase context_window');
-        if (!shouldCompact(contextBudget.budget_tokens, model.contextWindow, settings)) break;
-        if (attempt >= 2) throw new Error('Context still exceeds the Pi token budget after compaction; narrow the task or increase context_window');
+        if (fixed.serialized_bytes >= settings.maxRequestBytes - Math.min(65536, Math.floor(settings.maxRequestBytes / 4)))
+          throw new Error('System prompt and tool definitions exceed the byte budget; reduce guidance or increase compaction.max_request_bytes');
+        if (!shouldCompact(contextBudget.budget_tokens, model.contextWindow, settings)
+            && contextBudget.serialized_bytes <= settings.maxRequestBytes) break;
+        if (attempt >= 2) throw new Error('Context still exceeds the Pi token/byte budget after compaction; narrow the task or increase the context budget');
         const summaryStream = async (_model, summaryContext) => {
           const response = await request('summarize', {messages: summaryContext.messages,
             systemPrompt: getCurrentSystemPrompt(summaryContext.messages), maxTokens: Math.min(2000, settings.reserveTokens)});
@@ -104,7 +108,7 @@ export async function runAgent(options, rpc, signal) {
           stream.push({type: 'done', reason: message.stopReason, message});
           return stream;
         };
-        const result = await compactContext(prepared.messages, model, settings, summaryStream, signal);
+        const result = await compactContext(prepared.messages, model, settings, summaryStream, signal, prepared.tools);
         const committed = await request('compact', result);
         prepared = await prepare(committed.messages);
       }
