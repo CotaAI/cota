@@ -147,8 +147,6 @@ async def test_compaction_recomputes_priority_without_claiming_business_completi
     runtime = PiAgentRuntime(mock_agent, dst, 's')
     await runtime.run()
     assert 'READ_PRIORITY_RULE' in mock_agent._llm_mock.generate_chat.call_args.kwargs['messages'][0]['content']
-    mock_agent.dialogue['context_max_chars'] = 1500
-    mock_agent.dialogue['context_keep_turns'] = 1
     runtime._system_prompt = 'base'
     mock_agent._llm_mock.generate_chat.side_effect = [{'content': 'summary'}]
     dst.append_event(UserUtterEvent('x' * 3000))
@@ -161,7 +159,13 @@ async def test_compaction_recomputes_priority_without_claiming_business_completi
                     if tool['function']['name'] == 'read']
     extensions = [tool for tool in mock_agent._llm_mock.generate_chat.call_args.kwargs['tools']
                   if tool['function']['name'] == 'http_request']
-    prepared = await runtime._prepare({'messages': messages, 'nativeTools': native_tools, 'extensionTools': extensions})
+    # Pi chooses the boundary; Cota validates and commits the prefix, then
+    # recomputes Policy against the restored projection.
+    ids = [m['cotaEventId'] for m in messages[:-1]]
+    restored = await runtime._handle_request('compact', {
+        'summary': 'summary', 'replaced_message_ids': ids, 'first_kept_id': messages[-1]['cotaEventId'],
+    })
+    prepared = await runtime._prepare({'messages': restored['messages'], 'nativeTools': native_tools, 'extensionTools': extensions})
     assert any(e.type == 'context_compaction' for e in dst.events)
     assert 'READ_PRIORITY_RULE' not in prepared['messages'][0]['content']
     assert 'GENERAL_RULE' in prepared['messages'][0]['content']

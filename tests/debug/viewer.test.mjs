@@ -3,7 +3,13 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {runInNewContext} from 'node:vm';
 const source = await readFile(new URL('../../cota/debug/static/app.js', import.meta.url), 'utf8');
-const {hasModelDiagnostics, debugRequestURL} = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+const {hasModelDiagnostics, debugRequestURL, modelRequestSummary} = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+test('model request summaries distinguish waiting time from actual provider token usage', () => {
+  assert.match(modelRequestSummary({status: 'running', started_at: 10}, 95), /waiting for model.*85.0s/);
+  const text = modelRequestSummary({status: 'completed', duration_ms: 3000,
+    usage: {prompt_tokens: 40000, cached_tokens: 39000, completion_tokens: 100, reasoning_tokens: 80}});
+  assert.match(text, /3.0s.*input 40000.*cache 39000.*output 100.*reasoning 80/);
+});
 test('service debug scopes reads without changing query pagination or session discovery', () => {
   const base = 'http://127.0.0.1:1234/token/';
   assert.equal(typeof debugRequestURL, 'function');

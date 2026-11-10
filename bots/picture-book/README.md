@@ -4,6 +4,8 @@
 
 这是 **personal** 示例：Pi 的文件和 Shell 工具操作运行机器，不是访问聊天用户的电脑，也不是供不可信用户共用的隔离服务。Pi 的 cwd 是 Bot 下的 workspace/，不是沙箱。Web 界面用于部署者自己的验证；正式托管多人前需要真正的隔离执行环境。
 
+文件处理和命令执行使用 Pi 原生工具，联网查询可通过 bash 调用 curl 或脚本；原生工具保留 Pi 的输出截断机制。此 Bot 禁用 `http_request`，`tools.allow` 仅保留附件交付用的 `send_files`；原生工具由 `environment` 启用，无需加入 allow 列表。
+
 ## 准备
 
 在仓库根目录执行 `cota init`，进入新建的 `cota_projects/picture-book`；也可以直接使用仓库的 `bots/picture-book`。init 会保留已有目录，不覆盖本地配置。
@@ -21,20 +23,43 @@ python -m pip install -r requirements.txt
 | 配置 | 用途与协议 |
 | --- | --- |
 | `llms.default` | 主模型：OpenAI 兼容 Chat Completions，必须支持工具调用 |
-| `picture_book.image` | 绘图与参考图编辑：Images generations + multipart edits，返回 b64_json |
+| `picture_book.image` | 绘图与参考图编辑：`api: openai` 或 `api: qwen`，由脚本处理协议差异 |
 | `picture_book.vision` | 审看实际图像：Chat Completions 的图片 data URI 输入 |
 | `picture_book.font` | 可选字体路径；macOS 可自动发现系统宋体，其它机器建议明确配置 |
 
 apibase 填 API base（例如供应商给出的 `https://…/v1`），不填完整 `/images/generations`。模型可以来自不同供应商；只支持文字接口的服务不能因“OpenAI 兼容”就假定能画图。不要把图片模型加入 `llms`，它由本 Bot 脚本读取。只写文稿可先仅配置 default。
 
-绘图可配置 size、quality、response_format；按实际服务文档调整，不支持的参数删除。当前只接收内联 base64 图像，不自动下载供应商返回的 URL。参考：[图像生成与编辑](https://developers.openai.com/api/docs/guides/image-generation)、[视觉输入](https://developers.openai.com/api/docs/guides/images-vision)。不写死模型型号，不内置任何账号额度。
+`api: openai` 为默认绘图协议，可配置 size、quality、response_format；参考图使用 multipart `/images/edits`，仅接收内联 b64_json。参考：[图像生成与编辑](https://developers.openai.com/api/docs/guides/image-generation)、[视觉输入](https://developers.openai.com/api/docs/guides/images-vision)。按实际服务文档调整参数，不写死模型型号，不内置任何账号额度。
+
+Qwen 图像服务使用 `api: qwen`：文生图和参考图编辑统一调用 JSON `/images/generations`，参考图以真实 Base64 Data URI 传入；可配置 size。支持返回 Base64 或下载返回的图片 URL。默认只允许 HTTPS `*.aliyuncs.com` 结果域名；其它供应商结果域名须在 image.download_hosts 明确列出（精确主机或 `*.domain`）。下载不携带 API Key，不跟随重定向，最多32 MiB；签名链接不写入错误或项目日志。Qwen Image 3.0 最多3张参考图，每张不超过10 MiB、单边8000像素、长宽比10:1。协议见 [Qwen 官方文档](https://help.aliyun.com/zh/model-studio/qwen-image-generation-and-editing-api-reference)。
+
+例如在自己的 Bot 副本中配置（密钥在本机填写）：
+
+```yaml
+picture_book:
+  image:
+    api: qwen
+    key: ""
+    apibase: "供应商提供的 compatible-mode/v1 基础地址"
+    model: qwen-image-3.0
+    size: 1536x1024
+  vision:
+    key: ""
+    apibase: "供应商提供的 compatible-mode/v1 基础地址"
+    model: qwen3.8-omni-flash
+```
+
+主对话仍在 llms.default 配置；也可使用 qwen3.8-omni-flash，并设置 vision: true。仓库模板保持空凭证，实际账号配置保存在自己的 Bot 目录。
 
 ```sh
 python scripts/book.py doctor
+cota train --config .
 cota shell --config . --debug
 ```
 
 doctor 只检查配置与依赖，不消耗模型额度，也不代表接口已经通过验收。新环境先用真实角色图、参考图新动作/编辑和一张中文样页验证，再批量成书。
+
+此示例使用 BM25 从业务案例中选取最多3条相关 Policy。`cota train` 在本地建立索引，不调用模型；修改 Policy 后重新训练。运行时使用 Pi 的 token 估算和压缩组件，支持同一条用户任务中的长执行链路。未知主模型容量时使用明确标记的 65,536 token 保守预算；可在 `llms.default.context_window` 填写经供应商确认的容量。Debug 的 Model Requests 显示预算来源、请求大小和实际用量。
 
 可以输入：
 
@@ -60,7 +85,9 @@ cota run --config . --chat-app --debug --host 127.0.0.1 --port 5005
 
 ## 可执行能力与成品
 
-通用创作流程由原始 [Skill](skills/creating-childrens-picture-books/SKILL.md) 提供，本 Bot 的脚本入口与执行约定放在 [agent.yml](agent.yml)。命令参数、版式字段和示例通过脚本帮助按需查看：
+通用创作流程由 [Skill](skills/creating-childrens-picture-books/SKILL.md) 提供，主文件保持原版；本 Bot 的配套入口写在已有的[环境接入说明](skills/creating-childrens-picture-books/references/runtime-setup.md)中。[agent.yml](agent.yml) 描述模型能力的用途与业务要求。运行环境自动提供 Bot 根目录、工具工作目录和 Cota 的 Python 解释器；Agent 使用绝对路径调用程序，进入作品目录后也无需猜测 `../` 层数。
+
+下面的手工命令在 Bot 根目录且已激活 Cota 环境时执行。命令参数、版式字段和示例通过脚本帮助按需查看：
 
 ```sh
 python scripts/book.py --help

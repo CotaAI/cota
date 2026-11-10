@@ -351,6 +351,20 @@ test('machine factory preserves Pi schemas, argument preparation, images and non
   assert.equal(records.at(-1).payload.resource, undefined);
 });
 
+test('runtime advertises real Bot and Python locations separately from the tool cwd', async t => {
+  const {cwd, resources} = await skillFixture(t);
+  const workspace = join(cwd, 'workspace with spaces');
+  const pythonExecutable = join(cwd, 'venv with spaces', 'bin', 'python');
+  const native = await createNativeTools({deploy: 'personal', cwd, pythonExecutable,
+    environment: {type: 'machine', workspace, timeout_seconds: 1}}, resources, async () => ({}));
+  assert(native.prompt.includes('Bot directory: ' + JSON.stringify(cwd)));
+  assert(native.prompt.includes('Working directory: ' + JSON.stringify(workspace)));
+  assert(native.prompt.includes('Python executable: ' + JSON.stringify(pythonExecutable)));
+  const service = await createNativeTools({cwd, pythonExecutable}, resources, async () => ({}));
+  assert(!service.prompt.includes(pythonExecutable));
+  assert(!service.prompt.includes('Bot directory:'));
+});
+
 test('unsupported backends never select a machine tool implementation', async () => {
   for (const environment of [{type: 'device'}, {type: 'machine', workspace: '.'}, {type: 'none', workspace: '/tmp'}]) {
     await assert.rejects(createNativeTools({deploy: 'personal', environment}, {skills: []}, async () => {}), /environment|Machine/);

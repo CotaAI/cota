@@ -40,8 +40,10 @@ def doctor():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''Run from the Bot root; from workspace/ use python ../scripts/book.py.
-Use the Python environment running Cota. Project commands place --project BEFORE the command:
+        epilog='''Use the Python executable and Bot directory advertised by the runtime.
+Invoke this script by its absolute path from any directory; do not guess ../ levels.
+The examples below use paths relative to the Bot root, for manual use there only.
+Project commands place --project BEFORE the command:
   python scripts/book.py doctor
   python scripts/book.py init my-book
   python scripts/book.py --project my-book generate --help
@@ -50,7 +52,16 @@ Use the Python environment running Cota. Project commands place --project BEFORE
 Scripts read endpoints.yml themselves; never put credentials in command arguments.
 doctor checks configuration/dependencies only and makes no paid model requests.
 Network requests have a 240-second limit; allow up to 300 seconds for the Bash tool.
-Use command --help for detailed file, layout and review requirements.''')
+Use command --help for detailed file, layout and review requirements.
+
+Normal workflow (no implementation-source reading required):
+  1. doctor once, then init; save the brief, story, storyboard and visual rules.
+  2. Read generate --help; write a prompt file, generate a character reference.
+  3. Inspect the actual image with read or review; generate and check one sample page.
+  4. Generate remaining art with --reference; fill book.json using build --help.
+  5. build, inspect every rendered page, validate, then deliverables.
+Read only the help needed for the current step. For an existing project, status
+comes first; completed generation journals allow reuse without another paid call.''')
     parser.add_argument('--project', help='Name inside workspace/books, or an absolute path inside it; required except for doctor/init')
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('doctor', help='Check configuration and local dependencies without model requests')
@@ -62,11 +73,15 @@ Use command --help for detailed file, layout and review requirements.''')
         epilog='''Paths are relative to the project; absolute in-project paths also work.
 Write the UTF-8 prompt file first (1-32000 characters). Request one image at a time.
 Without --reference, generate a new image. Repeat --reference for up to eight real
-PNG/JPEG/WebP inputs (each <=32 MiB). For an edit, include the original image and
+PNG/JPEG/WebP inputs (each <=32 MiB); Qwen Image 3.0 allows at most three, each
+<=10 MiB, <=8000 pixels per side and <=10:1 aspect ratio. For an edit, include the original image and
 describe the specific change; a filename in prompt text is not an image input.
 
-Output must end in .png. The provider must return inline b64_json; URL-only output
-is rejected. The adjacent .request.json retains hashes and request status without
+Output must end in .png. image.api=openai (default) uses multipart edits and requires
+inline b64_json. image.api=qwen uses JSON generations for both new art and reference
+edits; returned URLs are downloaded only from approved HTTPS download_hosts (default
+*.aliyuncs.com), without API Authorization or redirects, up to 32 MiB. No signed URL
+is retained in errors or journals. The adjacent .request.json retains hashes and request status without
 credentials/base64. Identical completed output is reused; changed input needs a new
 revision filename. A started request has an unknown outcome: inspect provider history,
 never blindly retry it. Generate artwork without final Chinese text.''')

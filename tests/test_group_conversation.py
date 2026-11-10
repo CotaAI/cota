@@ -261,12 +261,13 @@ async def test_full_execution_queue_keeps_group_receiving_and_mention_retry_is_s
 @pytest.mark.parametrize('sql', [False, True])
 async def test_compaction_merges_with_concurrent_input_and_replays(mock_agent, tmp_path, sql):
     store = SQLStore(dialect='sqlite', db=str(tmp_path/'compact.db'), snapshot_interval=2) if sql else MemoryStore(snapshot_interval=2)
-    mock_agent.dialogue.update(prompt='Help the group.', context_max_chars=4500, context_keep_turns=1)
+    mock_agent._llm_mock.context_window = 5000
+    mock_agent.dialogue.update(prompt='Help the group.', compaction={'reserve_tokens': 1000, 'keep_recent_tokens': 1000})
     compacted = False
     async with group_app(mock_agent, store) as app:
         async def model(**kwargs):
             nonlocal compacted
-            if kwargs['messages'][0]['content'].startswith('Summarize'):
+            if 'context summarization assistant' in kwargs['messages'][0]['content']:
                 compacted = True
                 await app.submit(user_id='bob', session_id='g', text='concurrent-during-summary')
                 return {'content': 'Alice discussed the trip; preserve Alice as the speaker.'}
@@ -274,7 +275,7 @@ async def test_compaction_merges_with_concurrent_input_and_replays(mock_agent, t
             return {'content': 'answer'}
         mock_agent._llm_mock.generate_chat.side_effect = model
         for i in range(6):
-            await (await app.submit(user_id='alice', session_id='g', text=f'topic{i} ' + 'x'*1600)).wait()
+            await (await app.submit(user_id='alice', session_id='g', text=f'topic{i} ' + 'x'*2500)).wait()
         result = await (await app.submit(user_id='alice', session_id='g', text='please help', mentioned=True)).wait()
         assert result['receipt']['status'] == 'completed'
         assert compacted

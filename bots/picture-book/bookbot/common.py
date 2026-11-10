@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 from urllib.parse import urlsplit
 
@@ -72,4 +73,12 @@ def model_config(root, kind):
     if (parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password
             or parsed.query or parsed.fragment):
         raise ValueError(f'{label}.apibase must be an HTTP(S) API base URL without credentials/query')
+    if kind == 'image':
+        if value.get('api', 'openai') not in ('openai', 'qwen'):
+            raise ValueError(f'{label}.api must be openai or qwen')
+        hosts = value.get('download_hosts', ['*.aliyuncs.com'])
+        if (not isinstance(hosts, list) or not hosts or any(not isinstance(host, str)
+                or not re.fullmatch(r'(?:\*\.)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z][a-z0-9-]*', host)
+                for host in hosts)):
+            raise ValueError(f'{label}.download_hosts must list exact HTTPS hosts or *.domain suffixes')
     return value

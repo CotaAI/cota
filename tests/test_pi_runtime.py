@@ -194,7 +194,8 @@ async def test_compaction_preserves_raw_events_and_reuses_projection(mock_agent)
     dst.append_event(Event('run_started', {'engine': 'pi', 'input_event_id': dst.latest_user_event.event_id}, run_id='previous-run'))
     dst.append_event(Event('run_finished', {'status': 'completed'}))
     dst.append_event(UserUtterEvent('current'))
-    mock_agent.dialogue.update(context_max_chars=2000, context_keep_turns=1)
+    mock_agent._llm_mock.context_window = 3000
+    mock_agent.dialogue['compaction'] = {'reserve_tokens': 1000, 'keep_recent_tokens': 300}
     mock_agent._llm_mock.generate_chat.side_effect = [{'content': 'historical facts'}, {'content': 'done'}]
     rt = PiAgentRuntime(agent=mock_agent, dst=dst, session_id='s', prompt='sys', checkpoint=store.save)
     await rt.run()
@@ -202,7 +203,7 @@ async def test_compaction_preserves_raw_events_and_reuses_projection(mock_agent)
     assert len(dst.events[0].text) > 4000
     projected = str(dst.context_messages)
     assert 'historical facts' in projected
-    assert 'x' * 4000 not in projected
+    assert 'old 0 ' + 'x' * 4000 not in projected
     assert any(e.type == 'context_compaction' for e in dst.events)
 
 

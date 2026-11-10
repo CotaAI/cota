@@ -40,8 +40,13 @@ def validate_carrier(event):
         raise ValueError('llm requires request_id')
     if type(llm.get('request_sequence')) is not int or llm['request_sequence'] < 1:
         raise ValueError('llm requires a positive request_sequence')
-    if set(llm) - {'request_id', 'request_sequence', 'model', 'duration_ms', 'policy', 'stop_reason', 'message'}:
+    if set(llm) - {'request_id', 'request_sequence', 'model', 'duration_ms', 'policy', 'stop_reason', 'message', 'usage'}:
         raise ValueError('Unexpected llm fields; full provider requests/responses belong in Debug')
+    if 'usage' in llm:
+        usage = llm['usage']
+        if (not isinstance(usage, dict) or set(usage) != {'input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens'}
+                or any(type(n) is not int or n < 0 for n in usage.values())):
+            raise ValueError('llm.usage requires nonnegative token counters')
     if llm.get('stop_reason') not in ('stop', 'toolUse', 'length'):
         raise ValueError('llm requires a valid stop_reason')
     if 'policy' in llm and not isinstance(llm['policy'], dict):
@@ -124,12 +129,14 @@ def assistant_from_event(event):
     """Project one owner only. Followers and tool-generated utterances add nothing."""
     from cota.events.context import assistant_message
     p = event.payload
+    usage = p.get('llm', {}).get('usage', {})
+    usage = {'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0, 'total': 0}, **usage} if usage else None
     if event.type == 'bot_utter' and not p.get('tool_event_id'):
         llm = p.get('llm', {})
-        return assistant_message({'content': p['text'], 'finish_reason': llm.get('stop_reason')}, int(event.timestamp * 1000))
+        return assistant_message({'content': p['text'], 'finish_reason': llm.get('stop_reason'), 'usage': usage}, int(event.timestamp * 1000))
     if event.type == 'tool_started' and p.get('llm'):
         original = p['llm']['message']
-        message = assistant_message({}, int(event.timestamp * 1000))
+        message = assistant_message({'usage': usage}, int(event.timestamp * 1000))
         message.update(content=deepcopy(original['content']), stopReason=original['stop_reason'])
         return message
     return None

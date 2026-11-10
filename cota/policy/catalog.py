@@ -100,15 +100,21 @@ _GUIDANCE = (
 )
 
 
-def _render(policy):
+def _render(policy, focus=None):
     lines = [f"Policy: {policy['name']}"]
     thoughts = {(t['step'], t['item']): t for t in policy_thoughts(policy)}
     for step_index, step in enumerate(policy['steps']):
+        if focus is not None and step_index > focus:
+            break
         if 'user' in step:
             lines.append(f"  示例 User: {step['user']}")
             continue
         lines.append('  示例 Bot:')
         for index, item in enumerate(step['bot']):
+            # Prior replies may contain the question/condition answered by a
+            # later "yes". Keep them, but guide only the selected business step.
+            if focus is not None and step_index < focus and 'thought' in item:
+                continue
             if 'thought' in item:
                 target = thoughts[step_index, index]['target']
                 label = {'skills': '能力选择与使用', 'reply': '结果处理与回复', 'continuation': '后续处理'}[target]
@@ -175,7 +181,7 @@ class PolicyCatalog:
 
     def guidance(self, available_skills, read_skills, *, matches=None):
         available, read = set(available_skills), set(read_skills)
-        chosen, blocks, omitted = [], [], []
+        chosen, blocks, omitted, selected_thoughts = [], [], [], []
         # Read evidence affects priority only. It must not be mistaken for a
         # completed business step or hide guidance needed before the first read.
         ordered = sorted(self._policies, key=lambda p: not bool(set(policy_skills(p)) & read))
@@ -187,8 +193,9 @@ class PolicyCatalog:
         for policy in ordered:
             if not set(policy_skills(policy)) <= available:
                 continue
-            block = _render(policy)
             assessment = assessments.get(policy['name'])
+            focus = assessment.get('step') if assessment else None
+            block = _render(policy, focus)
             if assessment:
                 label = {'candidate': '相关候选，适用性仍需判断', 'conditional': '条件待确认',
                          'applicable': '模型判定当前适用，仍需核对实际事实'}[assessment['status']]
@@ -205,8 +212,9 @@ class PolicyCatalog:
                 continue
             chosen.append(policy)
             blocks.append(block)
+            selected_thoughts.extend(t for t in policy_thoughts(policy) if focus is None or t['step'] == focus)
         return {'text': _GUIDANCE + '\n' + '\n\n'.join(blocks) if blocks else '',
-                'policies': deepcopy(chosen), 'thoughts': [t for p in chosen for t in policy_thoughts(p)],
+                'policies': deepcopy(chosen), 'thoughts': selected_thoughts,
                 'omitted_policies': omitted}
 
 

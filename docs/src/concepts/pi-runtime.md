@@ -1,6 +1,6 @@
 # Pi runtime
 
-Cota 使用 Pi Agent Core 控制模型—工具循环，并复用 Pi coding-agent 的 Skill 发现、解析、目录格式化和 八个官方工具工厂（read/write/edit/bash/grep/find/ls/powershell）。Cota 没有接入 `AgentSession`，不会写 Pi 会话文件，也不会加载 coding-agent 的完整交互式工作环境。
+Cota 使用 Pi Agent Core 控制模型—工具循环，并复用 Pi coding-agent 的 Skill 发现、解析、目录格式化、token 估算与压缩组件，以及八个官方工具工厂（read/write/edit/bash/grep/find/ls/powershell）。Cota 没有接入 `AgentSession`，不会写 Pi 会话文件，也不会加载 coding-agent 的完整交互式工作环境。压缩切分和摘要由 Pi 公共 API 完成，Cota 对接模型、提交事件并恢复投影，详见 [执行流程](execution-flow.md)。
 
 ## 版本与运行环境
 

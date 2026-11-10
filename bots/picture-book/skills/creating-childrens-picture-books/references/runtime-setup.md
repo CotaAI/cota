@@ -20,6 +20,39 @@
 
 ## 平台接入路径
 
+### Cota 绘本 Bot 配套入口
+
+若当前 Skill 随 Cota 绘本 Bot 分发，可使用 Bot 自带的制作程序；其他环境继续使用下方已有工具的接入方式。`default` 是规划与对话模型，`image` 和 `vision` 是配套程序使用的图像能力，并非可直接调用的 Pi 工具名。供应商、模型与凭证由部署配置管理，程序自行读取，不打开配置文件查找密钥。
+
+从实际运行环境说明取得 **Bot directory**、**Working directory** 和 **Python executable**。使用该解释器和 Bot 根目录下 `scripts/book.py` 的绝对路径；不要根据作品目录猜 `../` 层数，也不搜索用户电脑上的同名脚本。以下 `<PYTHON>` 和 `<BOT>` 是占位符，须替换成环境提供的真实值，并按当前 Shell 规则转义路径：
+
+```sh
+"<PYTHON>" "<BOT>/scripts/book.py" --help
+"<PYTHON>" "<BOT>/scripts/book.py" doctor
+"<PYTHON>" "<BOT>/scripts/book.py" init my-book
+"<PYTHON>" "<BOT>/scripts/book.py" --project my-book status
+"<PYTHON>" "<BOT>/scripts/book.py" --project my-book generate --help
+```
+
+三个路径基准需分清：
+
+- Skill 的参考资料和自带验证器，相对于 Pi 目录展示中 `SKILL.md` 所在目录定位。
+- Bot 制作程序相对于环境提供的 Bot 根目录定位，与当前 Shell 目录无关。
+- 作品保存在 Bot 根目录下 `workspace/books/作品名/`。`--project 作品名` 放在子命令之前；generate/review 等命令的文件参数相对于该作品目录。直接使用 read/write 操作作品文件时，使用作品文件的绝对路径，避免与工具工作目录混淆。
+
+每次 Shell 调用从运行环境的工作目录开始；一次命令中的 `cd` 不会改变下次 Bash 或 read/write 的路径基准。正常创作只需 CLI 帮助和当前阶段的 Skill 资料，不需要通读程序源码。
+
+| 能力 | 配套命令 | 使用方式 |
+|---|---|---|
+| 环境检查 | doctor | 只检查配置与依赖，不发起付费请求；样页验收仍需实际执行 |
+| 项目建立与续做 | init / status | 新任务先建立项目，续做先检查已保存资产和请求日志 |
+| image 绘图与修改 | generate | 先写提示词文件；参考图用真实文件的 --reference 传入，具体参数按需查看帮助 |
+| vision 图片理解 | review | 实际传入图片并保存观察证据，不能用文件名或全书缩略图代替逐页审校 |
+| 中文排版与质检 | build / validate | book.json 的版式字段和示例见 build --help；排版成功不等于审校通过 |
+| 附件交付 | deliverables | 返回已验证文件的绝对路径，再交给 send_files；--draft 仅用于明确未验收的审阅稿 |
+
+只查看当前步骤的子命令帮助。按故事与分镜、角色参考、一张样页、其余页面、排版审校的顺序推进。图片网络请求上限 240 秒，Bash 调用需给足时间且不超过运行环境的 300 秒上限。结果未知的付费请求先检查已保存日志与供应商记录，不盲目重试。
+
 以下是配置路径，不代表本 skill 已在所有平台完成兼容性测试。当前已有完整绘本制作经验的是作者使用的 Codex 桌面会话；不等于所有 Codex 版本、账号和操作系统均已验证。Claude Code 与 DeepSeek Harness 需要在目标环境完成样页验收，才记录为该配置可用。
 
 ### Codex

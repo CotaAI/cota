@@ -19,12 +19,18 @@ llms:
 # 不设置环境变量；key/apibase/model 直接填入服务商提供的实际值。
 picture_book:
   image:
+    # openai：Images generations + multipart edits，要求 b64_json。
+    # qwen：文生图/参考图编辑都用 JSON images/generations，支持下载返回图片。
+    api: openai
     key: ""
     apibase: ""
     model: ""
     size: 1536x1024
     # 有些兼容服务需要 response_format: b64_json；GPT Image 一类接口可直接返回 base64。
     # response_format: b64_json
+    # api=qwen 默认只允许从 *.aliyuncs.com 下载生成结果。
+    # 使用其它结果域名时，按供应商文档明确配置，不填写带密钥/签名的 URL。
+    # download_hosts: ["*.aliyuncs.com", "images.your-provider.example"]
   vision:
     key: ""
     apibase: ""

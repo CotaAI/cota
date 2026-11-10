@@ -110,7 +110,8 @@ def apply_context(messages, event, *, active_run, trigger_event=None, deferred_i
         if not ids or [m['cotaEventId'] for m in messages[:len(ids)]] != ids:
             raise ValueError('Compaction must replace an exact current context prefix')
         message = {'role': 'user', 'content': '<historical_summary>\n' + p['summary'] + '\n</historical_summary>',
-                   'timestamp': int(event.timestamp * 1000), 'cotaEventId': event.event_id}
+                   'timestamp': int(event.timestamp * 1000), 'cotaEventId': event.event_id,
+                   'cotaCompaction': True}
         return [message] + messages[len(ids):]
     if message is None:
         return messages

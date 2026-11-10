@@ -40,9 +40,13 @@ class PiTraceRecorder:
     def _model_origin(self):
         pending = self._pending_model
         metadata = pending['metadata']
-        return {key: deepcopy(metadata[key]) for key in
+        origin = {key: deepcopy(metadata[key]) for key in
                 ('request_id', 'request_sequence', 'duration_ms', 'policy') if key in metadata} | {
                     'model': metadata.get('model'), 'stop_reason': pending['message']['stopReason']}
+        usage = pending['message'].get('usage', {})
+        if usage.get('totalTokens', 0) > 0:
+            origin['usage'] = {k: usage.get(k, 0) for k in ('input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens')}
+        return origin
 
     def observe_assistant(self, message):
         pending = self._pending_model

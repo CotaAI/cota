@@ -22,6 +22,9 @@ class LLM:
         self.supports_images = config.get('vision', False)
         if type(self.supports_images) is not bool:
             raise ValueError('endpoints.yml llms.<name>.vision must be boolean')
+        self.context_window = config.get('context_window')
+        if self.context_window is not None and (type(self.context_window) is not int or self.context_window < 2):
+            raise ValueError('endpoints.yml llms.<name>.context_window must be an integer greater than 1')
         self.client = LLMClientFactory.create_client(config)
         self.name = config.get('model')
 

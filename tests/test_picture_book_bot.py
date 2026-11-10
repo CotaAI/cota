@@ -131,6 +131,146 @@ def test_projects_cannot_escape_and_configs_are_optional_until_used(book_modules
         common.model_config(root, 'image')
 
 
+def qwen_config(root, **settings):
+    endpoints = yaml.safe_load((root / 'endpoints.yml').read_text())
+    endpoints['picture_book']['image'].update(api='qwen', model='qwen-image-3.0',
+        download_hosts=['images.example'], **settings)
+    (root / 'endpoints.yml').write_text(yaml.safe_dump(endpoints))
+
+
+def test_qwen_generation_reference_edit_and_url_download(book_modules, book_root):
+    root, project = book_root
+    qwen_config(root, size='1536x1024')
+    (project / 'prompt.txt').write_text('同一只小兔换一个动作，无文字。')
+    data = image_bytes()
+    (project / 'reference.png').write_bytes(data)
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        if request.method == 'GET':
+            assert request.url.host == 'images.example'
+            assert 'authorization' not in request.headers
+            return httpx.Response(200, content=data, headers={'Content-Type':'image/png'})
+        assert request.url.path == '/v1/images/generations'
+        assert request.headers['Authorization'] == 'Bearer PRIVATE_IMAGE_KEY'
+        body = json.loads(request.content)
+        assert body['model'] == 'qwen-image-3.0' and body['n'] == 1
+        assert body['size'] == '1536x1024'
+        if len(calls) > 2:
+            assert body['image'] == 'data:image/png;base64,' + base64.b64encode(data).decode()
+        else:
+            assert 'image' not in body
+        return httpx.Response(200, json={'data':[{'url':'https://images.example/book.png?sig=PRIVATE_SIGNED_URL'}]})
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        first = book_modules['models'].generate(root, project, 'prompt.txt', 'first.png', client=client)
+        assert book_modules['models'].generate(root, project, 'prompt.txt', 'first.png', client=client)['reused']
+        book_modules['models'].generate(root, project, 'prompt.txt', 'edited.png', references=['reference.png'], client=client)
+    assert len(calls) == 4 and first['status'] == 'completed'
+    assert (project / 'edited.png').read_bytes().startswith(b'\x89PNG')
+    assert all('PRIVATE_' not in p.read_text() for p in project.glob('*.json'))
+
+
+@pytest.mark.parametrize('url', ['http://images.example/a.png', 'https://evil.example/a.png',
+                                 'https://images.example.evil/a.png', 'https://user:pass@images.example/a.png',
+                                 'https://127.0.0.1/a.png'])
+def test_qwen_rejects_unapproved_image_urls_without_get(book_modules, book_root, url):
+    root, project = book_root
+    qwen_config(root)
+    (project / 'prompt.txt').write_text('小兔')
+    calls = []
+    def handle(request):
+        calls.append(request)
+        return httpx.Response(200, json={'data':[{'url':url}]})
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        with pytest.raises(ValueError) as error:
+            book_modules['models'].generate(root, project, 'prompt.txt', 'bad.png', client=client)
+    assert len(calls) == 1 and 'pass' not in str(error.value)
+    assert not (project / 'bad.png').exists()
+
+
+@pytest.mark.parametrize('failure', ['redirect', 'status', 'size', 'transport', 'invalid'])
+def test_qwen_download_failure_does_not_leak_url_or_retry(book_modules, book_root, failure):
+    root, project = book_root
+    qwen_config(root)
+    (project / 'prompt.txt').write_text('小兔')
+    calls = []
+    def handle(request):
+        calls.append(request)
+        if request.method == 'POST':
+            return httpx.Response(200, json={'data':[{'url':'https://images.example/book.png?sig=PRIVATE_SIGNED_URL'}]})
+        if failure == 'redirect':
+            return httpx.Response(302, headers={'Location':'https://evil.example/'})
+        if failure == 'status':
+            return httpx.Response(403, content=b'PRIVATE_SIGNED_URL')
+        if failure == 'size':
+            return httpx.Response(200, headers={'Content-Length':str(33 * 1024 * 1024)}, content=b'oversize')
+        if failure == 'transport':
+            raise httpx.ReadTimeout('PRIVATE_SIGNED_URL', request=request)
+        return httpx.Response(200, content=b'invalid image')
+    with httpx.Client(transport=httpx.MockTransport(handle), follow_redirects=True) as client:
+        with pytest.raises(ValueError) as error:
+            book_modules['models'].generate(root, project, 'prompt.txt', 'bad.png', client=client)
+    assert len(calls) == 2 and 'PRIVATE_' not in str(error.value)
+    assert not (project / 'bad.png').exists()
+    assert json.loads((project / 'bad.request.json').read_text())['status'] == 'started'
+
+
+def test_qwen_reference_limits_are_checked_before_requests(book_modules, book_root):
+    root, project = book_root
+    qwen_config(root)
+    (project / 'prompt.txt').write_text('小兔')
+    (project / 'reference.png').write_bytes(image_bytes())
+    def unexpected(request):
+        raise AssertionError('Invalid references must not invoke the provider')
+    with httpx.Client(transport=httpx.MockTransport(unexpected)) as client:
+        with pytest.raises(ValueError, match='three|3'):
+            book_modules['models'].generate(root, project, 'prompt.txt', 'bad.png',
+                references=['reference.png'] * 4, client=client)
+    assert not (project / 'bad.request.json').exists()
+
+
+def test_unknown_image_api_fails_configuration_check(book_modules, book_root):
+    root, _ = book_root
+    qwen_config(root)
+    data = yaml.safe_load((root / 'endpoints.yml').read_text())
+    data['picture_book']['image']['api'] = 'unsupported'
+    (root / 'endpoints.yml').write_text(yaml.safe_dump(data))
+    with pytest.raises(ValueError, match='api'):
+        book_modules['common'].model_config(root, 'image')
+
+
+def test_qwen_download_stream_limit_without_content_length(book_modules, book_root, monkeypatch):
+    root, project = book_root
+    qwen_config(root)
+    (project / 'prompt.txt').write_text('小兔')
+    monkeypatch.setattr(book_modules['models'], 'MAX_IMAGE_BYTES', 8)
+    class Chunks(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b'12345'
+            yield b'67890'
+    def handle(request):
+        if request.method == 'POST':
+            return httpx.Response(200, json={'data':[{'url':'https://images.example/output.png'}]})
+        return httpx.Response(200, stream=Chunks())
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        with pytest.raises(ValueError, match='exceeds'):
+            book_modules['models'].generate(root, project, 'prompt.txt', 'bad.png', client=client)
+    assert not (project / 'bad.png').exists()
+
+
+@pytest.mark.parametrize('hosts', [[], ['*'], ['localhost'], ['127.0.0.1'], ['*.com'], ['https://images.example'], 'images.example'])
+def test_qwen_download_allowlist_is_validated(book_modules, book_root, hosts):
+    root, _ = book_root
+    qwen_config(root)
+    data = yaml.safe_load((root / 'endpoints.yml').read_text())
+    data['picture_book']['image']['download_hosts'] = hosts
+    (root / 'endpoints.yml').write_text(yaml.safe_dump(data))
+    with pytest.raises(ValueError, match='download_hosts'):
+        book_modules['common'].model_config(root, 'image')
+
+
 def make_book(project):
     roles = ['cover', 'inside-cover', 'title', 'blank', 'story', 'ending', 'inside-back-cover', 'back-cover']
     (project / 'art.png').write_bytes(image_bytes())
@@ -213,7 +353,7 @@ async def test_real_pi_long_tool_chain_and_sqlite_resume(book_modules, tmp_path)
     from tests.integration.test_example_bots import ModelHTTP
     from openai import AsyncOpenAI
 
-    root = tmp_path / 'picture-book'
+    root = tmp_path / 'picture book'
     shutil.copytree(BOT, root, ignore=TEMPLATE_IGNORE)
     endpoints = yaml.safe_load((root / 'endpoints.yml').read_text())
     endpoints['llms']['default'].update(key='TEST_ONLY', apibase='https://model.example/v1', model='test-model')
@@ -222,15 +362,19 @@ async def test_real_pi_long_tool_chain_and_sqlite_resume(book_modules, tmp_path)
     skill = root / 'skills/creating-childrens-picture-books'
     model = ModelHTTP([
         {'tool_calls': [call('read', {'path': str(skill / 'SKILL.md')}, 'skill')]},
+        {'tool_calls': [call('read', {'path': str(skill / 'references/runtime-setup.md')}, 'capabilities')]},
         {'tool_calls': [call('bash', {'command': script + ' build --help'}, 'layout-help')]},
         {'tool_calls': [call('bash', {'command': script + ' init long-story'}, 'init')]},
         {'tool_calls': [call('write', {'path': 'books/long-story/故事与分镜.md', 'content': '小兔抬头，看见一片云。'}, 'story')]},
-        {'tool_calls': [call('bash', {'command': script + ' --project long-story status'}, 'status')]},
+        {'tool_calls': [call('bash', {'command': 'cd ' + shlex.quote(str(root / 'workspace/books/long-story'))
+            + ' && ' + script + ' --project long-story status'}, 'status')]},
         {'content': '故事和项目已经保存。还没有生成插图。'},
         {'tool_calls': [call('read', {'path': 'books/long-story/故事与分镜.md'}, 'resume')]},
         {'content': '前面保存的是小兔看云的故事。'},
     ])
     async def open_agent():
+        from cota.policy import train_policy
+        await train_policy(root, yaml.safe_load((root / 'agent.yml').read_text())['policy'])
         agent = Agent.load_from_path(str(root))
         adapter = agent.llm_instance('default').client
         original = adapter.client
@@ -249,13 +393,19 @@ async def test_real_pi_long_tool_chain_and_sqlite_resume(book_modules, tmp_path)
         state = await agent.store.export_session('book')
         assert state['execution']['status'] == 'completed'
         results = [e for e in state['events'] if e['type'] == 'tool_result']
-        assert len(results) == 5 and all(e['payload']['status'] == 'success' for e in results)
-        layout_help = json.dumps(model.requests[2]['messages'])
+        assert len(results) == 6 and all(e['payload']['status'] == 'success' for e in results)
+        layout_help = json.dumps(model.requests[3]['messages'])
         assert 'image_box' in layout_help and 'text_elements' in layout_help
+        capability_help = json.dumps(model.requests[2]['messages'], ensure_ascii=False)
+        assert 'Cota 绘本 Bot 配套入口' in capability_help
         assert (root / 'workspace/books/long-story/故事与分镜.md').read_text() == '小兔抬头，看见一片云。'
-        assert 'brief-before-production' in model.requests[0]['messages'][0]['content']
+        assert 'Policy: text-only' in model.requests[0]['messages'][0]['content']
+        assert model.requests[0]['messages'][0]['content'].count('Policy: ') <= 3
         system_prompt = model.requests[0]['messages'][0]['content']
-        assert '../scripts/book.py' in system_prompt
+        assert 'Bot directory: ' + json.dumps(str(root)) in system_prompt
+        assert 'Python executable: ' + json.dumps(sys.executable) in system_prompt
+        assert '../scripts/book.py' not in system_prompt
+        assert 'scripts/book.py' not in system_prompt
         assert 'cota-runtime.md' not in system_prompt
         assert 'picture_book.image' not in system_prompt and 'picture_book.vision' not in system_prompt
         assert not any('PRIVATE_' in json.dumps(request) for request in model.requests)
@@ -448,6 +598,8 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
     ]
     agent = None
     try:
+        from cota.policy import train_policy
+        await train_policy(root, yaml.safe_load((root / 'agent.yml').read_text())['policy'])
         agent = Agent.load_from_path(str(root))
         model = AsyncMock(side_effect=sequence)
         monkeypatch.setattr(agent.llm_instance('default'), 'generate_chat', model)

@@ -20,6 +20,8 @@ def bundle(tmp_path):
     (vendor / 'skills.mjs').write_text('skills')
     (vendor / 'tools.mjs').write_text('tools')
     (vendor / 'http.mjs').write_text('http')
+    (vendor / 'files.mjs').write_text('files')
+    (vendor / 'context.mjs').write_text('context')
     coding = vendor / 'node_modules/@earendil-works/pi-coding-agent'
     coding.mkdir(parents=True)
     (coding / 'package.json').write_text(json.dumps({'version': '1.4.0'}))
@@ -121,6 +123,8 @@ def test_release_npm_lock_uses_public_registry():
 def test_native_tool_adapter_is_required_in_bundle(tmp_path):
     builder = load_builder()
     assert 'tools.mjs' in builder.INPUTS
+    assert 'context.mjs' in builder.INPUTS
+    assert 'files.mjs' in builder.INPUTS
     root = bundle(tmp_path)
     (root / '_vendor/tools.mjs').unlink()
     with pytest.raises(RuntimeError, match='reinstall'):

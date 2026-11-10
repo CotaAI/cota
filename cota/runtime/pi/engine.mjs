@@ -3,6 +3,8 @@ import { createSkillResources } from './skills.mjs';
 import { createHttpTool } from './http.mjs';
 import { createNativeTools } from './tools.mjs';
 import { createSendFilesTool } from './files.mjs';
+import {resolveContextModel, compactionSettings, estimateRequest, compactContext} from './context.mjs';
+import {shouldCompact} from '@earendil-works/pi-coding-agent';
 import { Agent } from '@earendil-works/pi-agent-core';
 import piPackage from '@earendil-works/pi-agent-core/package.json' with {type: 'json'};
 import { createAssistantMessageEventStream, getCurrentSystemPrompt } from '@earendil-works/pi-ai';
@@ -38,10 +40,9 @@ export async function runAgent(options, rpc, signal) {
   let turns = 0, limited = false, fatal;
   let schemas = [], latestAssistant;
   const pendingStarts = new Map();
-  const model = {id: 'cota-configured-model', name: 'Cota model adapter',
-    api: 'openai-completions', provider: 'cota', baseUrl: '', reasoning: false,
-    input: ['text', 'image'], contextWindow: 128000, maxTokens: 4096,
-    cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0}};
+  const model = resolveContextModel(options.model);
+  const settings = compactionSettings(model, options.compaction);
+  let contextBudget;
   const request = async (method, payload) => {
     if (fatal) throw fatal;
     try { return await rpc(method, payload); }
@@ -84,7 +85,29 @@ export async function runAgent(options, rpc, signal) {
     initialState: {model, messages: options.messages},
     toolExecution: 'sequential',
     prepareRequest: async ({context}) => {
-      const prepared = await request('prepare', {messages: context.messages, skillPrompt: resources.prompt, toolPrompt: native.prompt, nativeTools: native.schemas, extensionTools});
+      const prepare = messages => request('prepare', {messages, skillPrompt: resources.prompt,
+        toolPrompt: native.prompt, nativeTools: native.schemas, extensionTools});
+      let prepared = await prepare(context.messages);
+      for (let attempt = 0; ; attempt++) {
+        contextBudget = {...estimateRequest(prepared.messages, prepared.tools), context_window: model.contextWindow,
+          capacity_source: model.capacitySource, reserve_tokens: settings.reserveTokens};
+        if (estimateRequest(prepared.messages.filter(m => m.role === 'system'), prepared.tools).budget_tokens
+            >= model.contextWindow - settings.reserveTokens)
+          throw new Error('System prompt and tool definitions exceed the model budget; reduce guidance or increase context_window');
+        if (!shouldCompact(contextBudget.budget_tokens, model.contextWindow, settings)) break;
+        if (attempt >= 2) throw new Error('Context still exceeds the Pi token budget after compaction; narrow the task or increase context_window');
+        const summaryStream = async (_model, summaryContext) => {
+          const response = await request('summarize', {messages: summaryContext.messages,
+            systemPrompt: getCurrentSystemPrompt(summaryContext.messages), maxTokens: Math.min(2000, settings.reserveTokens)});
+          const message = assistantMessage(response, model);
+          const stream = createAssistantMessageEventStream();
+          stream.push({type: 'done', reason: message.stopReason, message});
+          return stream;
+        };
+        const result = await compactContext(prepared.messages, model, settings, summaryStream, signal);
+        const committed = await request('compact', result);
+        prepared = await prepare(committed.messages);
+      }
       schemas = prepared.tools;
       const tools = toolsFor(schemas);
       // prepareRequest changes the low-level loop's context, not Agent.state.
@@ -108,7 +131,7 @@ export async function runAgent(options, rpc, signal) {
     },
     streamFn: async (_, context) => {
       const response = await request('model', {
-        messages: context.messages, systemPrompt: getCurrentSystemPrompt(context.messages), tools: schemas,
+        messages: context.messages, systemPrompt: getCurrentSystemPrompt(context.messages), tools: schemas, contextBudget,
       });
       const message = response._cota_message ?? assistantMessage(response, model);
       latestAssistant = message;
@@ -127,6 +150,11 @@ export async function runAgent(options, rpc, signal) {
     },
   });
   agent.subscribe(async event => {
+    if (event.type === 'message_end' && event.message.role === 'assistant'
+        && ['error', 'aborted'].includes(event.message.stopReason)) {
+      fatal ??= new Error(event.message.errorMessage || 'Pi model request interrupted');
+      throw fatal;
+    }
     if (event.type === 'tool_execution_start') {
       pendingStarts.set(event.toolCallId, event);
       return;

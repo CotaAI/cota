@@ -58,6 +58,8 @@ Cota 在每轮开始用 Pi 官方 grep/find 工具检查空临时目录；这不
 
 Pi 内部的文件修改队列只覆盖单个 worker；不同会话/worker 写同一文件没有事务隔离。machine 不承诺多人文件并发隔离。Skill 的脚本与依赖需由部署方准备；读取 SKILL.md 不等于安装或运行脚本。
 
+machine 的运行环境说明提供真实的 Bot 根目录、工具工作目录和启动 Cota 的 Python 解释器路径。Skill 或配套程序的帮助负责说明调用方法，agent.yml 负责能力用途与业务要求，无需硬编码安装路径。调用 Bot 自带脚本时使用解释器与入口的绝对路径，并正确转义 Shell 参数；Skill 内引用的文件按 Pi 展示的 Skill 目录解析。一次 Shell 调用中的 `cd` 不会改变下次工具调用的工作目录。none 环境不展示机器执行位置，也不因这些说明获得脚本执行能力。
+
 部署模式与解析后的环境在每轮绑定；工具执行前重新核对，运行中切换模式或环境会阻止原生调用。所有原生调用同样保存 `tool_started` / `tool_result`；结果保存成功后才允许继续。edit 保存 diff，bash/powershell 保存退出码、耗时、截断状态和可能的完整输出临时路径；模型可见正文单独保留且不再复制完整 Shell 输出。临时输出路径指向宿主机文件，不是持久化附件服务，清理或迁移后不可保证文件仍存在。搜索/列举工具的原生截断与条数限制信息也随结果保存。`deploy`、执行环境和工具可用性保存到本轮 run metadata，可在 Debug 的 Skills & Tools 详情 JSON 中查看。
 
 Shell 命令超时取模型请求和 `timeout_seconds` 上限的较小值；省略时使用环境上限。grep/find/ls 不新增自定义超时机制，取消信号直接交给 Pi；`dialogue.run_timeout_seconds` 仍限制整轮执行。取消通过 AbortSignal 交给 Pi 终止命令进程树，不回滚已经完成的文件写入，不自动重试。

@@ -63,7 +63,7 @@ class LLMClientFactory:
         elif client_type == 'custom':
             extra_config = {
                 k: v for k, v in config.items() 
-                if k not in ['type', 'key', 'apibase', 'model', 'vision']
+                if k not in ['type', 'key', 'apibase', 'model', 'vision', 'context_window']
             }
             return CustomHttpClient(
                 api_key=api_key,

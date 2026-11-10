@@ -8,7 +8,7 @@ Cota 保存输入、执行事实和会话上下文；Pi Agent Core 决定本轮�
 2. Processor 从已保存的触发输入构造本轮上下文视图，刷新当前用户记忆。后续输入可继续落库，但不混入本轮。群聊由 Application 管理参与决策与触发输入；低层 Processor 的独立 shell/评测入口仍自行保存输入。
 3. Cota 追加并提交 `run_started`，把 DST 已投影的模型上下文传给本轮 Pi worker。
 4. Pi 发现该 Bot 的 Skill 资源。Cota 保存本轮资源目录和执行环境到 run metadata，并校验 Policy 引用的 Skill。
-5. 每次模型请求前，Pi 调用 Cota 的 `prepare`。Cota 根据当前上下文生成 Policy guidance、必要时压缩历史、重新计算工具 schema，然后请求已配置的 LLM。
+5. 每次模型请求前，Pi 调用 Cota 的 `prepare`，根据当前上下文生成 Policy guidance 和工具 schema。Pi 适配层随后检查 token 预算，必要时使用官方组件压缩；Cota 提交压缩事件并重新准备指导后，再通过模型适配器请求已配置的 LLM。
 6. Pi 处理模型输出：执行工具后继续请求模型，或产生文字回复。Cota 持久化每个开始、结果、回复与结束事实。
 7. 已提交的回复才进入 Channel callback 或持久化投递队列。传输失败可以从历史恢复，不能因此重新运行模型和工具。
 
@@ -40,7 +40,9 @@ Cota 的模型上下文由事件增量投影而来，并包含在快照中。恢
 
 Pi 只持有本轮暂态上下文。每次 `prepare` 都重新加入当前 system prompt、Skill 目录、Pi 工具使用指南、执行环境说明和业务 guidance。Policy 的“已阅读 Skill”依据仍留在模型上下文中的成功读取结果计算；最近阅读标签 `active_skill` 不能替代这一证据。
 
-超出 `context_max_chars` 时，Cota 只摘要完整的较早用户轮次，保留当前轮及未完成工具批次。压缩记录为 `context_compaction`；Store 原始历史不删除。当前轮本身仍过大或摘要失败时，本轮报错，不静默截断证据。
+每次模型请求前，Node 适配层复用 Pi 的 `estimateTokens`、`shouldCompact`、`findCutPoint` 和 `compact`，结合实际供应商 usage 检查 token 预算。图片采用 Pi 的独立估算，不按 Base64 字符数计算；工具定义也计入预算。usage 推导预算会保守预留当前 system/工具大小，以覆盖 Policy 等指令变化，可能提前压缩，不代表精确计费。超过模型容量减预留 token 的阈值时，Pi 选择安全切分点并生成摘要，支持在同一个用户任务中切分，保留最近的工具调用与结果配对。摘要请求通过 Cota 现有模型适配器发出，输出最多2000 token且不超过预留预算；摘要输入本身过大时在调用供应商前拒绝。
+
+Cota 验证替换范围是当前上下文的准确前缀，保存 `context_compaction` 并提交 Store，再从 DST 投影重新准备 Policy 和上下文。原始事件不删除；无须 AgentSession 或 Pi 会话文件。空摘要、截断、取消、提交失败时不继续模型/工具执行；无法缩减的单条输入或最近工具批次明确报错。旧摘要前的 usage 不用于新的上下文预算。模型容量优先来自 `endpoints.yml` 的 `context_window`，其次是 Pi 内置目录；未知型号使用标记为 fallback 的 65,536 token 运行预算，部署者可按供应商确认值覆盖。
 
 实现入口：`cota/processor.py`、`cota/runtime/pi_runtime.py`、`cota/runtime/pi/engine.mjs`、`cota/runtime/pi_trace.py`。
 

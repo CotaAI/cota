@@ -8,6 +8,7 @@ import time
 from uuid import uuid4
 
 from cota.events.context import assistant_message
+from .metrics import request_metrics, usage_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,7 @@ async def provider_request(parameters):
     state = _active.get()
     if state is not None and state['recorder'].debug_enabled:
         state['diagnostic']['request'] = deepcopy(parameters)
+        state['diagnostic']['request_size'] = request_metrics(parameters)
         state['diagnostic']['request_stage'] = 'provider'
         await state['recorder'].save_debug(state['diagnostic']['request_id'], state['diagnostic'])
 
@@ -102,3 +104,8 @@ def provider_response(response):
     if state is not None and state['recorder'].debug_enabled:
         state['diagnostic']['provider_response'] = (response.model_dump(mode='json')
             if hasattr(response, 'model_dump') else deepcopy(response))
+        provider = state['diagnostic']['provider_response']
+        if isinstance(provider, dict):
+            measured = usage_metrics(provider)
+            if measured is not None:
+                state['diagnostic']['usage'] = measured

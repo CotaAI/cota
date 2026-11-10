@@ -3,7 +3,7 @@
  */
 import { access, mkdir, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import {
@@ -29,7 +29,7 @@ function validateEnvironment(deploy, environment) {
       || environment.timeout_seconds <= 0)) throw new Error('Machine requires absolute workspace and positive timeout');
 }
 
-export async function createNativeTools({cwd = process.cwd(), deploy = 'service', environment = {type: 'none'}}, resources, request, signal) {
+export async function createNativeTools({cwd = process.cwd(), pythonExecutable, deploy = 'service', environment = {type: 'none'}}, resources, request, signal) {
   validateEnvironment(deploy, environment);
   // This worker never installs dependencies during a Bot turn. Pi handles the
   // search binary lookup itself; its native offline switch prevents downloads.
@@ -146,8 +146,10 @@ export async function createNativeTools({cwd = process.cwd(), deploy = 'service'
     return result;
   }}));
   const guidelines = definitions.flatMap(definition => definition.promptGuidelines ?? []);
+  const python = typeof pythonExecutable === 'string' && isAbsolute(pythonExecutable)
+    ? ` Python executable: ${JSON.stringify(pythonExecutable)}.` : '';
   const context = machine
-    ? `Execution environment: machine. Working directory: ${JSON.stringify(workdir)}. This is a starting directory, not a sandbox. Commands run on the deployment machine, not the chat user's device. Shell timeout limit: ${environment.timeout_seconds} seconds.`
+    ? `Execution environment: machine. Bot directory: ${JSON.stringify(resolve(cwd))}. Working directory: ${JSON.stringify(workdir)}.${python} Relative tool paths use the working directory; a shell cd applies only to that command, not later tool calls. This is a starting directory, not a sandbox. Commands run on the deployment machine, not the chat user's device. Shell timeout limit: ${environment.timeout_seconds} seconds.`
     : 'Execution environment: none. read can only access the advertised Bot Skill resources. No user filesystem or shell is available.';
   return {tools, inventory: {available: tools.map(tool => tool.name), unavailable}, schemas: tools.map(tool => ({type: 'function', function: {
     name: tool.name, description: tool.description, parameters: tool.parameters,

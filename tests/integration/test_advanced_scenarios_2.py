@@ -223,13 +223,12 @@ class TestMessageBusCloseWhileConsuming:
 # ===========================================================================
 
 class TestPiContextBudget:
-    """Compression uses completed turns, never slices an in-flight tool batch."""
+    """Cota commits Pi-selected prefixes and keeps original execution facts."""
 
     @pytest.mark.asyncio
     async def test_compression_preserves_current_tool_batch(self):
         from cota.runtime.pi_runtime import PiAgentRuntime
         agent = MockAgent()
-        agent.dialogue['context_keep_turns'] = 1
         dst = DST('compact', agent)
         dst.append_event(UserUtterEvent('old' * 1000))
         dst.append_event(BotUtterEvent('old answer'))
@@ -246,10 +245,13 @@ class TestPiContextBudget:
         current = dst.context_messages[2:]
         messages = [{'role': 'system', 'content': 'current policy'}] + dst.context_messages
         agent._llm_mock.generate_chat.return_value = {'content': 'old summary'}
-        projected = await runtime._compact(messages)
-        assert projected[0] == messages[0]
-        assert projected[2:] == current
-        assert 'old summary' in projected[1]['content']
+        projected = (await runtime._handle_request('compact', {
+            'summary': 'old summary',
+            'replaced_message_ids': [m['cotaEventId'] for m in dst.context_messages[:2]],
+            'first_kept_id': current[0]['cotaEventId'],
+        }))['messages']
+        assert projected[1:] == current
+        assert 'old summary' in projected[0]['content']
         assert len(messages[1]['content']) == 3000
 
     @pytest.mark.asyncio
@@ -257,25 +259,31 @@ class TestPiContextBudget:
         from cota.runtime.pi_runtime import PiAgentRuntime
         agent = MockAgent()
         dst = DST('large', agent)
+        agent._llm_mock.context_window = 2000
+        agent.dialogue['compaction'] = {'reserve_tokens': 500, 'keep_recent_tokens': 100}
+        dst.append_event(UserUtterEvent('x' * 40000))
         runtime = PiAgentRuntime(agent, dst, 'large')
-        messages = [{'role': 'system', 'content': 'policy'}, {'role': 'user', 'content': 'x' * 4000}]
-        with pytest.raises(RuntimeError, match='Current context exceeds'):
-            await runtime._compact(messages)
+        with pytest.raises(RuntimeError, match='cannot be compacted'):
+            await runtime.run()
         agent._llm_mock.generate_chat.assert_not_awaited()
-        assert len(messages[1]['content']) == 4000
+        assert len(dst.latest_user_text()) == 40000
 
     @pytest.mark.asyncio
     async def test_failed_summary_retains_original_messages(self):
         from cota.runtime.pi_runtime import PiAgentRuntime
         from copy import deepcopy
         agent = MockAgent()
-        agent.dialogue['context_keep_turns'] = 1
+        agent._llm_mock.context_window = 3000
+        agent.dialogue['compaction'] = {'reserve_tokens': 1000, 'keep_recent_tokens': 200}
         agent._llm_mock.generate_chat.return_value = {'content': ''}
         dst = DST('failure', agent)
+        dst.append_event(UserUtterEvent('old task'))
+        dst.append_event(BotUtterEvent('x' * 16000))
+        dst.append_event(UserUtterEvent('current'))
         runtime = PiAgentRuntime(agent, dst, 'failure')
-        messages = [{'role': 'system', 'content': 'policy'},
-                    {'role': 'user', 'content': 'x' * 4000}, {'role': 'user', 'content': 'current'}]
+        messages = dst.context_messages
         original = deepcopy(messages)
-        with pytest.raises(RuntimeError, match='Context summary failed'):
-            await runtime._compact(messages)
+        with pytest.raises(RuntimeError, match='empty summary'):
+            await runtime.run()
         assert messages == original
+        assert not any(e.type == 'context_compaction' for e in dst.events)

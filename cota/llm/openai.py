@@ -42,6 +42,15 @@ class OpenAIClient(LLMClient):
         choice = response.choices[0]
         reason = getattr(choice, 'finish_reason', None)
         result = {'content': choice.message.content or '', 'finish_reason': reason}
+        usage = getattr(response, 'usage', None)
+        if usage is not None:
+            prompt = getattr(usage, 'prompt_tokens', 0) or 0
+            output = getattr(usage, 'completion_tokens', 0) or 0
+            cached = getattr(getattr(usage, 'prompt_tokens_details', None), 'cached_tokens', 0) or 0
+            result['usage'] = {'input': max(0, prompt - cached), 'output': output,
+                              'cacheRead': cached, 'cacheWrite': 0,
+                              'totalTokens': getattr(usage, 'total_tokens', None) or prompt + output,
+                              'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0, 'total': 0}}
         if choice.message.tool_calls:
             result['tool_calls'] = [
                 {'id': call.id, 'type': 'function',

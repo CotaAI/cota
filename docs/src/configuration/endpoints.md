@@ -69,6 +69,8 @@ OpenAI 类型的 `apibase` 为 API base URL；custom 类型直接 POST 到该 UR
 
 `max_tokens` 等每轮对话设置放在 `agent.yml` 的 `dialogue` 中；它们不是 openai factory 自动透传的额外字段。LLM 使用完成后由 Agent cleanup 关闭。
 
+`llms.<name>.context_window` 可填写供应商确认的上下文 token 容量（大于1的整数，并须大于 `dialogue.max_tokens`）。该字段只供 Pi 预算与压缩使用，不发送给供应商；未填写时先查 Pi 内置模型目录，未知型号使用标记为 fallback 的65,536 token保守运行预算，不代表供应商实际容量。供应商返回的 usage 在普通模式也用于后续预算，不依赖 Debug。`dialogue.compaction` 可调整预留和最近保留预算，详见 [agent.yml](agent.md)。
+
 `vision: true` 是可选的 Cota 模型能力声明，默认 false。启用后，上传的小图片可作为真实视觉输入传给该对话模型；该字段不作为供应商请求参数发送。纯文本主模型可保持 false，使用 Skill 的专门视觉服务，详见 [附件与模型理解](../concepts/attachments.md)。
 
 ### 评测模型

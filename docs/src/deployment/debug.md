@@ -49,6 +49,11 @@ Events 的序号属于完整事实流。聊天历史只展示 user_utter/bot_utt
 | debug.response | Cota 适配后的模型响应 |
 | debug.provider_response | 供应商原始响应，若适配器提供 |
 | debug.preparation | Policy 的选择、thought、预算省略和准备诊断 |
+| debug.request_size | 按 system/user/assistant/tool 分类的实际字符数、system 内 Policy/Skill 目录大小、工具定义字符数、图片数量和内联字节数 |
+| debug.preparation.context_budget | Pi token 估算、实际 usage 推导预算、模型容量及来源、预留 token；估算不等同供应商计费 |
+| debug.usage | 供应商报告的输入、缓存命中、输出和推理 token 数；未提供时不伪造 |
+
+Model Requests 列表显示运行中请求的等待时长，详情显示本次耗时、实际用量和上下文构成，选中该页时自动刷新。等待模型期间没有新的执行事件是正常情况，不额外添加心跳 Event。查看较早的请求时仍可手动刷新或返回列表。
 
 模型最终回复与同批次工具调用沿 llm_event_id 找到来源请求。没有诊断就不显示 debug。
 这是**只读聚合**：底层诊断独立保存于 SQL `model_debug` 表或 MemoryStore 映射，没有把大请求复制进每条 Event，也不参与 DST 恢复。
@@ -59,7 +64,7 @@ Events 的序号属于完整事实流。聊天历史只展示 user_utter/bot_utt
 | --- | --- | --- |
 | 用户/Bot 发言、工具调用与结果 | 保存 | 保存 |
 | 运行边界、压缩、Skill 阅读资源标记 | 保存 | 保存 |
-| 模型输出来源、实际 Policy 案例指纹 | 在 Bot/工具来源事件中保存 | 同左 |
+| 模型输出来源、实际 Policy 案例指纹、供应商提供的 token 计数 | 在 Bot/工具来源事件中保存 | 同左 |
 | 完整请求、供应商响应、Policy 详细选择诊断 | 不保证保存 | 独立诊断保存 |
 | 已提交事件完整 JSON 日志 | 不开启该详细文件输出 | workspace/debug/execution.log |
 

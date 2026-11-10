@@ -41,9 +41,8 @@ policy:
 | `dialogue.max_tokens` | 每次主模型请求上限，默认 500，正整数 |
 | `dialogue.max_iterations` | Processor 创建 runtime 时默认 30，正整数 |
 | `dialogue.run_timeout_seconds` | 整轮 Pi bridge 超时，默认 300，正有限数值 |
-| `dialogue.context_max_chars` | 请求上下文 JSON 字符预算，默认 320000，正整数 |
-| `dialogue.context_keep_turns` | 压缩保留最近用户轮次，默认 3，正整数 |
-| `dialogue.summary_max_tokens` | 摘要调用上限，默认 2000，正整数 |
+| `dialogue.compaction.reserve_tokens` | 上下文预留 token；默认取输出上限与 `min(16384, context_window/4)` 中较大者，必须覆盖 `max_tokens` 且小于模型容量 |
+| `dialogue.compaction.keep_recent_tokens` | Pi 切分时尽量保留的最近 token；默认 `min(20000, (context_window-reserve_tokens)/2)`，须小于剩余预算 |
 | `dialogue.pi_node` | 可选 Node 路径或可执行文件名称 |
 
 `mode` 和 `response` 的行为需结合 [群聊](../deployment/group.md) 与 Application 使用。`use_proxy_user`、`max_proxy_step`、`proxy_prompt` 和顶层 `user_proxy.description` 仍被配置校验接受，但当前带输入标识的 Processor 路径明确拒绝启用 proxy 模拟，不作为可部署对话方案。
