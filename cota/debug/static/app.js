@@ -38,7 +38,7 @@ function boot() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
     try {
-      const response = await fetch(debugRequestURL(path, location.href, selectedSession), {signal:controller.signal, cache:'no-store', credentials:'omit'});
+      const response = await fetch(debugRequestURL(path, location.href, selectedSession), {signal:controller.signal, cache:'no-store', credentials:'same-origin'});
       const data = await response.json();
       if (!response.ok) {
         const failure = new Error(data.error || `HTTP ${response.status}`);

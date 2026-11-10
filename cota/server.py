@@ -5,6 +5,7 @@ surface deliberately exposes conversation messages, never raw DST/tool data.
 """
 import asyncio
 import logging
+import os
 from pathlib import Path
 from urllib.parse import urlsplit, unquote, quote
 from uuid import uuid4
@@ -19,6 +20,27 @@ from cota.runtime.pi_runtime import RunInProgress
 from cota.channels.registry import validate_channels
 
 logger = logging.getLogger(__name__)
+
+
+def _mount_debug_on_sanic(app, viewer):
+    """Reverse-proxy debug viewer routes through the main Sanic port."""
+    import httpx
+    prefix = '/debug/' + viewer.token
+
+    @app.get(prefix + '/<path:path>')
+    @app.get(prefix + '/')
+    async def debug_proxy(request, path=''):
+        upstream = f'{viewer.origin}/{viewer.token}/{path}'
+        if request.query_string:
+            upstream += '?' + request.query_string
+        upstream_host = urlsplit(viewer.origin).netloc
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(upstream, headers={'Host': upstream_host})
+        return response.raw(
+            resp.content,
+            status=resp.status_code,
+            content_type=resp.headers.get('content-type', 'text/html'),
+        )
 
 
 def _origin(value):
@@ -118,6 +140,8 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
             if request.method == 'POST' and not application.accepting_messages:
                 raise ServiceUnavailable('Application is not accepting messages')
             return  # Platform callbacks own their signature/authentication policy.
+        if request.path.startswith('/debug/'):
+            return  # Debug viewer has its own token-based access control.
         origin = request.headers.get('origin')
         if origin:
             parsed = _origin(origin)
@@ -201,8 +225,12 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
                 from cota.debug.server import DebugServer
                 import sys
                 viewer = app.ctx.debug_viewer = DebugServer(Inspector(agent))
+                embed = os.environ.get('COTA_DEBUG_EMBED', '').lower() in ('1', 'true', 'yes')
                 try:
                     url = await viewer.start()
+                    if embed:
+                        _mount_debug_on_sanic(app, viewer)
+                        url = f'/debug/{viewer.token}/'
                     sys.stderr.write(f'Cota Debug: {url}\n')
                     sys.stderr.flush()
                 except Exception as error:
