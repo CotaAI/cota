@@ -176,6 +176,7 @@ def test_qwen_generation_reference_edit_and_url_download(book_modules, book_root
                                  'https://images.example.evil/a.png', 'https://user:pass@images.example/a.png',
                                  'https://127.0.0.1/a.png'])
 def test_qwen_rejects_unapproved_image_urls_without_get(book_modules, book_root, url):
+    pytest.importorskip('PIL')
     root, project = book_root
     qwen_config(root)
     (project / 'prompt.txt').write_text('小兔')
@@ -192,6 +193,7 @@ def test_qwen_rejects_unapproved_image_urls_without_get(book_modules, book_root,
 
 @pytest.mark.parametrize('failure', ['redirect', 'status', 'size', 'transport', 'invalid'])
 def test_qwen_download_failure_does_not_leak_url_or_retry(book_modules, book_root, failure):
+    pytest.importorskip('PIL')
     root, project = book_root
     qwen_config(root)
     (project / 'prompt.txt').write_text('小兔')
@@ -242,6 +244,7 @@ def test_unknown_image_api_fails_configuration_check(book_modules, book_root):
 
 
 def test_qwen_download_stream_limit_without_content_length(book_modules, book_root, monkeypatch):
+    pytest.importorskip('PIL')
     root, project = book_root
     qwen_config(root)
     (project / 'prompt.txt').write_text('小兔')
