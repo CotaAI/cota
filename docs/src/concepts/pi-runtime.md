@@ -23,7 +23,7 @@ python -m cota.runtime.pi_setup
 在仓库根目录使用 Python 3.12+ 执行：
 
 ```bash
-python -m pip install build
+uv pip install build
 python scripts/bundle_runtime.py
 COTA_RUNTIME_DIR="$PWD/.build/pi-runtime" python -m build
 ```

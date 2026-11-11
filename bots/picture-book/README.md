@@ -13,7 +13,7 @@
 在运行 Cota 的同一 Python 环境安装这个 Bot 的可选依赖：
 
 ```sh
-python -m pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 另需 Poppler 的 `pdftoppm`：macOS 可 `brew install poppler`，Debian/Ubuntu 可 `sudo apt install poppler-utils`。准备一份可嵌入、含所需中文的 TrueType `.ttf/.ttc` 字体；不要把无授权字体放进分享包。以上依赖不进入 Cota 核心安装。

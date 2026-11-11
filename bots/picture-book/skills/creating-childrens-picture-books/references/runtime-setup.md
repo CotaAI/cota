@@ -106,8 +106,7 @@
 例如，在项目虚拟环境内安装Python依赖：
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install reportlab Pillow pypdf
+uv pip install reportlab Pillow pypdf
 ```
 
 Windows使用 `.venv\Scripts\python.exe`；若环境没有 `python3` 命令，使用实际可用的Python启动命令。Poppler按操作系统的软件包管理方式安装；例如 macOS Homebrew 的 `brew install poppler` 或 Debian/Ubuntu 的 `apt install poppler-utils`。系统安装遵守当前权限要求；本 skill 不要求关闭沙箱或开放全部目录。

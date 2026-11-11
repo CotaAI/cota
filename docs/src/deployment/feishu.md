@@ -5,10 +5,10 @@
 ## 安装与配置
 
 ```bash
-pip install 'cota[feishu]'
+uv pip install 'cota[feishu]'
 ```
 
-从当前源码开发时使用 `pip install -e '.[feishu]'`。源码环境还需准备 Node 并运行 `npm ci --prefix cota/runtime/pi`；带 runtime 的平台 wheel 则已包含 Node/Pi，见 [安装说明](../installation/install.md)。
+从当前源码开发时使用 `uv pip install -e '.[feishu]'`。源码环境还需准备 Node 并运行 `npm ci --prefix cota/runtime/pi`；带 runtime 的平台 wheel 则已包含 Node/Pi，见 [安装说明](../installation/install.md)。
 
 agent.yml 中选择通道：
 

@@ -41,8 +41,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
       - name: Install build tools
-        run: python -m pip install build
+        run: uv pip install --system build
       - name: Verify native architecture and prepare runtime
         env:
           EXPECTED_TARGET: ${{ matrix.target }}
@@ -53,11 +54,11 @@ jobs:
         env:
           COTA_RUNTIME_DIR: ${{ github.workspace }}/.build/pi-runtime
         run: python -m build
-      - name: Fresh pip install and offline execution
+      - name: Fresh install and offline execution
         shell: bash
         run: |
-          python -m venv "$RUNNER_TEMP/cota-install"
-          "$RUNNER_TEMP/cota-install/bin/python" -m pip install dist/*.whl
+          uv venv "$RUNNER_TEMP/cota-install"
+          uv pip install --python "$RUNNER_TEMP/cota-install" dist/*.whl
           "$RUNNER_TEMP/cota-install/bin/python" -m pip check
           cp scripts/smoke_installed.py "$RUNNER_TEMP/cota-smoke.py"
           cd "$RUNNER_TEMP"
@@ -76,9 +77,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
       - name: Build source distribution
         run: |
-          python -m pip install build
+          uv pip install --system build
           python -m build --sdist
       - name: Upload sdist
         uses: actions/upload-artifact@v4

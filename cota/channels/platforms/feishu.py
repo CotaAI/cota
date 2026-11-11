@@ -60,7 +60,7 @@ class FeishuChannel(BaseChannel):
         if not self.app_id or not self.app_secret:
             raise ValueError('Feishu app_id and app_secret are required')
         if importlib.util.find_spec('lark_oapi') is None:
-            raise ImportError('Feishu requires the official SDK: pip install "cota[feishu]"')
+            raise ImportError('Feishu requires the official SDK: uv pip install "cota[feishu]" (or pip install "cota[feishu]")')
         self._http_client = httpx.AsyncClient(timeout=5.0)
         self._ready = asyncio.get_running_loop().create_future()
         try:

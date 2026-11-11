@@ -38,12 +38,23 @@ Cota 面向懂业务、愿意编辑 YAML / Markdown 并维护运行环境的开�
 需要 Python 3.12+。在准备好的 Python 环境中安装已发布版本：
 
 ```bash
-python -m pip install -U cota
+uv pip install -U cota
 cota init
 cd cota_projects/weather
 ```
 
 `cota init` 创建官方示例目录，并保留已有的同名 Bot。使用飞书可安装 `cota[feishu]`。带内置运行时的平台 wheel 包含固定版本 Node/Pi；具体要求见 [安装说明](docs/src/installation/install.md)。
+
+<details>
+<summary>没有 uv？用 pip 也可以</summary>
+
+```bash
+python -m pip install -U cota
+```
+
+推荐安装 [uv](https://docs.astral.sh/uv/)，它的安装速度比 pip 快 10–20 倍。
+
+</details>
 
 <details>
 <summary>从源码开发或使用仓库最新代码</summary>
@@ -53,9 +64,9 @@ cd cota_projects/weather
 ```bash
 git clone https://github.com/CotaAI/cota.git
 cd cota
-python -m venv .venv
+uv venv --python 3.12
 source .venv/bin/activate
-python -m pip install -e '.[dev]'
+uv pip install -e '.[dev]'
 npm ci --prefix cota/runtime/pi
 cota init
 cd cota_projects/weather

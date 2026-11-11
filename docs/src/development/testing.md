@@ -7,7 +7,7 @@
 在仓库根目录、Python 3.12+ 虚拟环境中：
 
 ```bash
-python -m pip install -e '.[dev,feishu]'
+uv pip install -e '.[dev,feishu]'
 npm ci --prefix cota/runtime/pi
 python scripts/check.py --coverage
 ```

@@ -23,7 +23,7 @@ try:
     MCP_SSE_AVAILABLE = True
 except ImportError:
     MCP_SSE_AVAILABLE = False
-    logger.debug("MCP SSE client not available (pip install mcp)")
+    logger.debug("MCP SSE client not available (uv pip install mcp)")
 
 
 class RemoteMCPClient:
@@ -47,7 +47,7 @@ class RemoteMCPClient:
     ) -> None:
         if not MCP_SSE_AVAILABLE:
             raise ImportError(
-                "MCP SSE client is required. Install with: pip install mcp"
+                "MCP SSE client is required. Install with: uv pip install mcp (or pip install mcp)"
             )
         self.endpoint_url = endpoint_url
         self.auth_token = auth_token

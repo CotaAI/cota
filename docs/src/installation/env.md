@@ -5,19 +5,19 @@ Cota 源码要求 **Python 3.12+**。运行当前源码还需要 **Node.js 22.19
 
 ## Python 虚拟环境
 
-已有 Python 3.12 时：
+推荐使用 [uv](https://docs.astral.sh/uv/) 管理虚拟环境和依赖：
+
+```bash
+uv venv --python 3.12
+source .venv/bin/activate
+```
+
+也可以使用标准 venv：
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
 python --version
-```
-
-也可以使用已安装的 uv：
-
-```bash
-uv venv --python 3.12
-source .venv/bin/activate
 ```
 
 激活环境只决定 Python 和命令的位置，不会配置模型密钥。模型 key、apibase、model 直接填写在 Bot 的 endpoints.yml。

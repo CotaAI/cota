@@ -24,10 +24,10 @@ example_im = "cota_channel_example:ExampleIMChannel"
 在**运行 Cota 的同一个 Python 环境**中安装插件。仓库包含可执行的[通用 Webhook/REST 示例](https://github.com/CotaAI/cota/tree/main/examples/channel-plugin)，从仓库根目录安装：
 
 ```bash
-python -m pip install ./examples/channel-plugin
+uv pip install ./examples/channel-plugin
 ```
 
-真实外部插件也可从包索引或本地 wheel 安装，例如 `python -m pip install /path/to/your_channel.whl`。安装只增加可发现的类型，不会自动启用、监听端口或连接平台；每个 Application 持有自己的 registry，只有选中的已启用类型才加载工厂。类型重名或与内置类型冲突会报错，应给包选择独立名称。
+真实外部插件也可从包索引或本地 wheel 安装，例如 `uv pip install /path/to/your_channel.whl`。安装只增加可发现的类型，不会自动启用、监听端口或连接平台；每个 Application 持有自己的 registry，只有选中的已启用类型才加载工厂。类型重名或与内置类型冲突会报错，应给包选择独立名称。
 
 将配置合并进 Bot 的 `endpoints.yml`：
 

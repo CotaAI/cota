@@ -8,7 +8,7 @@
 | --- | --- |
 | 找不到 cota | 确认虚拟环境及安装位置；使用 `python -m cota --help` 验证当前 Python |
 | 源码运行找不到 Node/Pi | 检查 Node >=22.19，执行 `npm ci --prefix cota/runtime/pi`；editable 不带发布 runtime |
-| 普通 wheel 构建失败 | 发布 wheel 需准备 bundled runtime；源码开发用 `pip install -e .`，见 [安装](../installation/install.md) |
+| 普通 wheel 构建失败 | 发布 wheel 需准备 bundled runtime；源码开发用 `uv pip install -e .`，见 [安装](../installation/install.md) |
 | endpoints 中模型字段为空 | 直接填写 key/apibase/model；不是填写 COTA_API_KEY 环境变量 |
 | Unsupported agent/config keys | 按 [配置参考](../configuration/overview.md) 使用当前字段；旧 Action/Runtime 配置不兼容 |
 | Policy artifact missing/stale/invalid | 核对 policy/*.yml 与 options，执行 train，再 `train --check`，重新加载 Agent |

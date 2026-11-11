@@ -13,7 +13,7 @@ python scripts/check.py --coverage
 在对应平台构建并验证安装包：
 
 ```sh
-python -m pip install build twine
+uv pip install build twine
 python scripts/bundle_runtime.py --output .build/pi-runtime-release
 COTA_RUNTIME_DIR="$PWD/.build/pi-runtime-release" python -m build
 python -m twine check dist/*

@@ -15,7 +15,7 @@ try:
 except ImportError:
     MCP_AVAILABLE = False
     logger.warning(
-        "MCP SDK not available. Please install it with: pip install mcp"
+        "MCP SDK not available. Please install it with: uv pip install mcp (or pip install mcp)"
     )
 
 

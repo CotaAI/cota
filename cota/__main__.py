@@ -188,7 +188,28 @@ def _load_channel_config(config_path: str) -> Dict[str, Any]:
     return channels
 
 
+def _install_bot_dependencies(config_path):
+    """Auto-install bot requirements.txt if present, using uv or pip."""
+    requirements = os.path.join(config_path, 'requirements.txt')
+    if not os.path.isfile(requirements):
+        return
+    import subprocess
+    uv = shutil.which('uv')
+    if uv:
+        cmd = [uv, 'pip', 'install', '-r', requirements]
+    else:
+        cmd = [sys.executable, '-m', 'pip', 'install', '-r', requirements]
+    logger.info('Installing bot dependencies from %s', requirements)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.warning('Failed to install bot dependencies: %s', result.stderr.strip())
+    else:
+        for line in result.stdout.strip().splitlines()[-3:]:
+            logger.info(line)
+
+
 def run(args):
+    _install_bot_dependencies(args.config)
     agent = Agent.load_from_path(path=args.config)
     configure_execution_logging(agent, args)
     factory = server.create_app
@@ -228,6 +249,7 @@ async def _start_scheduler(agent: Agent, config_path: str, *, message_bus):
 async def shell(args):
     """Start single-agent interactive shell."""
     config_path = args.config
+    _install_bot_dependencies(config_path)
 
     agent = Agent.load_from_path(path=config_path)
     if (getattr(agent, 'dialogue', None) or {}).get('mode', 'direct') != 'direct':
