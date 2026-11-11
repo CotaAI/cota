@@ -1,7 +1,14 @@
 name: Bundled runtime wheels
 
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to PyPI after build'
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'cota/**'
@@ -55,3 +62,48 @@ jobs:
           cp scripts/smoke_installed.py "$RUNNER_TEMP/cota-smoke.py"
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/cota-install/bin/python" cota-smoke.py
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist/*.whl
+          retention-days: 30
+
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build source distribution
+        run: |
+          python -m pip install build
+          python -m build --sdist
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          retention-days: 30
+
+  publish:
+    needs: [wheel, sdist]
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+      || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    permissions:
+      id-token: write
+    environment: pypi
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '{wheel-*,sdist}'
+          merge-multiple: true
+          path: dist/
+      - name: List packages
+        run: ls -lh dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
