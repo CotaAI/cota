@@ -188,16 +188,38 @@ def _load_channel_config(config_path: str) -> Dict[str, Any]:
     return channels
 
 
+def _in_virtualenv():
+    return sys.prefix != sys.base_prefix
+
+
 def _install_bot_dependencies(config_path):
     """Auto-install bot requirements.txt if present, using uv or pip."""
     requirements = os.path.join(config_path, 'requirements.txt')
     if not os.path.isfile(requirements):
         return
+
+    if not _in_virtualenv():
+        logger.warning(
+            'Bot has dependencies (%s) but no virtual environment is active. '
+            'Recommended setup:\n'
+            '  uv venv --python 3.12 && source .venv/bin/activate\n'
+            '  uv pip install cota\n'
+            'This keeps bot dependencies isolated from system packages. '
+            'See https://docs.astral.sh/uv/getting-started/installation/',
+            requirements,
+        )
+        return
+
     import subprocess
     uv = shutil.which('uv')
     if uv:
         cmd = [uv, 'pip', 'install', '-r', requirements]
     else:
+        logger.info(
+            'uv not found, falling back to pip. '
+            'Install uv for faster dependency management: '
+            'https://docs.astral.sh/uv/getting-started/installation/',
+        )
         cmd = [sys.executable, '-m', 'pip', 'install', '-r', requirements]
     logger.info('Installing bot dependencies from %s', requirements)
     result = subprocess.run(cmd, capture_output=True, text=True)

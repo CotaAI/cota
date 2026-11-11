@@ -1,10 +1,23 @@
 # 安装 Cota
 
-需要 Python 3.12+。推荐使用 [uv](https://docs.astral.sh/uv/) 安装，速度比 pip 快 10–20 倍。
+需要 Python 3.12+。推荐使用 [uv](https://docs.astral.sh/uv/) 管理环境和依赖，速度比 pip 快 10–20 倍。
+
+## 安装 uv
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+macOS 也可以 `brew install uv`。Windows 见 [uv 安装文档](https://docs.astral.sh/uv/getting-started/installation/)。
+uv 不是 cota 的运行时依赖，不装也能用 pip 完成以下所有步骤；但 cota 的 Bot 依赖自动安装和 Skill 脚本运行均优先使用 uv。
 
 ## 安装已发布版本
 
+始终在虚拟环境中安装，避免 Bot 依赖与系统包冲突：
+
 ```bash
+uv venv --python 3.12
+source .venv/bin/activate
 uv pip install -U cota
 ```
 
@@ -18,6 +31,8 @@ uv pip install -U 'cota[feishu]'
 <summary>使用 pip</summary>
 
 ```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
 python -m pip install -U cota
 python -m pip install -U 'cota[feishu]'
 ```
@@ -62,6 +77,8 @@ editable 安装不自动构建发布包内的运行环境；不要省略源码�
 ## Bot 依赖
 
 `cota run` 和 `cota shell` 启动时会自动检测 Bot 目录下的 `requirements.txt`，优先使用 uv 安装依赖，回退到 pip。Bot 开发者将额外 Python 依赖声明在 Bot 目录的 `requirements.txt` 中即可。
+
+自动安装**要求虚拟环境处于激活状态**。如果检测到系统 Python，cota 会跳过自动安装并提示创建虚拟环境。这样做是为了防止 Bot 依赖污染系统环境或与其它项目冲突。
 
 ## 初始化 Bot
 
