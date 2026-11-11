@@ -2,12 +2,12 @@
 
 官方分发 weather 入门模板和 picture-book 长流程示例，均沿用 Pi Agent Core 执行链路。
 
-weather 显式使用 `deploy: service`，可以在 shell 验证或通过服务入口分享。自用且需要操作部署机器时，改为 `deploy: personal`；默认工作目录是 Bot 下的 `files/`。本机和个人云服务器均属于 personal，用户隔离执行环境与客户端执行端尚未实现。
+weather 使用 `environment.type: none`，不需要部署机器的原生文件和 Shell，可以在 shell 验证或通过服务入口分享。需要操作部署机器时，去掉 `environment` 配置恢复默认 machine 环境；默认工作目录是 Bot 下的 `files/`。
 
 | Bot | 用途 | 工具与数据 |
 | --- | --- | --- |
 | `weather` | 当前天气与预报、活动查询、出行规划三个 Skill；业务分支、多轮变化与对话评测 | 真实天气 HTTP + Skill 附带活动 JSON，SQLite |
-| `picture-book` | 儿童绘本：故事、参考图、图像生成/编辑、视觉审校、中文 PDF 和 Web 下载交付 | personal；Pi 文件/Shell工具，独立图像/视觉接口，可选 PDF 依赖，SQLite |
+| `picture-book` | 儿童绘本：故事、参考图、图像生成/编辑、视觉审校、中文 PDF 和 Web 下载交付 | 默认 machine 环境；Pi 文件/Shell工具，独立图像/视觉接口，可选 PDF 依赖，SQLite |
 
 picture-book 面向部署者自己的工作环境，不能直接作为不可信多人共用的公共服务。完整携带绘本 Skill；图像服务、字体与排版依赖需要准备。交付复用 Cota 的通用附件能力，使用标准 `cota run --chat-app`，详见 [绘本工坊](picture-book/README.md)。
 

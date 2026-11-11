@@ -4,7 +4,7 @@ Cota 以 Bot 为交付单位。先决定交付的是一个持续运行的服务�
 
 ## 分享服务入口
 
-在 `agent.yml` 设置 `deploy: service`。服务模式当前不开放部署机器的原生文件和 Shell；业务工具按配置与业务授权提供。
+在 `agent.yml` 中不需要原生工具的 Bot 显式设 `environment: {type: none}`。对外提供服务时，通过 sandbox 隔离执行环境；业务工具按配置与业务授权提供。
 
 ```bash
 cota run --config ./my-bot --chat-app --host 127.0.0.1 --port 5005
@@ -37,7 +37,7 @@ my-bot/
 └── requirements.txt          # 可选业务依赖；Cota 不自动执行安装
 ```
 
-接收方自用时可设置 `deploy: personal`（电脑和个人云主机均适用）；对外提供服务则设置 `deploy: service`。模式切换需要重新加载配置，不改变既有会话身份校验。
+接收方自用时保持默认配置即可（默认 `deploy: personal`，`environment.type: machine`）。不需要原生工具时显式设 `environment: {type: none}`。模式切换需要重新加载配置，不改变既有会话身份校验。
 
 接收方安装对应 Cota 版本与业务依赖，填写自己的 endpoints，然后运行 shell 或服务。
 `cota init` 是复制官方模板，不是导入任意 Bot 压缩包；自定义文件夹可直接传给 `--config`。
