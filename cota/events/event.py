@@ -72,6 +72,29 @@ class Event:
     timestamp: float = field(default_factory=time.time)
     schema_version: int = 1
 
+    def __setattr__(self, name, value):
+        if self.__dict__.get('_sealed'):
+            raise TypeError('Reducer-owned event is immutable; apply a new event')
+        object.__setattr__(self, name, value)
+
+    def __deepcopy__(self, memo):
+        # EventHistory returns editable detached facts without revalidating old
+        # image payloads merely to inspect a tool name or an event identity.
+        result = object.__new__(type(self))
+        memo[id(self)] = result
+        for key, value in vars(self).items():
+            if key != '_sealed':
+                object.__setattr__(result, key, deepcopy(value, memo))
+        return result
+
+    def freeze(self):
+        from .immutable import freeze_json
+        if not self.__dict__.get('_sealed'):
+            self.validate()
+            self.payload = freeze_json(self.payload)
+            self._sealed = True
+        return self
+
     def __post_init__(self):
         self.payload = deepcopy(self.payload)
         self.validate()
@@ -79,6 +102,8 @@ class Event:
         self.timestamp = float(self.timestamp)
 
     def validate(self):
+        if self.__dict__.get('_sealed'):
+            return
         if type(self.schema_version) is not int or self.schema_version != 1:
             raise ValueError('Unsupported event schema_version')
         if not isinstance(self.type, str) or self.type not in _TYPES:
@@ -195,7 +220,8 @@ class Event:
         return self.payload.get('result')
 
     def as_dict(self):
-        self.validate()
+        if not self.__dict__.get('_sealed'):
+            self.validate()
         return deepcopy({key: getattr(self, key) for key in _ENVELOPE})
 
     @classmethod

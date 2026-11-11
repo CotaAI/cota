@@ -367,14 +367,17 @@ class Processor:
         from cota.events import BotUtterEvent
         try:
             await runtime.run()
-        except ModelCallError as error:
+        except (ModelCallError, TimeoutError) as error:
             # The engine checkpoint remains failed; presenting an error must not
             # mark the task completed or automatically replay its side effects.
-            text = ('抱歉，处理时遇到错误，请稍后重试。'
+            timed_out = isinstance(error, TimeoutError) or getattr(error, 'error_type', None) == 'TimeoutError'
+            text = ('本轮处理超时，已停止。当前进度已记录，您可以在本会话中继续。'
+                    if timed_out else
+                    '抱歉，处理时遇到错误，请稍后重试。'
                     if self.service_mode or getattr(runtime, '_service_mode', False)
                     else f'抱歉，处理时遇到错误：{error}')
-            self.dst.append_event(BotUtterEvent(text=text,
-                                           metadata={'source': 'runtime_error'}))
+            self.dst.append_event(BotUtterEvent(text=text, metadata={
+                'source': 'runtime_timeout' if timed_out else 'runtime_error'}))
             await self.save_tracker(self.dst)
             await runtime.publish_committed()
 

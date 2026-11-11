@@ -45,6 +45,10 @@ class RunInProgress(RuntimeError):
 class ModelCallError(RuntimeError):
     """A provider request failed, distinct from a failed durable checkpoint."""
 
+    def __init__(self, message, *, error_type=None):
+        super().__init__(message)
+        self.error_type = error_type
+
 
 class PiAgentRuntime:
     """Cota's per-turn coordinator. Pi Core owns the only model/tool loop."""
@@ -121,7 +125,9 @@ class PiAgentRuntime:
 
     def _finish_at_limit(self):
         logger.warning('Pi reached the iteration limit (%s)', self.max_iterations)
-        self.dst.append_event(BotUtterEvent(text='处理已达到最大步骤限制，请重新描述您的需求。', metadata={'source': 'limit'}))
+        self.dst.append_event(BotUtterEvent(
+            text=f'本轮处理已达到最大步骤限制（{self.max_iterations} 次模型决策），已停止。当前进度已记录，您可以在本会话中继续。',
+            metadata={'source': 'limit'}))
 
     def _allowed_tools(self):
         # Policy changes revoke tool access even during an active run.
@@ -285,12 +291,15 @@ class PiAgentRuntime:
         if native:
             return {'systemPrompt': messages[0]['content'], 'tools': tools,
                     'attachments': await self._attachment_references(messages[1:])}
-        return {'messages': messages, 'tools': tools}
+        return {'messages': messages, 'tools': tools,
+                'attachments': await self._attachment_references(messages[1:])}
 
     async def _attachment_references(self, messages):
-        """Authorize files in Python; let Node hydrate scoped paths at the boundary."""
+        """Authorize current input; older attachment metadata needs no file I/O."""
         result = []
-        for message in messages:
+        current = next((message for message in reversed(messages)
+                        if message.get('role') == 'user' and not message.get('cotaCompaction')), None)
+        for message in [current] if current else []:
             files = []
             for item in message.get('cotaAttachments', []):
                 try:
@@ -405,7 +414,7 @@ class PiAgentRuntime:
             except Exception as error:
                 if self._checkpoint_failed:
                     raise
-                raise ModelCallError(str(error)) from error
+                raise ModelCallError(str(error), error_type=type(error).__name__) from error
             return response
         if method == 'tool':
             return await self._execute_tool(payload)
@@ -445,7 +454,8 @@ class PiAgentRuntime:
         result = deepcopy(messages)
         vision = getattr(self.agent.llm_instance(self.llm), 'supports_images', False) is True
         for message in result:
-            if message.get('role') != 'user' or not message.get('cotaAttachments'):
+            if (message.get('role') != 'user' or not message.get('cotaAttachments')
+                    or message.get('cotaAttachmentsHydrated')):
                 continue
             blocks = [{'type': 'text', 'text': message['content']}] if isinstance(message['content'], str) else message['content']
             for item in message['cotaAttachments']:
@@ -517,7 +527,7 @@ class PiAgentRuntime:
             try:
                 return await self._run()
             except PiModelError as error:
-                raise ModelCallError(str(error)) from error
+                raise ModelCallError(str(error), error_type=error.error_type or self._models.last_error_type) from error
 
     async def _run(self):
         previous = self.dst.execution
@@ -599,7 +609,9 @@ class PiAgentRuntime:
                 # Preserve failure facts even when the checkpoint failed. A new
                 # run must commit them before proceeding; never retry old tools.
                 self._trace.record('run_finished', {
-                    'status': status, 'error_type': type(error).__name__,
+                    'status': status, 'error_type': (
+                        error.error_type or self._models.last_error_type if isinstance(error, PiModelError)
+                        else getattr(error, 'error_type', None)) or type(error).__name__,
                     'error': str(error),
                 })
                 if not self._checkpoint_failed:

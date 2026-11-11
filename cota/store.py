@@ -9,7 +9,7 @@ from contextlib import nullcontext
 import json
 import time
 from typing import Dict
-from weakref import WeakValueDictionary
+from weakref import WeakValueDictionary, WeakKeyDictionary
 
 import sqlalchemy as sa
 from sqlalchemy.orm import DeclarativeBase
@@ -17,7 +17,7 @@ from sqlalchemy.dialects.mysql import LONGTEXT
 from cota.dst import DST
 from cota.delivery_store import (MemoryDeliveryStore, SQLDeliveryStore,
                                  delivery_rows, make_delivery_table, validate_target)
-from cota.snapshots import digest, make_snapshot, usable_snapshot
+from cota.snapshots import digest, make_snapshot
 
 
 # Small scalar fields for an execution index; never include prompts/tool bodies.
@@ -25,6 +25,7 @@ EVENT_SUMMARY_FIELDS = ('text', 'tool_call_id', 'tool', 'skill', 'status', 'requ
                         'request_sequence', 'purpose',
                         'result_event_id', 'input_event_id', 'error_type',
                         'resource_kind', 'resource_skill')
+DEBUG_BODY_FIELDS = ('request', 'preparation', 'response', 'provider_response')
 
 
 def event_header(event):
@@ -58,6 +59,8 @@ class Store:
         # Admission is volatile; only committed user/run events survive restart.
         self._inputs = {}
         self._input_locks = WeakValueDictionary()
+        # Lifetime follows the detached execution, not every historical session.
+        self._execution_commits = WeakKeyDictionary()
 
     def input_admission_lock(self, session_id):
         lock = self._input_locks.get(session_id)
@@ -188,7 +191,12 @@ class Store:
         return self._debug_log is not None
 
     async def save_model_debug(self, session_id, request_id, data):
-        """Optional diagnostics never participate in state recovery or stop execution."""
+        """Merge optional diagnostic fields; large bodies are write-once.
+
+        An adapter request may be upgraded once to its actual provider payload.
+        Status/transport/linkage updates need not carry request bodies again.
+        Diagnostics never participate in state recovery or stop execution.
+        """
         if not self.debug_enabled:
             return
         import logging
@@ -233,31 +241,41 @@ class Store:
             k: endpoint_config.get(k, defaults.get(k)) for k in keys
             if k in endpoint_config or k in defaults})
 
-    def _prepare_commit(self, data, old, snapshot, old_runs):
+    def _write_data(self, dst):
+        data = dst.commit_data()
+        boundary = any(e['type'] == 'run_finished' for e in data['events'])
+        data['snapshot'] = (make_snapshot(dst) if data['events'] and (
+            boundary or data['last_sequence'] - data['snapshot_sequence'] >= self.snapshot_interval) else None)
+        return data
+
+    def _prepare_commit(self, data, old, old_runs):
         revision = (old or {}).get('revision', 0)
         if revision != data['revision']:
             raise StoreConflict(f"Stale session revision: {data['session_id']}")
         count = (old or {}).get('last_sequence', 0)
-        if count > len(data['events']) or (old and digest(data['events'][:count]) != old['events_hash']):
+        if count > data['last_sequence'] or count < data['base_sequence']:
+            raise ValueError('Cannot edit or delete persisted event facts')
+        prefix = data['prefix_hashes'][count].copy()
+        prefix.update(b']')
+        if old and prefix.hexdigest() != old['events_hash']:
             raise ValueError('Cannot edit or delete persisted event facts')
         if any(data['run_metadata'].get(run) != value for run, value in old_runs.items()):
             raise ValueError('Cannot edit or delete persisted run metadata')
-        tracker = DST.from_events(data['session_id'], data['events'], snapshot=snapshot,
-                                  run_metadata=data['run_metadata'])
-        # Reject state that bypassed the event reducer, including private mutation.
-        state = tracker.state_dict()
-        supplied = {key: data[key] for key in state}
-        if digest(state) != digest(supplied):
-            raise ValueError('DST state must be produced by events; use state mutation APIs')
-        last_snapshot = snapshot['last_sequence'] if snapshot and usable_snapshot(snapshot, data['session_id'], tracker.events) else 0
-        new_events = data['events'][count:]
-        boundary = any(e['type'] == 'run_finished' for e in new_events)
-        write_snapshot = boundary or len(tracker.events) - last_snapshot >= self.snapshot_interval
-        next_snapshot = make_snapshot(tracker) if write_snapshot else None
-        metadata = {'session_id': data['session_id'], 'user_id': tracker.user_id,
-                    'revision': revision + 1, 'last_sequence': len(tracker.events),
-                    'events_hash': digest(data['events']), 'updated_at': time.time()}
-        return metadata, next_snapshot, count
+        offset = count - data['base_sequence']
+        new_events = data['events'][offset:]
+        if old and not new_events and data['run_metadata'] == old_runs:
+            return None, None, offset
+        metadata = {'session_id': data['session_id'], 'user_id': data['user_id'],
+                    'revision': revision + 1, 'last_sequence': data['last_sequence'],
+                    'events_hash': data['events_hash'], 'updated_at': time.time()}
+        return metadata, data['snapshot'], offset
+
+    @staticmethod
+    def _mark_saved(dst, data, revision):
+        dst.revision = revision
+        dst._persisted_sequence = data['last_sequence']
+        if data['snapshot'] is not None:
+            dst._snapshot_sequence = data['snapshot']['last_sequence']
 
     async def save(self, dst, delivery_target=None):
         raise NotImplementedError
@@ -286,40 +304,70 @@ class Store:
         from cota.events import Event
         from cota.run_metadata import validate_run_metadata
         target = validate_target(delivery_target)
-        branch = dst.as_dict()
+        dst._check_state()
+        # The branch can advance while SQL/lock I/O yields. ACK exactly this
+        # immutable write boundary, never a later event not included in it.
+        branch_events = dst.events
+        branch_count = len(branch_events)
+        branch_hash = dst.event_hash(branch_count)
+        branch_metadata = dst.run_metadata
         async with self.session_lock(dst.session_id):
-            canonical = await self.load(dst.session_id, agent=dst.agent)
-            if canonical is None:
-                canonical = DST(dst.session_id, dst.agent)
+            cached = self._execution_commits.get(dst)
+            current = await self.session_metadata(dst.session_id)
+            if cached and cached['revision'] == (current or {}).get('revision', 0):
+                canonical, by_id = cached['canonical'], cached['by_id']
+            else:
+                canonical = await self.load(dst.session_id, agent=dst.agent)
+                if canonical is None:
+                    canonical = DST(dst.session_id, dst.agent)
+                by_id = {event.event_id: event.as_dict() for event in canonical.events}
             if expected_sequence is not None and len(canonical.events) != expected_sequence:
                 raise ExecutionSuperseded('Conversation changed before optional execution started')
-            by_id = {event.event_id: event.as_dict() for event in canonical.events}
+            count = cached['count'] if cached else 0
+            if cached and (branch_count < count or dst.event_hash(count) != cached['hash']):
+                raise StoreConflict('Cannot edit persisted execution events')
+            committed = dict(cached['committed']) if cached else {}
             changed = False
-            committed = {}
-            for event in branch['events']:
-                previous = by_id.get(event['event_id'])
-                if previous is not None:
-                    if digest({**previous, 'sequence': None}) != digest({**event, 'sequence': None}):
-                        raise StoreConflict(f"Cannot edit persisted event: {event['event_id']}")
-                else:
-                    fact = Event.from_dict({**event, 'sequence': None})
-                    canonical.apply_event(fact)
-                    previous = fact.as_dict()
-                    by_id[fact.event_id] = previous
-                    changed = True
-                committed[event['event_id']] = previous
-            metadata = canonical.run_metadata
-            for run_id, value in branch['run_metadata'].items():
-                if run_id in metadata:
-                    if digest(metadata[run_id]) != digest(value):
-                        raise StoreConflict(f'Cannot edit persisted run metadata: {run_id}')
-                else:
-                    metadata[run_id] = value
-                    changed = True
-            canonical._run_metadata = validate_run_metadata(metadata, canonical.events)
-            if changed:
-                await self.save(canonical, delivery_target=target)
-            return committed
+            try:
+                for item in branch_events[count:]:
+                    event = item.as_dict()
+                    previous = by_id.get(event['event_id'])
+                    if previous is not None:
+                        if digest({**previous, 'sequence': None}) != digest({**event, 'sequence': None}):
+                            raise StoreConflict(f"Cannot edit persisted event: {event['event_id']}")
+                    else:
+                        fact = Event.from_dict({**event, 'sequence': None})
+                        canonical.apply_event(fact)
+                        previous = fact.as_dict()
+                        by_id[fact.event_id] = previous
+                        changed = True
+                    committed[event['event_id']] = previous
+                metadata = canonical.run_metadata
+                # A detached view may legitimately lack a later run's metadata,
+                # but cannot delete metadata it has already committed itself.
+                if cached and any(branch_metadata.get(k) != v for k, v in cached['runs'].items()):
+                    raise StoreConflict('Cannot edit persisted run metadata')
+                for run_id, value in branch_metadata.items():
+                    if run_id in metadata:
+                        if digest(metadata[run_id]) != digest(value):
+                            raise StoreConflict(f'Cannot edit persisted run metadata: {run_id}')
+                    else:
+                        metadata[run_id] = value
+                        changed = True
+                canonical._run_metadata = validate_run_metadata(metadata,
+                    [{'type': 'run_started', 'run_id': run} for run in canonical._run_ids])
+                if changed:
+                    await self.save(canonical, delivery_target=target)
+            except BaseException:
+                # A failed transaction may have advanced the private reducer;
+                # never reuse it without reloading the committed journal.
+                self._execution_commits.pop(dst, None)
+                raise
+            self._execution_commits[dst] = {
+                'revision': canonical.revision, 'canonical': canonical, 'by_id': by_id,
+                'count': branch_count, 'hash': branch_hash,
+                'runs': branch_metadata, 'committed': committed}
+            return deepcopy(committed)
 
     async def _read(self, session_id):
         """Read session metadata, snapshot, events and run metadata consistently."""
@@ -336,8 +384,10 @@ class Store:
         metadata, snapshot, events, runs = record
         if len(events) != metadata['last_sequence'] or digest(events) != metadata['events_hash']:
             raise ValueError('Persisted event stream does not match session metadata')
-        return DST.from_events(session_id, events, agent, snapshot=snapshot,
-                               revision=metadata['revision'], run_metadata=runs)
+        tracker = DST.from_events(session_id, events, agent, snapshot=snapshot,
+                                  revision=metadata['revision'], run_metadata=runs)
+        tracker._persisted_sequence = len(events)
+        return tracker
 
     async def inspect_state(self, session_id):
         """On-demand state view; expensive validation/replay runs off the event loop."""
@@ -349,6 +399,39 @@ class Store:
             return {'session_id': session_id, 'revision': tracker.revision,
                     'last_sequence': len(tracker.events), 'state': tracker.state_dict()}
         return await asyncio.to_thread(restore)
+
+    async def execution_progress(self, session_id):
+        """Last observed execution phase, not an executor lease/liveness claim.
+
+        Poll only small headers. No history replay, diagnostic image bodies or
+        heartbeat events are needed, including for remote service sessions.
+        """
+        runs = await self._event_headers(session_id, 0, 1, kinds=('run_started',), descending=True)
+        if not runs:
+            return {'status': 'idle', 'phase': 'idle'}
+        start = runs[0]
+        finished = await self._event_headers(session_id, start['sequence'], 1,
+            kinds=('run_finished',), run_id=start['run_id'], descending=True)
+        latest = finished[0] if finished else start
+        status = latest['summary'].get('status', 'running')
+        result = {'run_id': latest['run_id'], 'status': status, 'phase': status,
+                  'since': latest['timestamp']}
+        if latest['type'] == 'run_finished':
+            result['duration_seconds'] = max(0, latest['timestamp'] - start['timestamp'])
+            if latest['summary'].get('error_type'):
+                result['error_type'] = latest['summary']['error_type']
+            return result
+        tools = await self._event_headers(session_id, latest['sequence'], 1,
+            kinds=('tool_started', 'tool_result'), run_id=latest['run_id'], descending=True)
+        if tools and tools[0]['type'] == 'tool_started':
+            return {**result, 'phase': 'tool', 'tool': tools[0]['summary'].get('tool'),
+                    'since': tools[0]['timestamp']}
+        requests = await self.model_debug_headers(session_id, limit=1) if self.debug_enabled else []
+        request = next((r for r in requests if r.get('run_id') == latest['run_id'] and r['status'] == 'running'), None)
+        if request:
+            return {**result, 'phase': 'compaction' if request['purpose'] == 'compaction' else 'model',
+                    'request_id': request['request_id'], 'since': request['started_at']}
+        return {**result, 'phase': 'preparing', 'since': tools[0]['timestamp'] if tools else latest['timestamp']}
 
     async def session_metadata(self, session_id):
         """Read a session cursor without hydrating its history."""
@@ -435,7 +518,10 @@ class MemoryStore(MemoryDeliveryStore, Store):
                               if event['event_id'] == event_id), None))
 
     async def _save_model_debug(self, session_id, request_id, data):
-        self.model_records[(session_id, request_id)] = data
+        record = self.model_records.setdefault((session_id, request_id), {})
+        upgrade = data.get('request_stage') == 'provider' and record.get('request_stage') != 'provider'
+        record.update({k: v for k, v in data.items() if k not in DEBUG_BODY_FIELDS
+                       or k not in record or k == 'request' and upgrade})
 
     async def model_debug(self, session_id, request_id):
         return deepcopy(self.model_records.get((session_id, request_id)))
@@ -448,10 +534,12 @@ class MemoryStore(MemoryDeliveryStore, Store):
 
     async def save(self, dst, delivery_target=None):
         target = validate_target(delivery_target)
-        data = dst.as_dict()
+        data = self._write_data(dst)
         metadata, snapshot, count = self._prepare_commit(data, self.sessions.get(dst.session_id),
-                                                        self.snapshots.get(dst.session_id),
                                                         self.run_records.get(dst.session_id, {}))
+        if metadata is None:
+            self._mark_saved(dst, data, dst.revision)
+            return
         new_events = deepcopy(data['events'][count:])
         new_runs = deepcopy(data['run_metadata'])
         pending = delivery_rows(dst.session_id, new_events, target)
@@ -465,7 +553,7 @@ class MemoryStore(MemoryDeliveryStore, Store):
         self.run_records[dst.session_id] = new_runs
         if snapshot is not None:
             self.snapshots[dst.session_id] = snapshot
-        dst.revision = metadata['revision']
+        self._mark_saved(dst, data, metadata['revision'])
         self._emit_saved(data, count)
 
     async def _read(self, session_id):
@@ -486,9 +574,16 @@ class MemoryStore(MemoryDeliveryStore, Store):
     async def snapshot(self, session_id):
         return deepcopy(self.snapshots.get(session_id))
 
-    async def _event_headers(self, session_id, after_sequence, limit):
+    async def _event_headers(self, session_id, after_sequence, limit, *, kinds=None, run_id=None, descending=False):
         # Sequence is contiguous, so this is a slice, not a full-history scan/copy.
-        return [event_header(e) for e in self.event_rows.get(session_id, [])[after_sequence:after_sequence + limit]]
+        from itertools import islice
+        stored_rows = self.event_rows.get(session_id, [])
+        if kinds is None and run_id is None and not descending:
+            return [event_header(e) for e in stored_rows[after_sequence:after_sequence + limit]]
+        rows = (stored_rows[index] for index in (range(len(stored_rows) - 1, after_sequence - 1, -1)
+                                         if descending else range(after_sequence, len(stored_rows))))
+        return [event_header(e) for e in islice((e for e in rows
+                if (kinds is None or e['type'] in kinds) and (run_id is None or e['run_id'] == run_id)), limit)]
 
     async def _conversation_ids(self, user_id):
         return [m['session_id'] for m in sorted(self.sessions.values(), key=lambda m: m['updated_at'], reverse=True)
@@ -581,6 +676,15 @@ class SQLStore(SQLDeliveryStore, Store):
         run_id = sa.Column(sa.String(255), primary_key=True)
         data = sa.Column(sa.Text().with_variant(LONGTEXT(), 'mysql'), nullable=False)
 
+    class SQLModelDebugBody(Base):
+        """Large diagnostics are independent of frequently changing status."""
+        __tablename__ = 'model_debug_bodies'
+        session_id = sa.Column(sa.String(255), primary_key=True)
+        request_id = sa.Column(sa.String(255), primary_key=True)
+        field = sa.Column(sa.String(32), primary_key=True)
+        stage = sa.Column(sa.String(32), nullable=False)
+        data = sa.Column(sa.Text().with_variant(LONGTEXT(), 'mysql'), nullable=False)
+
     def __init__(self, dialect='sqlite', host=None, port=None, db='cota.db',
                  username=None, password=None, login_db=None, query=None, snapshot_interval=100):
         super().__init__(snapshot_interval)
@@ -637,28 +741,59 @@ class SQLStore(SQLDeliveryStore, Store):
                 raise
 
     async def save(self, dst, delivery_target=None):
-        data = dst.as_dict()
+        data = self._write_data(dst)
         target = validate_target(delivery_target)
         revision = await self._io(self._save, data, target)
-        dst.revision = revision
+        self._mark_saved(dst, data, revision)
 
     async def _save_model_debug(self, session_id, request_id, data):
         def write():
             table = self.SQLModelDebug.__table__
+            bodies = self.SQLModelDebugBody.__table__
+            match = (table.c.session_id == session_id, table.c.request_id == request_id)
+            body_match = (bodies.c.session_id == session_id, bodies.c.request_id == request_id)
             with self.engine.begin() as conn:
-                conn.execute(table.delete().where(table.c.session_id == session_id, table.c.request_id == request_id))
-                conn.execute(table.insert().values(session_id=session_id, request_id=request_id,
-                    **{k: data.get(k) for k in ('run_id', 'purpose', 'status', 'started_at')},
-                    data=json.dumps(data, ensure_ascii=False, allow_nan=False)))
+                raw = conn.execute(sa.select(table.c.data).where(*match)).scalar_one_or_none()
+                previous = json.loads(raw) if raw is not None else {}
+                stages = dict(conn.execute(sa.select(bodies.c.field, bodies.c.stage).where(*body_match)).all())
+                stage = data.get('request_stage', previous.get('request_stage', 'adapter'))
+                for field in DEBUG_BODY_FIELDS:
+                    if field not in data:
+                        continue
+                    upgrade = field == 'request' and stage == 'provider' and stages.get(field) != 'provider'
+                    if field in stages and not upgrade:
+                        continue
+                    payload = json.dumps(data[field], ensure_ascii=False, allow_nan=False)
+                    if field in stages:
+                        conn.execute(bodies.update().where(*body_match, bodies.c.field == field)
+                                     .values(stage=stage, data=payload))
+                    else:
+                        conn.execute(bodies.insert().values(session_id=session_id, request_id=request_id,
+                                     field=field, stage=stage, data=payload))
+                previous.update({k: v for k, v in data.items() if k not in DEBUG_BODY_FIELDS})
+                small = {k: v for k, v in previous.items() if k not in DEBUG_BODY_FIELDS or k not in data}
+                values = {k: small.get(k) for k in ('run_id', 'purpose', 'status', 'started_at')}
+                values['data'] = json.dumps(small, ensure_ascii=False, allow_nan=False)
+                if raw is None:
+                    conn.execute(table.insert().values(session_id=session_id, request_id=request_id, **values))
+                else:
+                    conn.execute(table.update().where(*match).values(**values))
         await self._io(write)
 
     async def model_debug(self, session_id, request_id):
         def read():
             table = self.SQLModelDebug.__table__
+            bodies = self.SQLModelDebugBody.__table__
             with self.engine.connect() as conn:
                 raw = conn.execute(sa.select(table.c.data).where(table.c.session_id == session_id,
                     table.c.request_id == request_id)).scalar_one_or_none()
-                return json.loads(raw) if raw is not None else None
+                if raw is None:
+                    return None
+                record = json.loads(raw)
+                record.update({field: json.loads(data) for field, data in conn.execute(
+                    sa.select(bodies.c.field, bodies.c.data).where(bodies.c.session_id == session_id,
+                                                                  bodies.c.request_id == request_id))})
+                return record
         return await self._io(read)
 
     async def _model_debug_headers(self, session_id, limit):
@@ -707,9 +842,10 @@ class SQLStore(SQLDeliveryStore, Store):
         sid = data['session_id']
         with self.engine.begin() as conn:
             old = conn.execute(sa.select(sessions).where(sessions.c.session_id == sid)).mappings().first()
-            raw = conn.execute(sa.select(snapshots.c.data).where(snapshots.c.session_id == sid)).scalar_one_or_none()
             old_runs = self._read_runs(conn, sid)
-            metadata, snapshot, count = self._prepare_commit(data, old, self._decode_snapshot(raw), old_runs)
+            metadata, snapshot, count = self._prepare_commit(data, old, old_runs)
+            if metadata is None:
+                return old['revision']
             if old:
                 result = conn.execute(sessions.update().where(sessions.c.session_id == sid,
                                       sessions.c.revision == data['revision']).values(**metadata))
@@ -804,7 +940,7 @@ class SQLStore(SQLDeliveryStore, Store):
                 return self._decode_snapshot(raw)
         return await self._io(query)
 
-    async def _event_headers(self, session_id, after_sequence, limit):
+    async def _event_headers(self, session_id, after_sequence, limit, *, kinds=None, run_id=None, descending=False):
         def query():
             table = self.SQLEvent.__table__
             columns = [c for c in table.c if c.name not in ('session_id', 'payload')]
@@ -820,7 +956,12 @@ class SQLStore(SQLDeliveryStore, Store):
                 scalar = sa.func.substr(scalar, 1, 200) if key == 'text' else sa.cast(scalar, sa.Text)
                 columns.append(scalar.label('summary_' + key))
             stmt = sa.select(*columns).where(table.c.session_id == session_id,
-                    table.c.sequence > after_sequence).order_by(table.c.sequence).limit(limit)
+                    table.c.sequence > after_sequence)
+            if kinds is not None:
+                stmt = stmt.where(table.c.type.in_(kinds))
+            if run_id is not None:
+                stmt = stmt.where(table.c.run_id == run_id)
+            stmt = stmt.order_by(table.c.sequence.desc() if descending else table.c.sequence).limit(limit)
             with self.engine.connect() as conn:
                 result = []
                 for row in conn.execute(stmt).mappings():

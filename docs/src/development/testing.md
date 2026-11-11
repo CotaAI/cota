@@ -63,3 +63,13 @@ mdbook build docs --dest-dir /tmp/cota-doc-book
 文档目录由 SUMMARY.md 管理。新增页面需加入目录并检查相对链接；配置例子应与 validator 和真实模板一致。
 Pages 工作流使用固定 mdBook 版本构建，再把 docs/landing.html 作为站点首页。手册欢迎页使用 introduction.html，避免被站点首页覆盖。
 历史 plans/specs/audits 不在当前手册中，它们记录当时的设计与验证，不是现行 API 契约。
+
+模型接口测试不仅要预设返回 tool_calls，还必须检查真实 HTTP 请求确实包含允许的工具 schema，并覆盖下一轮的保留、更新与撤销。至少一个模拟 provider 应根据收到的 tools 决定是否返回工具调用，避免“请求未声明工具，但测试服务仍强行返回调用”掩盖接入问题。
+
+长任务优化的回归入口：
+
+- `tests/test_store_incremental.py`：无变化 revision 不变、追加不导出/重放历史、规范哈希一致、并发输入与保存等待期间新增事件不丢失、内部事实不可变。
+- `tests/test_model_debug_storage.py`：状态更新不重写大正文、适配器请求升级、数据库重开后仍能读取完整诊断。
+- `tests/test_execution_progress.py`、`tests/debug/viewer.test.mjs`：阶段查询只读且有界，上限和超时提示准确，旧 run 的迟到结果不覆盖当前阶段。
+- `cota/runtime/pi/image-context.test.mjs`、`model.test.mjs`、`tests/test_context_optimization.py`：当前图片批次、重复内容、同路径不同版本、恢复和实际供应商请求；保留原始证据并通过 Pi 原生压缩处理文本压力。
+- `tests/test_pi_bridge.py`：本地 SSE 请求超时时，即使诊断回调尚未确认，终止消息仍保留错误类型；测试不调用真实收费接口。

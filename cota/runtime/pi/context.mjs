@@ -50,8 +50,9 @@ export function estimateRequest(messages, tools = [], model = {}) {
         imageBytes += Math.max(0, Math.floor(data.length * 3 / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0));
       }
     }
-    // Incoming attachments are hydrated by Cota only at the provider boundary.
-    if (message.role === 'user') for (const file of message.cotaAttachments ?? []) {
+    // Fall back to authorized attachment sizes for callers that have not yet
+    // hydrated their request; prepared runtime projections use actual pixels.
+    if (message.role === 'user' && !message.cotaAttachmentsHydrated) for (const file of message.cotaAttachments ?? []) {
       if (model.attachmentImages?.mimeTypes?.includes(file.mime_type)
           && file.size <= model.attachmentImages.maxBytes) {
         images++; imageBytes += file.size;
@@ -69,7 +70,10 @@ export function estimateRequest(messages, tools = [], model = {}) {
   // fact. Reserve current system/tools conservatively so changed Policy cannot
   // hide behind an older, higher provider count. This may compact earlier.
   const instructionReserve = sections.system + sections.tool_definitions;
-  const usage = last < 0 ? 0 : calculateContextTokens(messages[last].usage) + instructionReserve
+  // Old provider totals measured a different pixel load. They cannot represent
+  // a smaller request projection, just as pre-compaction usage cannot.
+  const usage = last < 0 || messages.slice(boundary + 1, last + 1).some(m => m.cotaImagePixelsOmitted)
+    ? 0 : calculateContextTokens(messages[last].usage) + instructionReserve
     + messages.slice(last + 1).reduce((n, m) => n + estimateTokens(m), 0);
   return {estimated_tokens: estimated, budget_tokens: Math.max(estimated, usage),
     serialized_bytes: Buffer.byteLength(JSON.stringify({messages, tools}), 'utf8') + attachmentBytes,

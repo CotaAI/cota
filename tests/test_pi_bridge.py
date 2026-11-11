@@ -135,3 +135,53 @@ async def test_unknown_notification_is_rejected_without_echoing_private_payload(
     with pytest.raises(PiBridgeError, match='notification') as error:
         await PiBridge(timeout=3).run({}, None)
     assert 'PRIVATE' not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_native_timeout_type_survives_unacknowledged_observation():
+    """Terminal classification survives deadline cancellation of the RPC queue."""
+    from cota.runtime.pi_bridge import PiModelError
+    tasks = set()
+    async def serve(reader, writer):
+        task = asyncio.current_task()
+        tasks.add(task)
+        try:
+            headers = await reader.readuntil(b'\r\n\r\n')
+            length = next(int(line.split(b':', 1)[1]) for line in headers.split(b'\r\n')
+                          if line.lower().startswith(b'content-length:'))
+            await reader.readexactly(length)
+            writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n: keepalive\n\n')
+            await writer.drain()
+            await reader.read()
+        except (asyncio.IncompleteReadError, ConnectionError):
+            pass
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            tasks.discard(task)
+    server = await asyncio.start_server(serve, '127.0.0.1', 0)
+    seen = []
+    async def handler(method, payload):
+        seen.append(method)
+        if method == 'prepare':
+            return {'systemPrompt': 'test', 'tools': []}
+        if method == 'model_begin':
+            return {'request_id': 'q', 'debug': False}
+        if method == 'model_observation':
+            attempt = payload.get('transport', {}).get('attempts', [{}])[-1]
+            if attempt.get('status_code') == 200:
+                await asyncio.sleep(2)
+        return {}
+    options = {'messages': [{'role': 'user', 'content': 'hello', 'timestamp': 1, 'cotaEventId': 'u'}],
+               'maxIterations': 1, 'provider': {'apiKey': 'local-test', 'model': 'test',
+                   'baseUrl': f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1',
+                   'timeoutSeconds': 1, 'maxRetries': 0, 'vision': False}}
+    try:
+        with pytest.raises(PiModelError) as caught:
+            await PiBridge(timeout=5).run(options, handler)
+        assert getattr(caught.value, 'error_type', None) == 'TimeoutError'
+        assert 'model_failed' not in seen  # Error type cannot depend on this callback.
+    finally:
+        server.close()
+        await server.wait_closed()
+        await asyncio.gather(*tasks, return_exceptions=True)

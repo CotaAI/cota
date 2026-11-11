@@ -11,7 +11,7 @@ from cota.policy import PolicyCatalog
 @pytest.mark.asyncio
 @pytest.mark.parametrize('backend', ['memory', 'sqlite'])
 @pytest.mark.parametrize('pressure', ['count', 'bytes'])
-async def test_image_only_budget_compacts_without_losing_evidence_or_replay(mock_agent, tmp_path, backend, pressure):
+async def test_image_only_budget_projects_without_unnecessary_compaction_or_evidence_loss(mock_agent, tmp_path, backend, pressure):
     import base64
     import io
     Image = pytest.importorskip('PIL.Image')
@@ -51,13 +51,17 @@ async def test_image_only_budget_compacts_without_losing_evidence_or_replay(mock
     try:
         await PiAgentRuntime(mock_agent, dst, dst.session_id, checkpoint=store.save, store=store).run()
         assert dst.execution['status'] == 'completed'
-        assert len(requests) == 4 and len(summaries) == 1
+        assert len(requests) == 4 and not summaries
+        assert not any(e.type == 'context_compaction' for e in dst.events)
         images = [b for m in requests[-1]['messages'] if isinstance(m.get('content'), list)
                   for b in m['content'] if b['type'] == 'image_url']
-        assert 0 < len(images) <= 2
+        assert len(images) == 1
+        assert len(base64.b64decode(images[0]['image_url']['url'].split(',', 1)[1])) == len(image_bytes)
         results = [e for e in dst.events if e.type == 'tool_result']
         assert len(results) == 3
         assert all(e.payload['content'][0]['data'] == encoded for e in results)
+        assert all(event.event_id in str(requests[-1]['messages']) for event in results[:-1])
+        assert 'sha256:' in str(requests[-1]['messages']) and 're-read' in str(requests[-1]['messages'])
         restored = await store.load(dst.session_id, mock_agent)
         replay = DST.from_events(dst.session_id, dst.events, agent=mock_agent, run_metadata=dst.run_metadata)
         assert restored.state_dict() == replay.state_dict() == dst.state_dict()
@@ -224,7 +228,7 @@ async def test_single_turn_long_chain_compacts_and_keeps_image_for_next_request(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('backend', ['memory', 'sqlite'])
-async def test_large_image_bytes_compact_before_token_capacity_and_replay(mock_agent, tmp_path, backend):
+async def test_large_old_image_bytes_leave_wire_without_compaction_and_replay(mock_agent, tmp_path, backend):
     import base64
     import io
     import random
@@ -263,10 +267,14 @@ async def test_large_image_bytes_compact_before_token_capacity_and_replay(mock_a
     try:
         await PiAgentRuntime(mock_agent, dst, 'bytes', checkpoint=store.save, store=store).run()
         assert dst.execution['status'] == 'completed'
-        assert len(summaries) == 1 and len(seen) == 4
+        assert not summaries and len(seen) == 4
         assert sum(e.type == 'tool_result' for e in dst.events) == 3
-        assert any(e.type == 'context_compaction' for e in dst.events)
+        assert not any(e.type == 'context_compaction' for e in dst.events)
         assert encoded in str(seen[-1]['messages'])
+        images = [b for m in seen[-1]['messages'] if isinstance(m.get('content'), list)
+                  for b in m['content'] if b['type'] == 'image_url']
+        assert len(images) == 1
+        assert all(e.payload['content'][0]['data'] == encoded for e in dst.events if e.type == 'tool_result')
         assert len(str(seen[-1]['messages'])) < 5 * 1024 * 1024
         restored = await store.load('bytes', agent=mock_agent)
         replay = DST.from_events('bytes', dst.events, agent=mock_agent, run_metadata=dst.run_metadata)

@@ -621,6 +621,9 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
         await agent.create_processor().handle_message(Message(text='制作并发布一个审阅稿', session_id='production', sender_id='reader', receiver='bot'))
         assert observed == ['generate', 'edit', 'vision']
         assert len(main_requests) == 9 and not sequence
+        for request in main_requests:
+            assert {'read', 'write', 'edit', 'bash', 'send_files'} <= {
+                tool['function']['name'] for tool in request.get('tools', [])}
         assert (project / 'book.pdf').read_bytes().startswith(b'%PDF-')
         events = await agent.store.events('production')
         results = [e for e in events if e['type'] == 'tool_result']

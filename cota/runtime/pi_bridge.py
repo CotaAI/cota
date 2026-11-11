@@ -16,6 +16,10 @@ class PiBridgeError(RuntimeError):
 class PiModelError(PiBridgeError):
     """A failed native provider call, distinct from checkpoint/protocol failure."""
 
+    def __init__(self, message, *, error_type=None):
+        super().__init__(message)
+        self.error_type = error_type
+
 
 async def _read_frame(reader):
     """Assemble a bounded JSON line independently of StreamReader's buffer size."""
@@ -99,8 +103,10 @@ class PiBridge:
                         if message.get('type') == 'done':
                             return message['result']
                         if message.get('type') == 'error':
-                            error_type = PiModelError if message.get('code') == 'model_error' else PiBridgeError
-                            raise error_type(message.get('error', 'Pi worker failed'))
+                            error = message.get('error', 'Pi worker failed')
+                            if message.get('code') == 'model_error':
+                                raise PiModelError(error, error_type=message.get('error_type'))
+                            raise PiBridgeError(error)
                         if message.get('type') == 'notification':
                             if message.get('method') != 'stream' or not isinstance(message.get('payload'), dict):
                                 raise PiBridgeError('Invalid Pi worker notification')

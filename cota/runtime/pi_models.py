@@ -36,8 +36,10 @@ class PiModelObserver:
     def __init__(self, recorder, checkpoint):
         self.recorder, self.checkpoint = recorder, checkpoint
         self.active = {}
+        self.last_error_type = None
 
     async def begin(self, payload):
+        self.last_error_type = None
         purpose = payload.get('purpose')
         if purpose not in ('dialogue', 'compaction'):
             raise ValueError('Unknown native model purpose')
@@ -102,6 +104,7 @@ class PiModelObserver:
 
     async def fail(self, payload):
         metadata, diagnostic, started = self._get(payload)
+        self.last_error_type = payload.get('error_type', 'ModelCallError')
         diagnostic.update(status='interrupted' if payload.get('error_type') in ('AbortError', 'CancelledError') else 'failed',
                           error_type=payload.get('error_type', 'ModelCallError'),
                           duration_ms=payload.get('duration_ms', (time.perf_counter() - started) * 1000))
@@ -118,5 +121,6 @@ class PiModelObserver:
 
     async def interrupt(self, error):
         for request_id in list(self.active):
-            await self.fail({'request_id': request_id, 'error_type': type(error).__name__,
+            await self.fail({'request_id': request_id,
+                             'error_type': getattr(error, 'error_type', None) or type(error).__name__,
                              'error': str(error)})

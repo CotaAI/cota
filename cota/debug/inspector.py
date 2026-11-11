@@ -23,6 +23,7 @@ class Inspector:
         metadata = await self.store.session_metadata(self.session_id) if self.session_id else None
         return {'bot': self.bot_name, 'session_id': self.session_id,
                 'store': type(self.store).__name__, 'metadata': metadata,
+                'progress': await self.store.execution_progress(self.session_id) if self.session_id else None,
                 'log_path': self.log_path}
 
     def for_session(self, session_id):

@@ -51,7 +51,8 @@ input.on('line', async line => {
       started = true;
       execute(message.options, rpc, controller.signal, notify).then(
         result => send({type: 'done', result}),
-        error => {process.exitCode = 1; return send({type: 'error', error: error.message, ...(error.code === 'model_error' ? {code: 'model_error'} : {})});},
+        error => {process.exitCode = 1; return send({type: 'error', error: error.message,
+          ...(error.code === 'model_error' ? {code: 'model_error', error_type: error.error_type} : {})});},
       ).finally(() => input.close());
     } else throw new Error('Invalid protocol message');
   } catch (error) {

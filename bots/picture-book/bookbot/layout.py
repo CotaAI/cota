@@ -2,6 +2,7 @@
 import math
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -11,6 +12,71 @@ from .common import confined, read_json, write_json, atomic_bytes, sha256, book_
 DELIVERABLES = {'reading_pdf': 'book.pdf', 'home_print_pdf': 'book.pdf',
                 'full_preview': 'previews/overview.jpg', 'cover_back_preview': 'previews/covers.png',
                 'printing_instructions': '打印说明.md'}
+
+PAGE_FIELDS = {'page', 'role', 'title', 'text', 'blank', 'blank_reason', 'layout',
+               'asset', 'image_box', 'text_elements', 'context_asset', 'detail_asset',
+               'arrow_count', 'notes'}
+TEXT_FIELDS = {'text', 'box', 'font_size', 'align', 'fill'}
+
+
+def validate_layout(data):
+    """Reject unsupported rendering instructions before touching any output."""
+    if not isinstance(data, dict):
+        raise ValueError('book.json must be an object')
+    pages = data.get('pages')
+    if (not isinstance(pages, list) or not pages or type(data.get('page_count')) is not int
+            or len(pages) != data['page_count'] or len(pages) > 128):
+        raise ValueError('book.json pages must match page_count (1–128)')
+    if not isinstance(data.get('title'), str) or not data['title'].strip():
+        raise ValueError('title must be a nonempty string')
+    fmt = data.get('format')
+    if not isinstance(fmt, dict):
+        raise ValueError('format must define width_mm and height_mm')
+    width, height = (fmt.get(n) for n in ('width_mm', 'height_mm'))
+    if any(type(n) not in (int, float) or not math.isfinite(n) or not 50 <= n <= 600 for n in (width, height)):
+        raise ValueError('Page size must be 50–600 mm')
+    for number, page in enumerate(pages, 1):
+        if not isinstance(page, dict):
+            raise ValueError(f'Page {number} must be an object')
+        unknown = page.keys() - PAGE_FIELDS
+        if unknown:
+            raise ValueError(f'Page {number}: unsupported fields {", ".join(sorted(unknown))}; '
+                             'use asset/image_box and text_elements; see build --help')
+        if type(page.get('page')) is not int or page['page'] != number:
+            raise ValueError('Pages must have consecutive 1-based page numbers')
+        if type(page.get('blank', False)) is not bool:
+            raise ValueError(f'Page {number}: blank must be boolean')
+        if page.get('blank') and any(page.get(k) for k in ('text', 'asset', 'image_box', 'text_elements')):
+            raise ValueError(f'Page {number}: blank pages cannot contain text or artwork')
+        if page.get('text'):
+            raise ValueError(f'Page {number}: move text into text_elements; page text is not rendered')
+        if 'asset' in page:
+            if not isinstance(page['asset'], str) or not page['asset'].strip():
+                raise ValueError(f'Page {number}: asset must be a nonempty project-relative image path')
+            _box(page.get('image_box'), width, height)
+        elif 'image_box' in page:
+            raise ValueError(f'Page {number}: image_box requires asset')
+        elements = page.get('text_elements', [])
+        if not isinstance(elements, list):
+            raise ValueError(f'Page {number}: text_elements must be a list')
+        for item in elements:
+            if not isinstance(item, dict):
+                raise ValueError(f'Page {number}: text_elements entries must be objects')
+            unknown = item.keys() - TEXT_FIELDS
+            if unknown:
+                raise ValueError(f'Page {number}: unsupported text fields {", ".join(sorted(unknown))}; '
+                                 'supported: text, box, font_size, align, fill')
+            if not isinstance(item.get('text'), str) or not item['text'].strip():
+                raise ValueError(f'Page {number}: text must be a nonempty string')
+            _box(item.get('box'), width, height)
+            size = item.get('font_size', 18)
+            if type(size) not in (int, float) or not math.isfinite(size) or not 8 <= size <= 72:
+                raise ValueError(f'Page {number}: font_size must be 8–72 points')
+            if item.get('align', 'left') not in ('left', 'center', 'right'):
+                raise ValueError(f'Page {number}: align must be left, center or right')
+            if not isinstance(item.get('fill', '#1f1f29'), str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', item.get('fill', '#1f1f29')):
+                raise ValueError(f'Page {number}: fill must be a #RRGGBB colour')
+    return width, height
 
 
 def font_path(root):
@@ -58,19 +124,23 @@ def input_hash(root, project, data):
                for p in data['pages'] if p.get('asset')}
     return sha256(json.dumps({'pages': data['pages'], 'format': data['format'], 'assets': sources,
                              'title': data['title'], 'printing': data.get('printing'),
-                             'font': sha256(font_path(root).read_bytes()), 'renderer': 1},
+                             'font': sha256(font_path(root).read_bytes()), 'renderer': 2},
                             sort_keys=True, ensure_ascii=False).encode())
 
 
 def require_current_render(root, project):
     data = read_json(project / 'book.json')
+    validate_layout(data)
     if (data.get('render_input_hash') != input_hash(root, project, data)
             or any(data.get('deliverables', {}).get(role) != path for role, path in DELIVERABLES.items())
             or not (project / 'book.pdf').is_file()
             or data.get('render_output_hash') != sha256((project / 'book.pdf').read_bytes())):
         raise ValueError('Book source or PDF changed; rebuild and review before validation/publication')
     outputs = data.get('render_outputs', {})
-    for path in set(DELIVERABLES.values()):
+    expected = set(DELIVERABLES.values()) | {
+        f'previews/pages/page-{n:0{len(str(data["page_count"]))}d}.png'
+        for n in range(1, data['page_count'] + 1)}
+    for path in expected:
         file = confined(project, path)
         if not file.is_file() or outputs.get(path) != sha256(file.read_bytes()):
             raise ValueError('Book deliverables changed; rebuild and review before validation/publication')
@@ -88,26 +158,24 @@ def build(root, project):
     if not shutil.which('pdftoppm'):
         raise ValueError('Install Poppler (pdftoppm) before building a book')
     data = read_json(project / 'book.json')
-    pages = data.get('pages', [])
-    if not pages or len(pages) != data.get('page_count') or len(pages) > 128:
-        raise ValueError('book.json pages must match page_count (1–128)')
-    if [p.get('page') for p in pages] != list(range(1, len(pages) + 1)):
-        raise ValueError('Pages must have consecutive 1-based page numbers')
-    width, height = (data['format'][n] for n in ('width_mm', 'height_mm'))
-    if any(type(n) not in (int, float) or not math.isfinite(n) or not 50 <= n <= 600 for n in (width, height)):
-        raise ValueError('Page size must be 50–600 mm')
+    width, height = validate_layout(data)
+    pages = data['pages']
+    fingerprint = input_hash(root, project, data)
+    result = {'pdf': 'book.pdf', 'pages': len(pages), 'rendered_pages': len(pages),
+              'preview': 'previews/overview.jpg', 'physical_proof': 'pending',
+              'manifest': 'book.json', 'input_hash': fingerprint, 'reused': False}
+    if data.get('render_input_hash') == fingerprint:
+        try:
+            require_current_render(root, project)
+        except ValueError:
+            pass  # Damaged or missing outputs must be rebuilt and reviewed.
+        else:
+            return {**result, 'reused': True}
     font_file = font_path(root)
     font = TTFont('PictureBookChinese', str(font_file))
     pdfmetrics.registerFont(font)
-    fingerprint = input_hash(root, project, data)
     # Fail before writing anything if a font silently lacks a requested glyph.
     for page in pages:
-        if page.get('blank'):
-            if any(page.get(k) for k in ('text', 'asset', 'text_elements', 'lines')):
-                raise ValueError('Blank pages cannot contain text or artwork')
-            continue
-        if page.get('text') and not page.get('text_elements'):
-            raise ValueError('Move page text into explicit text_elements boxes; no implicit layout')
         for item in page.get('text_elements', []):
             if any(ord(c) not in font.face.charToGlyph for c in item['text'] if not c.isspace()):
                 raise ValueError('Chinese font is missing required glyphs; choose another font')
@@ -129,16 +197,19 @@ def build(root, project):
                 for item in page.get('text_elements', []):
                     x, y, w, h = _box(item.get('box'), width, height)
                     size = item.get('font_size', 18)
-                    if type(size) not in (int, float) or not math.isfinite(size) or not 8 <= size <= 72:
-                        raise ValueError('font_size must be 8–72 points')
                     lines = _lines(item['text'], font.fontName, size, w * mm)
                     leading = size * 1.4
                     if len(lines) * leading > h * mm:
                         raise ValueError(f"Page {page['page']}: text overflows its box; revise the text or layout")
                     canvas.setFont(font.fontName, size)
-                    canvas.setFillColorRGB(0.12, 0.12, 0.16)
+                    colour = item.get('fill', '#1f1f29')
+                    canvas.setFillColorRGB(*(int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5)))
+                    align = item.get('align', 'left')
+                    draw = {'left': canvas.drawString, 'center': canvas.drawCentredString,
+                            'right': canvas.drawRightString}[align]
+                    anchor = x + {'left': 0, 'center': w / 2, 'right': w}[align]
                     for line_no, line in enumerate(lines):
-                        canvas.drawString(x * mm, (height - y) * mm - size - line_no * leading, line)
+                        draw(anchor * mm, (height - y) * mm - size - line_no * leading, line)
             canvas.showPage()
         canvas.save()
         if len(PdfReader(output).pages) != len(pages):
@@ -173,10 +244,9 @@ def build(root, project):
                 old.unlink()
         atomic_bytes(project / 'previews/overview.jpg', (stage / 'overview.jpg').read_bytes())
         atomic_bytes(project / 'previews/covers.png', (stage / 'covers.png').read_bytes())
-    if data.get('render_input_hash') != fingerprint:
-        data.setdefault('qa', {}).update(story_reviewed=False, language_reviewed=False,
-            visual_continuity_reviewed=False, pdf_rendered_reviewed=False, print_tested=False)
-        data['print_status'] = 'pending-physical-proof'
+    data.setdefault('qa', {}).update(story_reviewed=False, language_reviewed=False,
+        visual_continuity_reviewed=False, pdf_rendered_reviewed=False, print_tested=False)
+    data['print_status'] = 'pending-physical-proof'
     data['render_input_hash'] = fingerprint
     data['render_output_hash'] = sha256((project / 'book.pdf').read_bytes())
     data.setdefault('deliverables', {}).update(DELIVERABLES)
@@ -189,7 +259,7 @@ def build(root, project):
                          '横向左侧环装通常使用短边翻转，具体翻转方向必须先试印。\n')
     instructions += '本文件完成数字排版与渲染；内容/视觉审校另看审校记录，实物打印仍需试印。\n'
     atomic_bytes(project / '打印说明.md', instructions.encode())
-    data['render_outputs'] = {path: sha256((project / path).read_bytes()) for path in set(DELIVERABLES.values())}
+    output_paths = set(DELIVERABLES.values()) | {f'previews/pages/{path.name}' for path in paths}
+    data['render_outputs'] = {path: sha256((project / path).read_bytes()) for path in output_paths}
     write_json(project / 'book.json', data)
-    return {'pdf': 'book.pdf', 'pages': len(pages), 'rendered_pages': len(paths),
-            'preview': 'previews/overview.jpg', 'physical_proof': 'pending'}
+    return result

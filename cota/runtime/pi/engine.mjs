@@ -1,6 +1,7 @@
 /** Pi owns the loop; Cota owns context policy, tools, models and durable state. */
 import { createSkillResources } from './skills.mjs';
-import {nativeModel, nativeStream} from './model.mjs';
+import {nativeModel, nativeStream, hydrateAttachments} from './model.mjs';
+import {projectImageContext} from './image-context.mjs';
 import { createHttpTool } from './http.mjs';
 import { createNativeTools } from './tools.mjs';
 import { createSendFilesTool } from './files.mjs';
@@ -8,7 +9,8 @@ import {resolveContextModel, compactionSettings, estimateRequest, compactContext
 import {shouldCompact} from '@earendil-works/pi-coding-agent';
 import { Agent } from '@earendil-works/pi-agent-core';
 import piPackage from '@earendil-works/pi-agent-core/package.json' with {type: 'json'};
-import { createAssistantMessageEventStream, getCurrentSystemPrompt } from '@earendil-works/pi-ai';
+import { createAssistantMessageEventStream, createInitialSystemMessage, getCurrentSystemPrompt,
+  toToolDeclaration } from '@earendil-works/pi-ai';
 
 if (piPackage.version !== '1.4.0') throw new Error('Cota requires Pi Core 1.4.0; reinstall with npm ci');
 
@@ -42,7 +44,8 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
   let schemas = [], latestAssistant;
   const pendingStarts = new Map();
   const model = options.provider ? nativeModel(resolveContextModel(options.model), options.provider) : resolveContextModel(options.model);
-  let attachments = [];
+  let requestMessages;
+  const attachmentCache = new Map();
   const settings = compactionSettings(model, options.compaction);
   let contextBudget;
   const request = async (method, payload) => {
@@ -92,13 +95,14 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
         const prepared = await request('prepare', {...(options.provider ? {native: true} : {messages}), skillPrompt: resources.prompt,
           toolPrompt: native.prompt, nativeTools: native.schemas, extensionTools});
         if (!options.provider) return prepared;
-        attachments = prepared.attachments ?? [];
         return {...prepared, messages: [...(prepared.systemPrompt ? [{role: 'system', content: prepared.systemPrompt, timestamp: 0}] : []),
           ...messages.filter(message => message.role !== 'system')]};
       };
       let prepared = await prepare(context.messages);
       for (let attempt = 0; ; attempt++) {
-        contextBudget = {...estimateRequest(prepared.messages, prepared.tools, model), context_window: model.contextWindow,
+        requestMessages = projectImageContext(await hydrateAttachments(prepared.messages, prepared.attachments,
+          options.provider ?? {vision: !!model.attachmentImages?.mimeTypes?.length}, attachmentCache));
+        contextBudget = {...estimateRequest(requestMessages, prepared.tools, model), context_window: model.contextWindow,
           capacity_source: model.capacitySource, reserve_tokens: settings.reserveTokens,
           max_request_bytes: settings.maxRequestBytes, max_images: settings.maxImages,
           max_image_bytes: settings.maxImageBytes};
@@ -107,9 +111,13 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
           throw new Error('System prompt and tool definitions exceed the model budget; reduce guidance or increase context_window');
         if (fixed.serialized_bytes >= settings.maxRequestBytes - Math.min(65536, Math.floor(settings.maxRequestBytes / 4)))
           throw new Error('System prompt and tool definitions exceed the byte budget; reduce guidance or increase compaction.max_request_bytes');
+        // Projection has already omitted historical pixels. The remaining
+        // images are active input, so compaction must not hide an over-limit
+        // user input or split its current comparison batch to make it fit.
+        if (exceedsImageBudget(contextBudget, settings))
+          throw new Error('Current user input/tool batch exceeds the image budget; use fewer/smaller images or increase compaction.max_images/max_image_bytes');
         if (!shouldCompact(contextBudget.budget_tokens, model.contextWindow, settings)
-            && contextBudget.serialized_bytes <= settings.maxRequestBytes
-            && !exceedsImageBudget(contextBudget, settings)) break;
+            && contextBudget.serialized_bytes <= settings.maxRequestBytes) break;
         if (attempt >= 2) throw new Error('Context still exceeds the Pi token/byte/image budget after compaction; narrow the task or increase the context budget');
         const summaryStream = async (_model, summaryContext) => {
           if (options.provider) {
@@ -118,7 +126,7 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
             const message = await stream.result();
             if (['error', 'aborted'].includes(message.stopReason)) {
               fatal ??= Object.assign(new Error(message.errorMessage || 'Native summary failed'),
-                message.cotaModelError ? {code: 'model_error'} : {});
+                message.cotaModelError ? {code: 'model_error', error_type: message.cotaErrorType} : {});
               throw fatal;
             }
             return stream;
@@ -130,18 +138,27 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
           stream.push({type: 'done', reason: message.stopReason, message});
           return stream;
         };
-        const result = await compactContext(prepared.messages, model, settings, summaryStream, signal, prepared.tools);
+        const result = await compactContext(requestMessages, model, settings, summaryStream, signal, prepared.tools);
         const committed = await request('compact', result);
         prepared = await prepare(committed.messages);
       }
       schemas = prepared.tools;
       const tools = toolsFor(schemas);
+      // Pi 1.4 providers read callable schemas from transcript declarations,
+      // not AgentContext.tools (which only binds executors). prepareRequest
+      // runs after Core's automatic declaration step, so rebuilding the system
+      // prompt must also declare this request's exact, current tool loadout.
+      const system = createInitialSystemMessage(getCurrentSystemPrompt(prepared.messages), tools.map(toToolDeclaration));
+      prepared.messages = [...(system ? [system] : []), ...prepared.messages.filter(message => message.role !== 'system')];
+      requestMessages = [...(system ? [system] : []), ...requestMessages.filter(message => message.role !== 'system')];
       // prepareRequest changes the low-level loop's context, not Agent.state.
-      // Keep the public snapshot (used by checkpoints) on the same projection.
+      // Keep checkpoints on the raw prepared history. Only transformContext
+      // selects request pixels; tool results and original images stay intact.
       agent.state.messages = prepared.messages;
       agent.state.tools = tools;
       return {context: {messages: prepared.messages, tools}};
     },
+    transformContext: () => requestMessages,
     beforeToolCall: async ({toolCall, args}) => {
       if (fatal) throw fatal;
       const start = pendingStarts.get(toolCall.id);
@@ -156,7 +173,7 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
       }
     },
     streamFn: async (_, context, streamOptions) => {
-      if (options.provider) return nativeStream({model, provider: options.provider, context, attachments, contextBudget,
+      if (options.provider) return nativeStream({model, provider: options.provider, context, contextBudget,
         rpc: request, signal: streamOptions?.signal ?? signal, notify, onComplete: message => {latestAssistant = message;}});
       const response = await request('model', {
         messages: context.messages, systemPrompt: getCurrentSystemPrompt(context.messages), tools: schemas, contextBudget,
@@ -181,7 +198,8 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
     if (event.type === 'message_end' && event.message.role === 'assistant'
         && ['error', 'aborted'].includes(event.message.stopReason)) {
       fatal ??= Object.assign(new Error(event.message.errorMessage || 'Pi model request interrupted'),
-        options.provider && event.message.cotaModelError && !signal?.aborted ? {code: 'model_error'} : {});
+        options.provider && event.message.cotaModelError && !signal?.aborted
+          ? {code: 'model_error', error_type: event.message.cotaErrorType} : {});
       throw fatal;
     }
     if (event.type === 'tool_execution_start') {

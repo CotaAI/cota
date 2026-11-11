@@ -151,3 +151,13 @@ test('session interaction regressions detect the previous queued-switch and ungu
   assert.notEqual(unguardedPoll, source);
   await assert.rejects(checkStaleEvents(unguardedPoll), {name: 'AssertionError'});
 });
+
+test('execution summary separates tool/model/compaction waiting from terminal limits', async () => {
+  const {executionProgressSummary} = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+  assert.equal(typeof executionProgressSummary, 'function');
+  assert.match(executionProgressSummary({phase: 'tool', tool: 'bash', since: 10}, 32), /Tool: bash.*22.0s/);
+  assert.match(executionProgressSummary({phase: 'compaction', since: 10}, 32), /Compacting.*22.0s/);
+  assert.match(executionProgressSummary({phase: 'model', since: 10}, 32), /Waiting for model/);
+  assert.match(executionProgressSummary({phase: 'limited', status: 'limited'}), /Limit reached.*continue/);
+  assert.match(executionProgressSummary({phase: 'failed', error_type: 'TimeoutError'}), /Timed out/);
+});

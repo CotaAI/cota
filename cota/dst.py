@@ -8,10 +8,12 @@ revisions are injected separately; replay never performs external operations.
 import json
 import re
 import logging
+import hashlib
 from copy import deepcopy
 from typing import Text, List, Dict, Any, Optional, TYPE_CHECKING
 
 from cota.events import Event, EventType
+from cota.events.immutable import freeze_json
 
 if TYPE_CHECKING:
     from cota.agent import Agent
@@ -34,18 +36,27 @@ class DST:
         self.agent = agent
 
         self._user_id = None
-        self._events: List[Event] = []
+        self._events = ()
+        self._run_ids = set()
         self._latest_user_event = None
         self._latest_bot_event = None
         self._user_context = {}
         self._active_skill = None
         self._execution = {}
-        self._context_messages = []
+        self._context_messages = freeze_json([])
         self._created_at = None
         self._updated_at = None
         # Store metadata, not conversation state. Never used by the reducer.
         self.revision = 0
         self._run_metadata = {}
+        # Canonical JSON-array hashes are advanced once at the reducer boundary.
+        # They retain the existing on-disk digest format, without re-reading old
+        # payloads (which may contain images) on every checkpoint.
+        self._event_hasher = hashlib.sha256(b'[')
+        self._event_hashes = [self._event_hasher.copy()]
+        self._persisted_sequence = 0
+        self._snapshot_sequence = 0
+        self._seal_state()
         if user_id is not None:
             self.user_id = user_id
 
@@ -140,6 +151,7 @@ class DST:
         Both live execution and replay enter here. Event.timestamp is retained;
         replay never reads the wall clock, calls tools or refreshes user memory.
         """
+        self._check_state()
         event.validate()
         if any(e.event_id == event.event_id for e in self._events):
             raise ValueError(f'duplicate event_id: {event.event_id}')
@@ -151,7 +163,7 @@ class DST:
         self._validate_transition(event)
         event.sequence = expected
         # Detach from the producer so it cannot mutate applied state by aliasing.
-        fact = Event.from_dict(event.as_dict())
+        fact = Event.from_dict(event.as_dict()).freeze()
         p, kind = fact.payload, fact.type
         current_run = self._execution.get('run_id')
         # Late/foreign run observations are facts for Trace, never commands to
@@ -198,11 +210,63 @@ class DST:
             self._latest_user_event = fact
         elif kind == EventType.BOT_UTTER:
             self._latest_bot_event = fact
-        self._context_messages = context
-        self._events.append(fact)
+        self._context_messages = freeze_json(context)
+        self._events += (fact,)
+        if kind == EventType.RUN_STARTED:
+            self._run_ids.add(fact.run_id)
+        self._hash_fact(fact)
         if self._created_at is None:
             self._created_at = fact.timestamp
         self._updated_at = fact.timestamp
+        self._seal_state()
+
+    def _hash_fact(self, event):
+        if len(self._event_hashes) > 1:
+            self._event_hasher.update(b',')
+        self._event_hasher.update(json.dumps(event.as_dict(), sort_keys=True, ensure_ascii=False,
+                                            allow_nan=False, separators=(',', ':')).encode())
+        self._event_hashes.append(self._event_hasher.copy())
+
+    def event_hash(self, sequence=None):
+        """Digest of an already validated immutable prefix; no history scan."""
+        sequence = len(self._events) if sequence is None else sequence
+        if type(sequence) is not int or not 0 <= sequence < len(self._event_hashes):
+            raise ValueError('Cannot edit or delete persisted event facts')
+        hasher = self._event_hashes[sequence].copy()
+        hasher.update(b']')
+        return hasher.hexdigest()
+
+    def _seal_state(self):
+        from cota.snapshots import digest
+        self._state_seal = digest(self._state_values(context=False))
+        self._context_seal = self._context_messages
+        self._history_seal = self._events
+
+    def _check_state(self):
+        from cota.snapshots import digest
+        if (self._state_seal != digest(self._state_values(context=False))
+                or self._context_seal is not self._context_messages
+                or self._history_seal is not self._events):
+            raise ValueError('DST state must be produced by events; use state mutation APIs')
+
+    def commit_data(self):
+        """Runtime write set. Full validation/export belongs to as_dict/load.
+
+        Public state/history getters are detached. Only apply_event may change
+        the private reducer projection; its old image payloads need no second
+        validation at the persistence boundary.
+        """
+        self._check_state()
+        from cota.run_metadata import validate_run_metadata
+        metadata = validate_run_metadata(self._run_metadata,
+            [{'type': 'run_started', 'run_id': run} for run in self._run_ids])
+        start = self._persisted_sequence
+        return {'session_id': self.session_id, 'revision': self.revision,
+                'base_sequence': start, 'last_sequence': len(self._events),
+                'events_hash': self.event_hash(), 'prefix_hashes': self._event_hashes,
+                'user_id': self._user_id, 'run_metadata': metadata,
+                'events': [e.as_dict() for e in self._events[start:]],
+                'snapshot_sequence': self._snapshot_sequence}
 
     def trace(self, run_id: str) -> Dict[str, Any]:
         from cota.trace import build_trace
@@ -263,17 +327,20 @@ class DST:
 
     STATE_VERSION = 11
 
-    def state_dict(self):
-        """Only deterministic state: no history, agent or database revision."""
-        return deepcopy({
+    def _state_values(self, *, context=True):
+        return {
             'user_id': self._user_id, 'user_context': self._user_context,
             'active_skill': self._active_skill,
             'execution': self._execution,
-            'context_messages': self._context_messages,
+            **({'context_messages': self._context_messages} if context else {}),
             'created_at': self._created_at, 'updated_at': self._updated_at,
             'latest_user_event_id': self._latest_user_event.event_id if self._latest_user_event else None,
             'latest_bot_event_id': self._latest_bot_event.event_id if self._latest_bot_event else None,
-        })
+        }
+
+    def state_dict(self):
+        """Only deterministic state: no history, agent or database revision."""
+        return deepcopy(self._state_values())
 
     @staticmethod
     def _facts(events):
@@ -315,14 +382,20 @@ class DST:
             from cota.snapshots import usable_snapshot
             if usable_snapshot(snapshot, session_id, facts):
                 start = snapshot['last_sequence']
+                tracker._snapshot_sequence = start
                 state = deepcopy(snapshot['state'])
-                tracker._events = facts[:start]
+                tracker._events = tuple(fact.freeze() for fact in facts[:start])
+                tracker._run_ids = {fact.run_id for fact in facts[:start] if fact.type == EventType.RUN_STARTED}
                 for name in ('user_id', 'user_context', 'active_skill', 'execution', 'context_messages'):
                     setattr(tracker, '_' + name, state[name])
+                tracker._context_messages = freeze_json(tracker._context_messages)
                 tracker._created_at, tracker._updated_at = state['created_at'], state['updated_at']
                 by_id = {event.event_id: event for event in tracker._events}
                 tracker._latest_user_event = by_id.get(state['latest_user_event_id'])
                 tracker._latest_bot_event = by_id.get(state['latest_bot_event_id'])
+                for fact in facts[:start]:
+                    tracker._hash_fact(fact)
+                tracker._seal_state()
         for event in facts[start:]:
             tracker.apply_event(event)
         tracker.revision = revision

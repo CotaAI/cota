@@ -51,6 +51,8 @@ COTA_RUNTIME_DIR="$PWD/.build/pi-runtime" python -m build
 
 工具以顺序模式执行。Pi 的 `beforeToolCall` 钩子让 Cota 在副作用前保存校验后的参数；checkpoint 失败不会获得确认。
 
+Pi 1.4 区分可执行工具和供应商工具声明：`AgentContext.tools` 绑定执行器，provider 从 system 消息的 `toolsAdded` / `toolsRemoved` 解析模型可调用的能力。Cota 的 `prepareRequest` 重建指导时，使用 Pi 的 `createInitialSystemMessage` 和 `toToolDeclaration` 同步声明当前完整工具集合，避免只保留 prompt 文字却丢失实际 tools。每次 Policy 或工具范围变化后，下一次真实请求也必须反映该变化。
+
 模型回复同时包含公开文字和工具调用时，完整 assistant 消息仍归属于第一条 `tool_started`；另保存一条以 `llm_event_id` 指向它的 `bot_utter` 用于历史展示和投递。两者同次提交后才执行工具；这条公开发言不再生成第二份模型上下文。隐藏推理不属于公开文字。
 
 原生请求单次默认总时限180秒、默认不自动重试；空行保活、SDK 退避以及请求观察钩子的等待不能延长该时限，详见 [endpoints.yml](../configuration/endpoints.md)。初始历史只同步一次；普通 prepare 只返回 system 指导、工具声明和已授权的附件位置，不往返传输包含图片的整份历史。压缩后才从 Cota 接收新的上下文投影。Debug 模式额外传回一次实际供应商请求。原生工具产生的图片结果仍按现有工具记录协议传递，尚未引入通用二进制资源协议。

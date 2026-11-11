@@ -181,3 +181,16 @@ test('an oversized current multi-image batch is not silently split or summarized
   assert.equal(calls.length, 0);
   assert.equal(messages.filter(m => m.role === 'toolResult').length, 3);
 });
+
+test('usage from a request with omitted old pixels cannot force compaction of the smaller projection', async () => {
+  const {projectImageContext} = await import('./image-context.mjs');
+  const messages = [msg('user', 'inspect', 'u'),
+    msg('assistant', [{type: 'toolCall', id: 'old', name: 'read', arguments: {path: '/old.png'}}], 'call'),
+    {...msg('toolResult', [{type: 'image', mimeType: 'image/png', data: 'eA=='}], 'image'), toolCallId: 'old'},
+    {...msg('assistant', [{type: 'text', text: 'The border is blue.'}], 'answer'),
+      usage: {input: 100000, output: 1000, cacheRead: 0, cacheWrite: 0, totalTokens: 101000}},
+    msg('user', 'continue', 'new')];
+  const budget = estimateRequest(projectImageContext(messages));
+  assert(budget.budget_tokens < 2000);
+  assert.equal(budget.usage_based_tokens, null);
+});

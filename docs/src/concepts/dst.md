@@ -40,7 +40,7 @@ DST（Dialogue State Tracker）保存一个 `session_id` 的事件派生状态�
 
 工具参数位于 `tool_started.payload.arguments`，原生结果和状态位于 `tool_result.payload.result/status`；模型可见内容需要与原生结果区分时记录在 `payload.content`。参数转换改变了模型原提案时，开始事件另存 `payload.requested_arguments`。事件之间通过 tool call ID、run ID 和模型来源事件引用建立关系，不能随意拼接或修改已提交事实。
 
-DST 对外返回事件、上下文和状态副本。状态更新必须经过 reducer；Store 会检查事件派生状态，拒绝绕过它修改内部字段的写入。
+DST 对外返回事件、上下文和状态副本。状态更新必须经过 reducer；内部已应用事实和上下文不可变，运行提交检查状态及事件游标，避免为了检查旧图片而反复恢复整段历史。
 
 ## SQL 数据如何组织
 
@@ -52,7 +52,8 @@ DST 对外返回事件、上下文和状态副本。状态更新必须经过 red
 | `events` | 一行一个事件；主键为 session + sequence，payload 为 JSON，event ID 在会话内唯一 |
 | `session_snapshots` | 每个会话的最新状态快照、覆盖到的 sequence |
 | `run_metadata` | 按 session + run 保存不可变资源来源，例如本轮可用 Skill 目录 |
-| `model_debug` | 可选模型诊断，按请求记录原始请求 / 响应等；不作为对话事实来源 |
+| `model_debug` | 可选模型诊断的可变状态、计时与索引；不作为对话事实来源 |
+| `model_debug_bodies` | 按请求与字段保存大请求正文、准备详情和响应，读取时合并为完整诊断 JSON |
 | `deliveries` | 指向已提交 `bot_utter` 的可变投递状态、尝试次数和重试时间 |
 
 用户长期记忆由独立的 UserMemory 后端 / `user_memory` 表保存；它按用户而非会话组织。刷新到某次对话的内容通过 `user_context_updated` 记录，历史恢复不会重新查询实时记忆。Skill 目录元数据同样不冒充一条对话发言。
@@ -101,3 +102,11 @@ events = await agent.store.events("alice-demo", after_sequence=0, limit=100)
 实现入口：`cota/dst.py`、`cota/store.py`、`cota/events/event.py`、`cota/events/context.py`、`cota/snapshots.py`、`cota/delivery_store.py`。
 
 相关文档：[执行流程](execution-flow.md) · [Message](message.md) · [用户记忆](../components/user_memory.md) · [Endpoints 配置](../configuration/endpoints.md) · [可靠投递](../deployment/delivery.md)
+
+## 运行中的增量提交
+
+`apply_event()` 验证新事实、更新派生状态，并增量推进事件前缀的规范 JSON 哈希。运行时 `Store.save()` 只序列化未提交事件，在事务中检查 revision、已保存前缀和不可变 run metadata，追加事件及相应 outbox。没有新事实或资源元数据时不写入，也不增加 revision。普通提交不读取旧快照或恢复整个 DST。
+
+隔离执行通过 `save_execution()` 合并回主会话：同一执行生命周期内复用已验证的会话与提交游标，revision 改变时重新加载，因而不会覆盖期间收到的新输入。缓存随执行对象释放；进程重启仍从数据库恢复。原始事件和现有哈希格式不变，运行结束及事件间隔的快照规则继续生效。`load()`、导出及按需状态检查仍完整验证已保存事件，不能用运行时缓存代替恢复校验。
+
+模型诊断的大字段保存在独立的 `model_debug_bodies` 表，按会话、请求和字段定位；`model_debug` 保存可更新的状态、计时与索引。正文写入一次，适配器输入可升级为实际供应商请求；后续状态与 Event 关联更新不重复写图片正文。读取时合并成原来的完整诊断 JSON。该表首次打开数据库时创建，不需要删除现有会话数据库，也不参与 DST 恢复。

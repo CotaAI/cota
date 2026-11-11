@@ -110,6 +110,10 @@ init 创建空模板，不能直接 build；Bot 应先把用户确认的分页�
 
 build 输出 book.pdf、全部逐页渲染图、全书联系表、封面封底预览、打印说明和纸张映射。中文由 ReportLab 使用嵌入字体排版，图片模型不生成最终中文；每页位置由明确的毫米坐标决定，不强制统一版式。文字溢出或字体缺字会报错。内容、插图、字体或版式变化时，重新 build 会清除旧的审校通过标志，要求复核；输入一致时保留有效审校状态。暂不实现出血、CMYK、骑马钉拼版等印厂流程；需要这些规格时应另做匹配的制作方案。
 
+版式字段严格校验：图片用 `asset`；文字只支持 `text/box/font_size/align/fill`，其中 `align` 为 left/center/right，`fill` 为 `#RRGGBB`。`image_path`、`weight` 等未实现字段会报错，避免“改了参数但画面没变”。`build --help` 列出全部页面字段；`status` 列出 PDF 面号与对应资产，包含结构留白。构建返回输入哈希；输入未变且 PDF、逐页预览和交付文件完整时 `reused: true`，不重复渲染；产物损坏则重建并清除旧 QA。
+
+`review` 为每张图片发送有序的路径与内容哈希，报告保留 `image_inputs`，便于核对具体版本。提示词需明确待审图、参考图和检查问题；每张图片分别写一次 `--image`。按“问题、修改、复核”推进，同一问题默认最多两轮无效修正后保存进度并报告阻塞，避免无限重建。命令直接执行，不接可能掩盖退出码的 `| tail` 等管道；脚本执行成功不等于画面或整本书验收通过。
+
 原 Skill 的创作资料、主题指南和验证器完整保留。验证器通过不代表语言、视觉或实物打印自动合格；脚本不自动勾选审校。审校记录与实际页面必须一致。没有实物打印时保持 `print_tested: false` / `pending-physical-proof`。`deliverables --draft` 仅列出明确未验收的审阅稿；正式清单默认必须先 validate。脚本返回路径，由 send_files 完成通用附件交付。
 
 图片请求日志保留提示词、参考图路径、模型名、输入/输出哈希；不保留密钥或 base64。成功生成且输入相同时复用；修改用新版本输出名。`started` 且没有图片表示请求结果未知，先检查供应商记录，不自动再请求。Shell 单次上限300秒，本轮整体上限3600秒和100次模型迭代；这不是后台任务队列。
@@ -127,7 +131,7 @@ cota eval --config . --debug
 仓库中的受控链路测试：
 
 ```sh
-python -m pytest tests/test_picture_book_bot.py tests/test_bot_templates.py -q
+python -m pytest tests/test_picture_book_bot.py tests/test_picture_book_contracts.py tests/test_bot_templates.py -q
 ```
 
 此命令在仓库根目录执行；测试用临时文件、受控图片/视觉响应和真实 Pi、PDF、HTTP/WebSocket。不会消耗真实 API 额度，也不声称真实绘图质量已经验证。PDF 测试需可选依赖和中文字体；缺少时明确跳过。

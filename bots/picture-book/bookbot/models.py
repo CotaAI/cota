@@ -174,19 +174,31 @@ def review(root, project, prompt_file, images, output, *, client=None):
     if not 1 <= len(images) <= 8:
         raise ValueError('Review requires one to eight actual images')
     prompt = confined(project, prompt_file).read_text(encoding='utf-8')
+    if not prompt.strip() or len(prompt) > 32000:
+        raise ValueError('Review prompt must be nonempty and at most 32000 characters')
     inputs = [image_data(project, image) for image in images]
+    evidence = [{'image': number, 'path': str(p.relative_to(project)), 'sha256': sha256(data)}
+                for number, (p, data, _) in enumerate(inputs, 1)]
     path = confined(project, output)
     if path.suffix != '.json':
         raise ValueError('Review output must end in .json')
-    identity = _identity(config, prompt, inputs)
+    identity = sha256((_identity(config, prompt, inputs) + json.dumps(evidence, sort_keys=True)
+                       + ':labelled-review-v1').encode())
     if path.exists():
         previous = read_json(path)
         if previous.get('input_hash') == identity:
             return {**previous, 'reused': True}
         raise ValueError('Review already exists; choose a new revision filename')
-    content = [{'type': 'text', 'text': prompt}, *[
-        {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,' + base64.b64encode(data).decode()}}
-        for _, data, mime in inputs]]
+    content = [{'type': 'text', 'text': prompt + '\n\n'
+        'Each image is preceded by its numbered project path and content hash. '
+        'Identify observations by that path; distinguish review targets and references as instructed. '
+        'Report specific visible issues, uncertain items and whether the requested correction is visible. '
+        'Do not treat a reference as the target, invent unobserved details or approve the whole book.'}]
+    for item, (_, data, mime) in zip(evidence, inputs):
+        content.extend([
+            {'type': 'text', 'text': 'Image input: ' + json.dumps(item, ensure_ascii=False)},
+            {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,' + base64.b64encode(data).decode()}},
+        ])
     with ExitStack() as stack:
         client = client or stack.enter_context(httpx.Client(trust_env=False))
         result = _request(client, config, '/chat/completions', json={
@@ -198,6 +210,6 @@ def review(root, project, prompt_file, images, output, *, client=None):
     except (KeyError, IndexError, TypeError, ValueError):
         raise ValueError('Vision model did not return review text') from None
     record = {'model': config['model'], 'input_hash': identity, 'content': text, 'prompt': prompt,
-              'images': [str(p.relative_to(project)) for p, _, _ in inputs], 'created_at': time.time()}
+              'images': [item['path'] for item in evidence], 'image_inputs': evidence, 'created_at': time.time()}
     write_json(path, record)
     return record

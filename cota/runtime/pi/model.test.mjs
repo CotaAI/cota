@@ -188,3 +188,170 @@ test('safe transport observations arrive while native body is still streaming', 
   assert(f.rpcCalls.indexOf(headers) < f.rpcCalls.findIndex(c => c.method === 'model_complete'));
   assert.equal(JSON.stringify(headers).includes('test-secret'), false);
 });
+
+test('native provider receives actual callable schemas on the first request', async t => {
+  const f = await fixture(t, async (_req, res) => done(res));
+  await runAgent(f.options, f.rpc);
+  assert.deepEqual(f.requests[0].body.tools?.map(tool => tool.function.name), ['act']);
+  assert.deepEqual(f.requests[0].body.tools[0].function.parameters, schema.function.parameters);
+  assert.equal(JSON.stringify(f.requests[0].body.tools).includes('execute'), false);
+});
+
+test('schema-aware provider calls tools only when declared, then respects refreshed loadout', async t => {
+  const f = await fixture(t, async (_req, res, n) => {
+    const body = f.requests[n - 1].body;
+    if (n === 1 && body.tools?.some(tool => tool.function.name === 'act')) {
+      sse(res);
+      res.write(chunk({content: 'I will check the instructions.'}));
+      res.write(chunk({tool_calls: [{index: 0, id: 'declared-call', type: 'function',
+        function: {name: 'act', arguments: '{"n":1}'}}]}));
+      res.write(chunk({}, 'tool_calls'));
+      res.end('data: [DONE]\n\n');
+    } else done(res, n === 1 ? '<DSML invoke name="act">not a real tool call</DSML>' : 'finished');
+  });
+  let preparations = 0;
+  const rpc = async (method, payload) => {
+    if (method === 'prepare') return {systemPrompt: `policy-${++preparations}`,
+      tools: preparations === 1 ? [schema] : [], attachments: []};
+    return f.rpc(method, payload);
+  };
+  const result = await runAgent(f.options, rpc, undefined, f.notify);
+  assert.equal(f.toolCalls.length, 1);
+  assert.equal(f.requests.length, 2);
+  assert.deepEqual(f.requests[0].body.tools.map(tool => tool.function.name), ['act']);
+  assert.deepEqual(f.requests[1].body.tools, []);
+  assert.equal(f.requests[1].body.messages[0].content, 'policy-2');
+  assert(f.requests[1].body.messages.some(message => message.role === 'tool'));
+  assert.equal(result.messages.at(-1).content[0].text, 'finished');
+});
+
+test('request projection bounds restored image history and attachments before budgets without changing raw state', async t => {
+  const {mkdtemp, writeFile, rm} = await import('node:fs/promises');
+  const {tmpdir} = await import('node:os'); const {join} = await import('node:path');
+  const root = await mkdtemp(join(tmpdir(), 'cota-image-context-'));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const file = join(root, 'attachment.png'); const bytes = Buffer.from('current attachment'); await writeFile(file, bytes);
+  const history = [{...user, cotaEventId: 'old-user'}];
+  for (let i = 0; i < 10; i++) history.push(
+    {role: 'assistant', cotaEventId: `call-${i}`, timestamp: i + 2, reasoningSignature: 'provider-metadata',
+      content: [{type: 'toolCall', id: `read-${i}`, name: 'read', arguments: {path: `/book/${i}.png`}}]},
+    {role: 'toolResult', cotaEventId: `result-${i}`, timestamp: i + 2, toolCallId: `read-${i}`, toolName: 'read',
+      details: {original: true}, content: [{type: 'image', data: Buffer.from(`old ${i}`).toString('base64'), mimeType: 'image/png'}]});
+  const attachment = {id: 'new-attachment', name: 'attachment.png', path: file, mimeType: 'image/png', size: bytes.length};
+  history.push({...user, cotaEventId: 'new-user', cotaAttachments: [{id: attachment.id, name: attachment.name, mime_type: attachment.mimeType, size: bytes.length}]});
+  history.push({role: 'assistant', cotaEventId: 'compare', content: [0, 1].map(i =>
+    ({type: 'toolCall', id: `compare-${i}`, name: 'read', arguments: {path: `/book/current-${i}.png`}}))});
+  for (let i = 0; i < 2; i++) history.push({role: 'toolResult', cotaEventId: `current-${i}`, toolCallId: `compare-${i}`, toolName: 'read',
+    content: [{type: 'image', mimeType: 'image/png', data: Buffer.from(`current ${i}`).toString('base64')}]});
+  const original = structuredClone(history);
+  const f = await fixture(t, async (_req, res) => done(res));
+  f.options.messages = history; f.options.provider.vision = true; f.options.compaction = {max_images: 3};
+  const attachments = [{message_id: 'old-user', files: [{...attachment, id: 'old-attachment'}]}, {message_id: 'new-user', files: [attachment]}];
+  const rpc = async (method, payload) => method === 'prepare' ? {systemPrompt: 'policy', tools: [], attachments} : f.rpc(method, payload);
+  const result = await runAgent(f.options, rpc);
+  const wire = f.requests[0].body.messages;
+  const pixels = wire.flatMap(m => Array.isArray(m.content) ? m.content.filter(b => b.type === 'image_url') : []);
+  assert.equal(pixels.length, 3);
+  assert.match(JSON.stringify(wire), /\/book\/0.png/);
+  assert.doesNotMatch(JSON.stringify(wire), new RegExp(Buffer.from('old 0').toString('base64')));
+  const budget = f.rpcCalls.find(c => c.method === 'model_begin').payload.contextBudget;
+  assert.equal(budget.images, 3);
+  assert.deepEqual(history, original);
+  assert.equal(result.messages.filter(m => m.role === 'toolResult').flatMap(m => m.content.filter(b => b.type === 'image')).length, 12);
+  assert(!JSON.stringify(result.messages).includes('Image pixels omitted'));
+  // A later run starts from the returned raw checkpoint. Previous attachments
+  // and answered tool images must not be reintroduced at the provider boundary.
+  f.options.messages = [...result.messages, {...user, cotaEventId: 'restart-user', content: 'continue from your observations'}];
+  await runAgent(f.options, rpc);
+  assert.equal(f.requests[1].body.messages.flatMap(m => Array.isArray(m.content) ? m.content.filter(b => b.type === 'image_url') : []).length, 0);
+});
+
+test('authorized attachment hydration reuses unchanged pixels but detects a changed file version', async t => {
+  const {hydrateAttachments} = await import('./model.mjs');
+  const {mkdtemp, writeFile, rm} = await import('node:fs/promises');
+  const {tmpdir} = await import('node:os'); const {join} = await import('node:path');
+  const root = await mkdtemp(join(tmpdir(), 'cota-attachment-cache-'));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const path = join(root, 'image.png'); await writeFile(path, 'first');
+  const attachments = [{message_id: user.cotaEventId, files: [{id: 'immutable-user-file', path, mimeType: 'image/png', size: 5}]}];
+  const cache = new Map(), provider = {vision: true};
+  const first = await hydrateAttachments([user], attachments, provider, cache);
+  const second = await hydrateAttachments([user], attachments, provider, cache);
+  assert.equal(first[0].content.find(b => b.type === 'image'), second[0].content.find(b => b.type === 'image'));
+  await writeFile(path, 'other');
+  const changed = await hydrateAttachments([user], attachments, provider, cache);
+  assert.notEqual(changed[0].content.find(b => b.type === 'image').data, first[0].content.find(b => b.type === 'image').data);
+});
+
+test('an oversized active user input plus tool image batch fails before compaction can discard input pixels', async t => {
+  const f = await fixture(t, async (_req, res) => done(res));
+  const image = text => ({type: 'image', mimeType: 'image/png', data: Buffer.from(text).toString('base64')});
+  f.options.messages = [
+    {...user, content: [image('user first'), image('user second')]},
+    {role: 'assistant', cotaEventId: 'call', content: [{type: 'toolCall', id: 'read', name: 'read', arguments: {path: '/result.png'}}]},
+    {role: 'toolResult', cotaEventId: 'result', toolCallId: 'read', toolName: 'read', content: [image('tool result')]},
+  ];
+  f.options.compaction = {max_images: 2};
+  await assert.rejects(runAgent(f.options, f.rpc), /current|latest.*(?:image|batch)/i);
+  assert.equal(f.rpcCalls.some(c => c.method === 'compact' || c.method === 'model_begin'), false);
+  assert.equal(f.requests.length, 0);
+});
+
+test('native compaction summarizes projected sources and recorded observations without sending pixels', async t => {
+  const f = await fixture(t, async (_req, res, n) => done(res, n === 1 ? 'summary preserves /old.png and the recorded blue border' : 'done'));
+  f.options.messages = oversizedHistory();
+  f.options.messages[0] = {...user, content: [{type: 'text', text: 'Inspect this image; source /old.png.'},
+    {type: 'image', mimeType: 'image/png', data: Buffer.from('old image').toString('base64')}]};
+  f.options.messages[2].content.unshift({type: 'text', text: 'Explicit observation: the border is blue.'});
+  const before = structuredClone(f.options.messages);
+  f.options.model = {contextWindow: 8000, maxTokens: 500};
+  f.options.compaction = {reserve_tokens: 1000, keep_recent_tokens: 1000};
+  f.options.provider.vision = true;
+  const rpc = async (method, payload) => method === 'compact' ? {messages: [
+    {role: 'user', content: payload.summary, timestamp: 5, cotaEventId: 'summary', cotaCompaction: true},
+    f.options.messages.at(-1)]} : f.rpc(method, payload);
+  await runAgent(f.options, rpc);
+  const summary = JSON.stringify(f.requests[0].body.messages);
+  assert.match(summary, /sha256:/); assert.match(summary, /source_id/);
+  assert.match(summary, /border is blue/); assert.match(summary, /re-read/);
+  assert.doesNotMatch(summary, /data:image/);
+  assert.deepEqual(f.options.messages, before);
+});
+
+test('image provenance survives Pi truncation of long tool-result text', async t => {
+  const f = await fixture(t, async (_req, res, n) => done(res, n === 1 ? 'summary' : 'done'));
+  const sourceId = 'long-image-result';
+  f.options.messages = [user,
+    {role: 'assistant', cotaEventId: 'long-image-call', content: [{type: 'toolCall', id: 'long-image', name: 'read', arguments: {path: '/book/long.png'}}]},
+    {role: 'toolResult', cotaEventId: sourceId, toolCallId: 'long-image', toolName: 'read', content: [
+      {type: 'text', text: 'details '.repeat(6000)}, {type: 'image', mimeType: 'image/png', data: 'eA=='}]},
+    {...user, cotaEventId: 'latest-input', content: 'continue'}];
+  f.options.model = {contextWindow: 8000, maxTokens: 500};
+  f.options.compaction = {reserve_tokens: 1000, keep_recent_tokens: 100};
+  const rpc = async (method, payload) => method === 'compact' ? {messages: [
+    {role: 'user', content: payload.summary, timestamp: 5, cotaEventId: 'summary', cotaCompaction: true}, f.options.messages.at(-1)]} : f.rpc(method, payload);
+  await runAgent(f.options, rpc);
+  const summary = JSON.stringify(f.requests[0].body.messages);
+  assert.match(summary, new RegExp(sourceId)); assert.match(summary, /sha256:/); assert.match(summary, /re-read/);
+});
+
+test('historical attachment references do not read files or return to fallback hydration/budgets', async () => {
+  const {hydrateAttachments} = await import('./model.mjs');
+  const {estimateRequest} = await import('./context.mjs');
+  const file = {id: 'old-reference', name: 'old.png', mime_type: 'image/png', size: 2048};
+  const messages = [{...user, cotaAttachments: [file]}, {...user, cotaEventId: 'new-user'}];
+  const result = await hydrateAttachments(messages, [], {vision: true});
+  assert.equal(result[0].cotaAttachmentsHydrated, true);
+  assert.match(JSON.stringify(result[0].content), /old-reference/);
+  assert.match(JSON.stringify(result[0].content), /re-read/);
+  assert.doesNotMatch(JSON.stringify(result[0].content), /unavailable|not configured/i);
+  assert.equal(estimateRequest(result, [], {attachmentImages: {mimeTypes: ['image/png'], maxBytes: 2097152}}).images, 0);
+  assert.deepEqual(await hydrateAttachments(result, [], {vision: true}), result);
+});
+
+test('deadline error type survives an unacknowledged failure observation', async t => {
+  const f = await fixture(t, async (_req, res) => {sse(res); res.write(': keepalive\n\n');});
+  f.options.provider.timeoutSeconds = .1;
+  const rpc = async (method, payload) => method === 'model_failed' ? new Promise(() => {}) : f.rpc(method, payload);
+  await assert.rejects(runAgent(f.options, rpc), error => error.code === 'model_error' && error.error_type === 'TimeoutError');
+});

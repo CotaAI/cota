@@ -21,6 +21,18 @@ export function modelRequestSummary(record, now = Date.now() / 1000) {
   ].filter(Boolean).join(' · ');
 }
 
+export function executionProgressSummary(progress, now = Date.now() / 1000) {
+  if (!progress) return 'Idle';
+  const labels = {idle: 'Idle', preparing: 'Preparing next request', model: 'Waiting for model',
+    compaction: 'Compacting context', tool: `Tool: ${progress.tool || '?'}`,
+    completed: 'Completed', limited: 'Limit reached · continue in this conversation',
+    failed: progress.error_type === 'TimeoutError' ? 'Timed out' : 'Failed', interrupted: 'Interrupted'};
+  const label = labels[progress.phase] || progress.status;
+  const seconds = progress.status === 'running' || ['model', 'tool', 'compaction', 'preparing'].includes(progress.phase)
+    ? now - progress.since : progress.duration_seconds;
+  return [label, Number.isFinite(seconds) ? `${Math.max(0, seconds).toFixed(1)}s` : ''].filter(Boolean).join(' · ');
+}
+
 function boot() {
   const $ = id => document.getElementById(id);
   const headers = [], byID = new Map();
@@ -405,6 +417,7 @@ function boot() {
         cursor = data.after_sequence;
         $('bot-name').textContent = info.bot; $('session').textContent = info.session_id || '暂无会话';
         $('cursor').textContent = `已读取至 #${cursor} / 已提交 #${info.metadata?.last_sequence || 0}`;
+        $('execution-progress').textContent = executionProgressSummary(info.progress);
         $('connection').textContent = paused ? '已暂停 · 可继续查详情' : '已连接 · 增量刷新'; $('connection-dot').classList.toggle('off', paused);
         if (data.events.length) { renderEvents(); }
         if (activeTab === 'requests' && selectedRequest && requestRecord?.status === 'running') {

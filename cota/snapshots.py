@@ -18,7 +18,7 @@ def make_snapshot(dst):
         'session_id': dst.session_id, 'schema_version': dst.STATE_VERSION,
         'last_sequence': len(dst.events),
         'last_event_id': dst.events[-1].event_id if dst.events else None,
-        'events_hash': digest([event.as_dict() for event in dst.events]),
+        'events_hash': dst.event_hash(),
         'state': dst.state_dict(), 'created_at': time.time(),
     }
     snapshot['checksum'] = digest(snapshot)

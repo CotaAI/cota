@@ -53,6 +53,8 @@ Scripts read endpoints.yml themselves; never put credentials in command argument
 doctor checks configuration/dependencies only and makes no paid model requests.
 Network requests have a 240-second limit; allow up to 300 seconds for the Bash tool.
 Use command --help for detailed file, layout and review requirements.
+Run commands directly: do not pipe through tail/head or append a successful echo.
+Such shell commands can hide a failed program exit. Read the JSON and exit status.
 
 Normal workflow (no implementation-source reading required):
   1. doctor once, then init; save the brief, story, storyboard and visual rules.
@@ -93,6 +95,11 @@ never blindly retry it. Generate artwork without final Chinese text.''')
         epilog='''All paths stay inside the project. Repeat --image for 1-8 actual PNG/JPEG/WebP
 images, each <=32 MiB. Include the character reference when checking continuity.
 Review every rendered page, not only a small contact sheet. Output must end in .json.
+Each --image must have its own flag. Name the target page/path and the reference
+path in the prompt; do not rely only on "image 1/image 2" or reuse another page's
+questions. The service receives labels/hashes next to the actual images; the saved
+report includes image_inputs in the same order. Review only the requested visible
+criteria and verify the specific correction on the new version.
 Identical reviews are reused; changed inputs need a new revision filename.
 The report is evidence, not automatic QA approval. Correct issues and record the
 actual language/content/visual review before updating book.json qa flags.''')
@@ -111,12 +118,22 @@ This renderer uses explicit page layout (millimetres from the top-left; fonts in
   "asset": "illustrations/finals/page-01.png",
   "image_box": [10, 10, 190, 90],
   "text_elements": [
-    {"text": "小兔抬头，云朵轻轻飘过。", "box": [10, 110, 190, 25], "font_size": 18}
+    {"text": "小兔抬头，云朵轻轻飘过。", "box": [10, 110, 190, 25], "font_size": 18,
+     "align": "left", "fill": "#1f1f29"}
   ]
 }
 
 Each box is [left, top, width, height] within the page. Asset paths are relative to
 the project. Place all visible text in text_elements, not the legacy page text field.
+Text supports only text, box, font_size (8-72 pt), align (left/center/right) and
+fill (#RRGGBB). Defaults: 18 pt, left, #1f1f29. Bold/weight, custom line spacing,
+background panels and image_path are unsupported and rejected, not ignored.
+Page fields: page, role, title, text, blank, blank_reason, layout, asset, image_box,
+text_elements, context_asset, detail_asset, arrow_count, notes. title/role/layout/
+notes and context/detail fields are metadata/evidence, not extra drawing commands.
+page text must be absent/empty; only text_elements are drawn. page is the 1-based
+PDF face number including blanks; do not confuse it with a Python list index or
+the artwork filename. Unknown page/text fields fail before outputs are replaced.
 Choose positions for each illustration; do not force one layout on the whole book.
 Wordless pages can omit text_elements; blank pages must have no artwork or text.
 Keep the Skill's required context_asset/detail_asset/arrow_count evidence for any
@@ -127,7 +144,11 @@ previews/covers.png, 打印说明.md, deliverables and sheet_map in book.json.
 Chinese fonts are embedded; missing glyphs and overflowing boxes are errors.
 Changes to text, artwork, layout or font clear prior QA flags. Review actual rendered
 pages, complete language/content checks, then update QA and run validate. build does
-not approve a book. Physical proof remains print_tested=false until really tested.''')
+not approve a book. Physical proof remains print_tested=false until really tested.
+Successful build returns input_hash and manifest. Unchanged inputs with intact PDF,
+previews and instructions return reused=true without rendering again; damaged or
+missing outputs are rebuilt and QA is cleared. Inspect the changed page rather than
+repeatedly rebuilding unchanged sources. Never set QA merely to make validate pass.''')
     commands.add_parser('validate', help='Require the current render and run the original Skill package validator',
         description='Reject stale source/PDF/deliverable hashes before checking the generic Skill contract. '
                     'Validation checks structure and declared evidence, not actual visual quality.')
@@ -149,6 +170,9 @@ not approve a book. Physical proof remains print_tested=false until really teste
         elif args.command == 'status':
             data = read_json(project / 'book.json')
             result = {'project': str(project), 'title': data.get('title'), 'qa': data.get('qa'),
+                      'render_input_hash': data.get('render_input_hash'),
+                      'pages': [{key: page.get(key) for key in ('page', 'role', 'blank', 'asset')}
+                                for page in data.get('pages', [])],
                       'images': [str(p.relative_to(project)) for p in project.rglob('*.png')],
                       'requests': [{'path': str(p.relative_to(project)), 'status': read_json(p).get('status')}
                                    for p in project.rglob('*.request.json')]}
