@@ -154,7 +154,7 @@ def main():
         subprocess.run([str(cli), '--help'], cwd=root, check=True, stdout=subprocess.DEVNULL)
         subprocess.run([str(cli), 'init'], cwd=root, check=True, stdout=subprocess.DEVNULL)
         bots = root / 'cota_projects'
-        assert {p.name for p in bots.iterdir() if p.is_dir()} == {'weather'}
+        assert {p.name for p in bots.iterdir() if p.is_dir()} == {'weather', 'picture-book'}
         assert not any(p.name in {'workspace', '.venv', '__pycache__', '.front_cache.html',
                                  '.front_meta.json', 'scheduler_jobs.json'} for p in bots.rglob('*'))
         for name in ('weather',):
