@@ -24,14 +24,14 @@
 
 若当前 Skill 随 Cota 绘本 Bot 分发，可使用 Bot 自带的制作程序；其他环境继续使用下方已有工具的接入方式。`default` 是规划与对话模型，`image` 和 `vision` 是配套程序使用的图像能力，并非可直接调用的 Pi 工具名。供应商、模型与凭证由部署配置管理，程序自行读取，不打开配置文件查找密钥。
 
-从实际运行环境说明取得 **Bot directory**、**Working directory** 和 **Python executable**。使用该解释器和 Bot 根目录下 `scripts/book.py` 的绝对路径；不要根据作品目录猜 `../` 层数，也不搜索用户电脑上的同名脚本。以下 `<PYTHON>` 和 `<BOT>` 是占位符，须替换成环境提供的真实值，并按当前 Shell 规则转义路径：
+从实际运行环境说明取得 **Bot directory**、**Working directory** 和 **Python executable**。Bot 根目录下 `scripts/book.py` 使用 PEP 723 内联依赖声明，优先使用 `uv run` 执行以自动隔离依赖环境；无 uv 时回退到 Python 解释器（需手动安装依赖）。以下 `<BOT>` 是占位符，须替换成环境提供的真实值，并按当前 Shell 规则转义路径：
 
 ```sh
-"<PYTHON>" "<BOT>/scripts/book.py" --help
-"<PYTHON>" "<BOT>/scripts/book.py" doctor
-"<PYTHON>" "<BOT>/scripts/book.py" init my-book
-"<PYTHON>" "<BOT>/scripts/book.py" --project my-book status
-"<PYTHON>" "<BOT>/scripts/book.py" --project my-book generate --help
+uv run "<BOT>/scripts/book.py" --help
+uv run "<BOT>/scripts/book.py" doctor
+uv run "<BOT>/scripts/book.py" init my-book
+uv run "<BOT>/scripts/book.py" --project my-book status
+uv run "<BOT>/scripts/book.py" --project my-book generate --help
 ```
 
 三个路径基准需分清：
@@ -112,7 +112,7 @@
 
 优先使用环境已有的等效工具。现有制作路线可使用 Python 3、ReportLab、Pillow、pypdf，以及 Poppler 的 `pdftoppm`、`pdfinfo`、`pdffonts`；另需有权使用并可嵌入的中文字体。其他能完成相同检查的工具也可使用，不把某个系统路径写死。
 
-例如，在项目虚拟环境内安装Python依赖：
+`scripts/book.py` 使用 PEP 723 内联依赖声明，通过 `uv run` 执行时会自动安装和隔离 Python 依赖（Pillow、ReportLab、pypdf 等），无需手动安装。如不使用 `uv run`，需在当前环境手动安装：
 
 ```sh
 uv pip install reportlab Pillow pypdf
