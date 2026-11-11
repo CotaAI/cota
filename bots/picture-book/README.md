@@ -10,7 +10,7 @@
 
 在仓库根目录执行 `cota init`，进入新建的 `cota_projects/picture-book`；也可以直接使用仓库的 `bots/picture-book`。init 会保留已有目录，不覆盖本地配置。
 
-在运行 Cota 的同一 Python 环境安装这个 Bot 的可选依赖：
+`scripts/book.py` 使用 PEP 723 内联依赖声明。通过 `uv run` 执行时会自动安装和隔离 Python 依赖，无需手动安装。如不使用 `uv run`，可手动安装：
 
 ```sh
 uv pip install -r requirements.txt
@@ -52,7 +52,7 @@ picture_book:
 主对话仍在 llms.default 配置；也可使用 qwen3.8-omni-flash，并设置 vision: true。仓库模板保持空凭证，实际账号配置保存在自己的 Bot 目录。
 
 ```sh
-python scripts/book.py doctor
+uv run scripts/book.py doctor
 cota train --config .
 cota shell --config . --debug
 ```
@@ -87,23 +87,23 @@ cota run --config . --chat-app --debug --host 127.0.0.1 --port 5005
 
 通用创作流程由 [Skill](skills/creating-childrens-picture-books/SKILL.md) 提供，主文件保持原版；本 Bot 的配套入口写在已有的[环境接入说明](skills/creating-childrens-picture-books/references/runtime-setup.md)中。[agent.yml](agent.yml) 描述模型能力的用途与业务要求。运行环境自动提供 Bot 根目录、工具工作目录和 Cota 的 Python 解释器；Agent 使用绝对路径调用程序，进入作品目录后也无需猜测 `../` 层数。
 
-下面的手工命令在 Bot 根目录且已激活 Cota 环境时执行。命令参数、版式字段和示例通过脚本帮助按需查看：
+下面的手工命令在 Bot 根目录执行。使用 `uv run` 自动隔离依赖；命令参数、版式字段和示例通过脚本帮助按需查看：
 
 ```sh
-python scripts/book.py --help
-python scripts/book.py generate --help
-python scripts/book.py review --help
-python scripts/book.py build --help
+uv run scripts/book.py --help
+uv run scripts/book.py generate --help
+uv run scripts/book.py review --help
+uv run scripts/book.py build --help
 ```
 
 多模态服务统一在 [endpoints.yml](endpoints.yml) 配置，由脚本读取；供应商、模型型号和接口参数无需写入 agent.yml 或 Skill。常用执行命令：
 
 ```sh
-python scripts/book.py init rabbit-cloud-v1
-python scripts/book.py --project rabbit-cloud-v1 status
-python scripts/book.py --project rabbit-cloud-v1 build
-python scripts/book.py --project rabbit-cloud-v1 validate
-python scripts/book.py --project rabbit-cloud-v1 deliverables
+uv run scripts/book.py init rabbit-cloud-v1
+uv run scripts/book.py --project rabbit-cloud-v1 status
+uv run scripts/book.py --project rabbit-cloud-v1 build
+uv run scripts/book.py --project rabbit-cloud-v1 validate
+uv run scripts/book.py --project rabbit-cloud-v1 deliverables
 ```
 
 init 创建空模板，不能直接 build；Bot 应先把用户确认的分页、资产及图文坐标写入 book.json。项目命令使用 `--project 作品名`，放在子命令之前。生成与看图命令分别为 generate / review，参数见各子命令 `--help`。Bash 调用时使用不超过300秒且足够的 timeout，不能把绘图任务裁成默认60秒。

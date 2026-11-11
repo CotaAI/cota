@@ -9,6 +9,7 @@ from copy import copy, deepcopy
 import base64
 import json
 import logging
+import shutil
 import sys
 import time
 from uuid import uuid4
@@ -572,6 +573,7 @@ class PiAgentRuntime:
                                                'model': model, 'compaction': self.agent.dialogue.get('compaction', {}),
                                                'cwd': self.agent.config_path or '.',
                                                'pythonExecutable': sys.executable,
+                                               'uvExecutable': shutil.which('uv'),
                                                'deploy': self._deploy,
                                                'environment': self._environment.to_dict(),
                                                'skillPaths': self.agent.skill_paths}, self._handle_request)

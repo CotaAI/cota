@@ -355,11 +355,16 @@ test('runtime advertises real Bot and Python locations separately from the tool 
   const {cwd, resources} = await skillFixture(t);
   const workspace = join(cwd, 'workspace with spaces');
   const pythonExecutable = join(cwd, 'venv with spaces', 'bin', 'python');
-  const native = await createNativeTools({deploy: 'personal', cwd, pythonExecutable,
+  const uvExecutable = '/usr/local/bin/uv';
+  const native = await createNativeTools({deploy: 'personal', cwd, pythonExecutable, uvExecutable,
     environment: {type: 'machine', workspace, timeout_seconds: 1}}, resources, async () => ({}));
   assert(native.prompt.includes('Bot directory: ' + JSON.stringify(cwd)));
   assert(native.prompt.includes('Working directory: ' + JSON.stringify(workspace)));
   assert(native.prompt.includes('Python executable: ' + JSON.stringify(pythonExecutable)));
+  assert(native.prompt.includes('uv run'));
+  const noUv = await createNativeTools({deploy: 'personal', cwd, pythonExecutable,
+    environment: {type: 'machine', workspace, timeout_seconds: 1}}, resources, async () => ({}));
+  assert(!noUv.prompt.includes('uv run'));
   const service = await createNativeTools({cwd, pythonExecutable}, resources, async () => ({}));
   assert(!service.prompt.includes(pythonExecutable));
   assert(!service.prompt.includes('Bot directory:'));

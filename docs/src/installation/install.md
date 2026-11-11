@@ -80,6 +80,19 @@ editable 安装不自动构建发布包内的运行环境；不要省略源码�
 
 自动安装**要求虚拟环境处于激活状态**。如果检测到系统 Python，cota 会跳过自动安装并提示创建虚拟环境。这样做是为了防止 Bot 依赖污染系统环境或与其它项目冲突。
 
+## Skill 脚本依赖
+
+Bot 的 Skill 可以包含 Python 脚本（如 `scripts/book.py`）。这些脚本支持 [PEP 723 内联依赖声明](https://peps.python.org/pep-0723/)，通过 `uv run` 执行时自动创建隔离环境：
+
+```python
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["Pillow>=10", "reportlab>=4"]
+# ///
+```
+
+uv 自动缓存依赖环境，首次约几秒，后续毫秒级。每个脚本的依赖独立于 cota 和其它脚本，不会产生冲突。运行环境有 uv 时，cota 会自动引导 Pi 使用 `uv run` 执行带 PEP 723 声明的脚本。
+
 ## 初始化 Bot
 
 ```bash

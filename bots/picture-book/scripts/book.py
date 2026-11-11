@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "Pillow>=10,<13",
+#     "reportlab>=4,<5",
+#     "pypdf>=5,<7",
+#     "httpx>=0.27",
+#     "pyyaml>=6",
+# ]
+# ///
 """Small commands used by Pi; this program never selects a Skill or runs an Agent."""
 import argparse
 import importlib.util
@@ -40,14 +50,14 @@ def doctor():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''Use the Python executable and Bot directory advertised by the runtime.
+        epilog='''Use uv run for automatic dependency isolation (PEP 723).
 Invoke this script by its absolute path from any directory; do not guess ../ levels.
 The examples below use paths relative to the Bot root, for manual use there only.
 Project commands place --project BEFORE the command:
-  python scripts/book.py doctor
-  python scripts/book.py init my-book
-  python scripts/book.py --project my-book generate --help
-  python scripts/book.py --project my-book build --help
+  uv run scripts/book.py doctor
+  uv run scripts/book.py init my-book
+  uv run scripts/book.py --project my-book generate --help
+  uv run scripts/book.py --project my-book build --help
 
 Scripts read endpoints.yml themselves; never put credentials in command arguments.
 doctor checks configuration/dependencies only and makes no paid model requests.
