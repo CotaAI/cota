@@ -11,6 +11,8 @@ test('model request summaries distinguish waiting time from actual provider toke
   const text = modelRequestSummary({status: 'completed', duration_ms: 3000,
     usage: {prompt_tokens: 40000, cached_tokens: 39000, completion_tokens: 100, reasoning_tokens: 80}});
   assert.match(text, /3.0s.*input 40000.*cache 39000.*output 100.*reasoning 80/);
+  assert.match(modelRequestSummary({status: 'running', started_at: 10,
+    transport: {attempts: [{number: 1}, {number: 2}]}}, 15), /HTTP attempt 2/);
 });
 test('service debug scopes reads without changing query pagination or session discovery', () => {
   const base = 'http://127.0.0.1:1234/token/';

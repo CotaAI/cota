@@ -51,7 +51,9 @@ async def smoke():
     }, handle)
     assert result['status'] == 'completed', result
     assert len(calls) == 1, calls
-    assert result['messages'][-1]['content'][0]['text'] == 'done', result
+    final = next(e['message'] for e in reversed(events)
+                 if e['type'] == 'message_end' and e['message']['role'] == 'assistant')
+    assert final['content'][0]['text'] == 'done', final
     assert any(e['type'] == 'message_end' and e['message']['role'] == 'toolResult' for e in events)
 
 
@@ -76,6 +78,8 @@ async def smoke_examples(root):
                 assert any(m['role'] == 'tool' and 'wttr.in' in m.get('content', '') for m in kwargs['messages'])
             return {'content': '模板已运行。'}
         agent.llm_instance('default').generate_chat = respond
+        # Offline callback validates installed templates without a provider.
+        agent.llm_instance('default').pi_provider = lambda: None
         try:
             await agent.create_processor().handle_message(Message(
                 text='你好', session_id='smoke', sender_id='user', receiver='bot'))

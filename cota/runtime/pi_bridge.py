@@ -1,14 +1,20 @@
 """Acknowledged JSON-lines transport to a pinned, stateless Pi Core worker."""
 import asyncio
 import json
+import logging
 from .pi_distribution import resolve_runtime
 
 MAX_FRAME_BYTES = 128 * 1024 * 1024
 PIPE_CHUNK_BYTES = 64 * 1024
+logger = logging.getLogger(__name__)
 
 
 class PiBridgeError(RuntimeError):
     pass
+
+
+class PiModelError(PiBridgeError):
+    """A failed native provider call, distinct from checkpoint/protocol failure."""
 
 
 async def _read_frame(reader):
@@ -69,6 +75,7 @@ class PiBridge:
             while await process.stdout.read(PIPE_CHUNK_BYTES):
                 pass
         reader = asyncio.create_task(drain_stderr())
+        tasks = []
         async def send(value):
             frame = (json.dumps(value, ensure_ascii=False, separators=(',', ':')) + '\n').encode()
             if len(frame) > MAX_FRAME_BYTES:
@@ -76,26 +83,86 @@ class PiBridge:
             for offset in range(0, len(frame), PIPE_CHUNK_BYTES):
                 process.stdin.write(frame[offset:offset + PIPE_CHUNK_BYTES])
                 await process.stdin.drain()
+        deadline = asyncio.timeout(self.timeout)
         try:
-            async with asyncio.timeout(self.timeout):
+            async with deadline:
                 await send({'type': 'start', 'protocol': 1, 'options': options})
-                last_id = 0
-                while True:
-                    message = await _read_frame(process.stdout)
-                    if message is None:
-                        await reader
-                        raise PiBridgeError('Pi worker exited unexpectedly: ' + stderr.decode(errors='replace'))
-                    if message.get('type') == 'done':
-                        return message['result']
-                    if message.get('type') == 'error':
-                        raise PiBridgeError(message.get('error', 'Pi worker failed'))
-                    if message.get('type') != 'request' or message.get('id') != last_id + 1:
-                        raise PiBridgeError('Invalid Pi worker protocol sequence')
-                    last_id = message['id']
-                    # A failed checkpoint is fatal: never ACK it or let Pi invoke another effect.
-                    result = await handler(message['method'], message['payload'])
-                    await send({'type': 'response', 'id': last_id, 'result': result})
+                requests, notifications = asyncio.Queue(maxsize=32), asyncio.Queue(maxsize=64)
+
+                async def receive():
+                    last_id = 0
+                    while True:
+                        message = await _read_frame(process.stdout)
+                        if message is None:
+                            await reader
+                            raise PiBridgeError('Pi worker exited unexpectedly: ' + stderr.decode(errors='replace'))
+                        if message.get('type') == 'done':
+                            return message['result']
+                        if message.get('type') == 'error':
+                            error_type = PiModelError if message.get('code') == 'model_error' else PiBridgeError
+                            raise error_type(message.get('error', 'Pi worker failed'))
+                        if message.get('type') == 'notification':
+                            if message.get('method') != 'stream' or not isinstance(message.get('payload'), dict):
+                                raise PiBridgeError('Invalid Pi worker notification')
+                            # Deltas are previews, not execution facts. A slow viewer
+                            # must not block provider drainage or durable RPCs. The
+                            # committed utterance always replaces the preview.
+                            if notifications.full():
+                                notifications.get_nowait()
+                                notifications.task_done()
+                            notifications.put_nowait(message)
+                            continue
+                        if message.get('type') != 'request' or message.get('id') != last_id + 1:
+                            raise PiBridgeError('Invalid Pi worker protocol sequence')
+                        last_id = message['id']
+                        try:
+                            requests.put_nowait(message)
+                        except asyncio.QueueFull:
+                            raise PiBridgeError('Too many pending Pi worker requests') from None
+
+                async def acknowledge():
+                    while True:
+                        message = await requests.get()
+                        try:
+                            # A failed checkpoint is fatal: never ACK it or let
+                            # Pi invoke another effect. Preserve request order.
+                            result = await handler(message['method'], message['payload'])
+                            await send({'type': 'response', 'id': message['id'], 'result': result})
+                        finally:
+                            requests.task_done()
+
+                async def previews():
+                    available = True
+                    while True:
+                        message = await notifications.get()
+                        try:
+                            if available:
+                                try:
+                                    await asyncio.wait_for(handler('stream', message['payload']), 1)
+                                except Exception:
+                                    available = False
+                                    logger.warning('Pi live preview unavailable; committed delivery continues')
+                        finally:
+                            notifications.task_done()
+
+                receiver = asyncio.create_task(receive())
+                acknowledger = asyncio.create_task(acknowledge())
+                tasks = [receiver, acknowledger, asyncio.create_task(previews())]
+                done, _ = await asyncio.wait([receiver, acknowledger], return_when=asyncio.FIRST_COMPLETED)
+                if acknowledger in done:
+                    acknowledger.result()
+                result = await receiver
+                await requests.join()
+                await notifications.join()
+                return result
+        except TimeoutError:
+            if deadline.expired():
+                raise TimeoutError(f'Pi run exceeded total timeout of {self.timeout:g} seconds') from None
+            raise
         finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             # A rejected large frame can leave stdout paused. Drain it while
             # shutting down, or even a killed child can leave wait() blocked.
             stdout_reader = asyncio.create_task(discard_stdout())

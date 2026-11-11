@@ -26,7 +26,7 @@
       Object.assign(this, {fetch, Client, storage, changed});
       this.unsavedRooms = new Map(); this.clientKey = null;
       this.identity = null; this.config = {}; this.conversations = []; this.hasMore = false;
-      this.room = null; this.client = null; this.messages = []; this.pending = {}; this.receipts = {};
+      this.room = null; this.client = null; this.messages = []; this.previews = []; this.pending = {}; this.receipts = {};
       this.notice = ''; this.status = ''; this.epoch = 0; this.listEpoch = 0; this.identityEpoch = 0;
     }
     update() {this.changed(this);}
@@ -89,7 +89,7 @@
           failedDraft: client.failedDraft});
       }
       this.client = null; this.clientKey = null; client?.close();
-      this.room = null; this.messages = []; this.pending = {}; this.receipts = {}; this.status = ''; this.readSequence = 0;
+      this.room = null; this.messages = []; this.previews = []; this.pending = {}; this.receipts = {}; this.status = ''; this.readSequence = 0;
     }
     async open(id) {
       const cacheKey = PREFIX + 'session:' + encodeURIComponent(this.identity?.user_id) + ':' + encodeURIComponent(id);
@@ -126,14 +126,20 @@
             if (!active() || this.client !== client) return;
             this.messages = [...new Map(client.state.messages.map(message => [message.event_id, message])).values()]
               .sort((a, b) => a.sequence - b.sequence);
+            this.previews = [...(client.streams?.values() || [])];
             this.pending = {...client.state.pending}; this.update();
             if (client.connected) this.markRead().catch(() => {});
           });
         };
         client.on('history', guard(sync));
+        client.on('stream', guard(data => {
+          if (data.phase === 'error' || data.interrupted)
+            this.notice = '实时预览已中断，最终结果请以保存的消息为准';
+          sync();
+        }));
         client.on('message', guard(() => {sync(); if (room.mode === 'group') this.refreshMembers(epoch);}));
         client.on('connected', guard(() => {this.status = '已连接'; sync(); this.refreshMembers(epoch);}));
-        client.on('disconnected', guard(() => {this.status = '连接中断，正在重连…'; this.update();}));
+        client.on('disconnected', guard(() => {this.status = '连接中断，正在重连…'; this.previews = []; this.update();}));
         client.on('receipt', guard(data => {
           if (client.failedDraft?.id === data.message_id && !['queued', 'running'].includes(data.status))
             client.failedDraft = null;
@@ -392,6 +398,14 @@
       row.append(button('回复', () => {quote = message; render(); $('draft').focus();}, 'reply-button'));
       const receipt = app.receipts[message.message_id];
       if (receipt) row.append(make('small', statuses[receipt.status] || receipt.status, 'message-status'));
+      list.append(row);
+    }
+    for (const preview of app.previews) {
+      const row = make('article', undefined, 'message pending stream-preview');
+      row.setAttribute('aria-label', '回复预览');
+      row.append(make('div', app.config.bot_name || 'Bot', 'author'),
+        make('div', preview.text || '', 'message-text'),
+        make('small', preview.phase === 'end' ? '正在保存…' : '正在回复…', 'message-status'));
       list.append(row);
     }
     for (const [id, pending] of Object.entries(app.pending)) {

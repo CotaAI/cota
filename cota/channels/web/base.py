@@ -6,6 +6,7 @@ from .transport import TransportFactory
 class WebChannel(BaseChannel):
     name = 'web'
     supports_attachments = True
+    supports_streaming = True
 
     def __init__(self, config, bus):
         super().__init__(config, bus)
@@ -21,6 +22,9 @@ class WebChannel(BaseChannel):
 
     async def send(self, message):
         await self._transport.send(message)
+
+    async def send_stream(self, session_id, frame):
+        await self._transport.send_stream(session_id, frame)
 
     def get_transport(self):
         return self._transport

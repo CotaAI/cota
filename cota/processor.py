@@ -70,6 +70,7 @@ class Processor:
         self.service_mode = service_mode
         self._channel_callback: Optional[Callable] = None
         self._input_callback: Optional[Callable] = None
+        self._stream_callback: Optional[Callable] = None
         self._turn_lock = asyncio.Lock()
         self._delivery_target = None
         self._detached_execution = False
@@ -87,6 +88,10 @@ class Processor:
     def set_channel_callback(self, callback: Callable) -> None:
         """Set the channel callback for sending responses"""
         self._channel_callback = callback
+
+    def set_stream_callback(self, callback: Callable) -> None:
+        """Observe transient previews independently of durable reply delivery."""
+        self._stream_callback = callback
 
     def set_input_callback(self, callback: Callable) -> None:
         """Observe the current inbound user event after its durable commit."""
@@ -201,7 +206,8 @@ class Processor:
                     channel=inbound.channel,
                     chat_id=inbound.chat_id,
                     content=text,
-                    metadata=msg.get("metadata", {}) if isinstance(msg, dict) else {},
+                    metadata={**msg.get("metadata", {}),
+                              **({"request_id": msg["request_id"]} if msg.get("request_id") else {})} if isinstance(msg, dict) else {},
                     event_id=msg.get("event_id") if isinstance(msg, dict) else None,
                     sequence=msg.get("sequence") if isinstance(msg, dict) else None,
                     session_id=inbound.session_key,
@@ -236,7 +242,9 @@ class Processor:
                     await self.message_bus.publish_outbound(OutboundMessage(
                         channel=inbound.channel, chat_id=inbound.chat_id, content=message['text'],
                         event_id=message['event_id'], sequence=message['sequence'],
-                        session_id=inbound.session_key))
+                        session_id=inbound.session_key, attachments=message.get('attachments', []),
+                        metadata={**message.get('metadata', {}),
+                                  **({'request_id': message['request_id']} if message.get('request_id') else {})}))
                 runtime.set_channel_callback(reply)
         await self._run_runtime(runtime)
         await self.save_tracker(self.dst)
@@ -271,7 +279,9 @@ class Processor:
                     await self.message_bus.publish_outbound(OutboundMessage(
                         channel=inbound.channel, chat_id=inbound.chat_id, content=message['text'],
                         event_id=message['event_id'], sequence=message['sequence'],
-                        session_id=inbound.session_key))
+                        session_id=inbound.session_key, attachments=message.get('attachments', []),
+                        metadata={**message.get('metadata', {}),
+                                  **({'request_id': message['request_id']} if message.get('request_id') else {})}))
                 runtime.set_channel_callback(reply)
         from cota.store import ExecutionSuperseded
         try:
@@ -314,6 +324,8 @@ class Processor:
             service_mode=self.service_mode if service_mode is None else service_mode,
         )
 
+        if self._stream_callback is not None:
+            runtime.set_stream_callback(self._stream_callback)
         return runtime
 
     @_serialized_turn
@@ -333,6 +345,11 @@ class Processor:
         runtime = await self._create_runtime(session_id)
 
         if channel:
+            if getattr(channel, 'supports_streaming', False):
+                async def stream_cb(frame):
+                    if frame.get('session_id') == session_id:
+                        await channel.send_stream(session_id, frame)
+                runtime.set_stream_callback(stream_cb)
             async def channel_cb(msg):
                 await channel.send_response(session_id, msg)
             runtime.set_channel_callback(channel_cb)

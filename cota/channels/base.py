@@ -23,6 +23,7 @@ class BaseChannel(ABC):
     dialogue_modes = frozenset({'direct', 'group'})
     durable_delivery = False
     supports_attachments = False
+    supports_streaming = False
     startup_timeout = 5.0
 
     def __init__(self, config: Any, bus: MessageBus):
@@ -103,6 +104,9 @@ class BaseChannel(ABC):
         """
         pass
 
+    async def send_stream(self, session_id: str, frame: dict) -> None:
+        """Optional transient public-text preview; never a durable message."""
+
     async def send_response(self, recipient_id: Text, message: Dict[Text, Any]) -> None:
         """将 processor/legacy 格式的回复发送给客户端（兼容旧 API）
 
@@ -117,7 +121,8 @@ class BaseChannel(ABC):
             channel=self.name,
             chat_id=str(recipient_id),
             content=text,
-            metadata=message.get("metadata", {}),
+            metadata={**message.get("metadata", {}),
+                      **({"request_id": message["request_id"]} if message.get("request_id") else {})},
             attachments=message.get('attachments', []),
             event_id=message.get('event_id'), session_id=message.get('session_id', str(recipient_id)),
         )

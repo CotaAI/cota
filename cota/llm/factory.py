@@ -6,6 +6,7 @@ import re
 from .base import LLMClient
 from .openai import OpenAIClient, OpenAIRAGClient
 from .custom import CustomHttpClient
+from .limits import request_limits
 
 
 def endpoint_value(config, key):
@@ -39,6 +40,7 @@ class LLMClientFactory:
         api_key = endpoint_value(config, 'key')
         base_url = endpoint_value(config, 'apibase')
         model = endpoint_value(config, 'model')
+        timeout, retries = request_limits(config)
         
         if client_type == 'openai':
             thinking = config.get('thinking')
@@ -46,7 +48,7 @@ class LLMClientFactory:
                 api_key=api_key,
                 base_url=base_url,
                 model=model,
-                thinking=thinking
+                thinking=thinking, timeout_seconds=timeout, max_retries=retries,
             )
         elif client_type == 'openai-rag':
             knowledge_id = config['knowledge_id']
@@ -58,12 +60,13 @@ class LLMClientFactory:
                 model=model,
                 knowledge_id=knowledge_id,
                 rag_prompt=rag_prompt,
-                thinking=thinking
+                thinking=thinking, timeout_seconds=timeout, max_retries=retries,
             )
         elif client_type == 'custom':
             extra_config = {
                 k: v for k, v in config.items() 
-                if k not in ['type', 'key', 'apibase', 'model', 'vision', 'context_window']
+                if k not in ['type', 'key', 'apibase', 'model', 'vision', 'context_window',
+                             'timeout_seconds', 'max_retries']
             }
             return CustomHttpClient(
                 api_key=api_key,

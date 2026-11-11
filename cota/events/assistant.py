@@ -20,6 +20,14 @@ def _same(a, b):
     return canonical_json(a) == canonical_json(b)
 
 
+def public_content(content):
+    """Stable public decision, excluding provider reasoning and signatures."""
+    return [{key: deepcopy(value) for key, value in block.items() if key in
+             ({'type', 'text'} if block['type'] == 'text' else
+              {'type', 'id', 'name', 'arguments', 'argumentsError'})}
+            for block in content if block.get('type') in ('text', 'toolCall')]
+
+
 def validate_carrier(event):
     p = event.payload
     llm = p.get('llm')
@@ -29,9 +37,9 @@ def validate_carrier(event):
     for key in links:
         if not isinstance(p[key], str) or not p[key]:
             raise ValueError(f'{key} must be a nonempty event ID')
-        expected = 'tool_started' if key == 'llm_event_id' else 'bot_utter'
-        if event.type != expected or not event.run_id:
-            raise ValueError(f'{key} is only valid on a run-bound {expected}')
+        allowed = ('tool_started', 'bot_utter') if key == 'llm_event_id' else ('bot_utter',)
+        if event.type not in allowed or not event.run_id:
+            raise ValueError(f'{key} requires a run-bound {"/".join(allowed)}')
     if 'llm' not in p:
         return
     if not isinstance(llm, dict) or event.type not in ('bot_utter', 'tool_started') or not event.run_id:
@@ -40,7 +48,7 @@ def validate_carrier(event):
         raise ValueError('llm requires request_id')
     if type(llm.get('request_sequence')) is not int or llm['request_sequence'] < 1:
         raise ValueError('llm requires a positive request_sequence')
-    if set(llm) - {'request_id', 'request_sequence', 'model', 'duration_ms', 'policy', 'stop_reason', 'message', 'usage'}:
+    if set(llm) - {'request_id', 'request_sequence', 'model', 'duration_ms', 'policy', 'stop_reason', 'message', 'usage', 'continuation'}:
         raise ValueError('Unexpected llm fields; full provider requests/responses belong in Debug')
     if 'usage' in llm:
         usage = llm['usage']
@@ -56,6 +64,23 @@ def validate_carrier(event):
     duration = llm.get('duration_ms')
     if duration is not None and (type(duration) not in (float, int) or duration < 0):
         raise ValueError('llm.duration_ms must be nonnegative')
+    if 'continuation' in llm:
+        continuation = llm['continuation']
+        if (not isinstance(continuation, dict) or continuation.get('role') != 'assistant'
+                or not isinstance(continuation.get('content'), list)
+                or continuation.get('stopReason') != llm['stop_reason']
+                or any(not isinstance(continuation.get(k), str) for k in ('api', 'provider', 'model'))
+                or any(not isinstance(b, dict) or b.get('type') not in ('text', 'thinking', 'toolCall')
+                       for b in continuation['content'])):
+            raise ValueError('Invalid Pi continuation')
+        visible = public_content(continuation['content'])
+        expected = llm.get('message', {}).get('content')
+        if event.type == 'tool_started':
+            if not _same(visible, expected):
+                raise ValueError('Pi continuation differs from its public decision')
+        elif (any(b['type'] == 'toolCall' for b in visible)
+              or '\n'.join(b['text'] for b in visible) != p['text']):
+            raise ValueError('Pi continuation differs from its public reply')
     if event.type == 'bot_utter':
         if 'message' in llm or llm['stop_reason'] == 'toolUse':
             raise ValueError('Bot text is stored once; a tool batch belongs on tool_started')
@@ -119,8 +144,17 @@ def validate_carrier_references(event, events):
         owner = next((e for e in events if e.event_id == p[key]), None)
         if owner is None or owner.type != 'tool_started' or owner.run_id != event.run_id:
             raise ValueError(f'{key} must reference an earlier tool_started in its own run')
-        if key == 'llm_event_id' and (not owner.payload.get('llm', {}).get('message') or not _matches_call(event, owner)):
-            raise ValueError('Tool call does not match its assistant carrier')
+        if key == 'llm_event_id':
+            message = owner.payload.get('llm', {}).get('message')
+            if event.type == 'tool_started':
+                if not message or not _matches_call(event, owner):
+                    raise ValueError('Tool call does not match its assistant carrier')
+            else:
+                text = '\n'.join(b['text'] for b in (message or {}).get('content', []) if b['type'] == 'text')
+                if not text or event.text != text or p.get('attachments'):
+                    raise ValueError('Bot commentary must match its assistant carrier text')
+                if any(e.type == 'bot_utter' and e.payload.get('llm_event_id') == owner.event_id for e in events):
+                    raise ValueError('Duplicate bot commentary for assistant carrier')
         if key == 'tool_event_id' and (p.get('metadata') or {}).get('tool_call_id', owner.payload['tool_call_id']) != owner.payload['tool_call_id']:
             raise ValueError('Bot tool_call_id disagrees with its source tool event')
 
@@ -131,10 +165,14 @@ def assistant_from_event(event):
     p = event.payload
     usage = p.get('llm', {}).get('usage', {})
     usage = {'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0, 'total': 0}, **usage} if usage else None
-    if event.type == 'bot_utter' and not p.get('tool_event_id'):
+    if event.type == 'bot_utter' and not p.get('tool_event_id') and not p.get('llm_event_id'):
         llm = p.get('llm', {})
+        if llm.get('continuation'):
+            return deepcopy(llm['continuation'])
         return assistant_message({'content': p['text'], 'finish_reason': llm.get('stop_reason'), 'usage': usage}, int(event.timestamp * 1000))
     if event.type == 'tool_started' and p.get('llm'):
+        if p['llm'].get('continuation'):
+            return deepcopy(p['llm']['continuation'])
         original = p['llm']['message']
         message = assistant_message({'usage': usage}, int(event.timestamp * 1000))
         message.update(content=deepcopy(original['content']), stopReason=original['stop_reason'])

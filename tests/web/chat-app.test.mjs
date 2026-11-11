@@ -260,3 +260,36 @@ test('terminal receipt clears failed-draft retry identity for later deliberate s
   await app.send('same');
   assert.equal(client.sent.id,'submission-1');
 });
+
+test('controller projects ephemeral previews separately and final replaces them', async()=>{
+  const {app,requests,clients}=setup();
+  const opening=app.open('one');requests[0].resolve({session_id:'one',mode:'direct',members:[]});await opening;
+  const client=clients[0];client.streams=new Map([['req',{request_id:'req',text:'partial',phase:'delta'}]]);
+  client.emit('stream');await tick();
+  assert.equal(app.previews.length,1);assert.equal(app.previews[0].text,'partial');assert.equal(app.messages.length,0);
+  client.streams.clear();client.state.messages=[{event_id:'e',sequence:1,role:'bot',request_id:'req',text:'final'}];
+  client.emit('message');await tick();
+  assert.equal(app.previews.length,0);assert.equal(app.messages.length,1);
+  app.closeRoom();client.streams.set('old',{text:'old'});client.emit('stream');await tick();
+  assert.equal(app.previews.length,0);
+});
+
+test('interrupted current preview shows notice while only saved messages remain authoritative', async()=>{
+  const {app,requests,clients}=setup();
+  const opening=app.open('one');requests[0].resolve({session_id:'one',mode:'direct',members:[]});await opening;
+  const client=clients[0];
+  client.state.messages=[{event_id:'saved',sequence:1,role:'bot',text:'正在制作绘本。'}];
+  client.streams=new Map([['req',{session_id:'one',request_id:'req',phase:'end',text:'绘本完成：[PDF](/books/uncommitted.pdf)'}]]);
+  client.emit('stream',{session_id:'one',request_id:'req',phase:'end'});await tick();
+  assert.equal(app.previews.length,1);
+  client.streams.clear();
+  client.emit('stream',{session_id:'one',request_id:'req',phase:'error',interrupted:true});await tick();
+  assert.equal(app.notice,'实时预览已中断，最终结果请以保存的消息为准');
+  assert.equal(app.previews.length,0);
+  assert.equal(app.messages.length,1);
+  assert.equal(app.messages[0].text,'正在制作绘本。');
+  assert.equal(Object.keys(app.receipts).length,0);
+  const next=app.open('two');requests[1].resolve({session_id:'two',mode:'direct',members:[]});await next;
+  client.emit('stream',{session_id:'one',request_id:'req',phase:'error',interrupted:true});await tick();
+  assert.equal(app.notice,'');
+});

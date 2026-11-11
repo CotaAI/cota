@@ -318,6 +318,12 @@ async def shell(args):
     async def handle_inbound(inbound_msg):
         nonlocal latest_processor
         processor = agent.create_processor(message_bus=message_bus)
+        if (getattr(cmdline_channel, 'supports_streaming', False) and
+                inbound_msg.session_key == cmdline_channel.session_key):
+            async def stream(frame):
+                if frame.get('session_id') == inbound_msg.session_key:
+                    await cmdline_channel.send_stream(inbound_msg.session_key, frame)
+            processor.set_stream_callback(stream)
         if is_debug and inbound_msg.session_key == cmdline_channel.session_key:
             latest_processor = processor
         try:

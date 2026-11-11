@@ -303,6 +303,12 @@ class Application:
     def _processor(self, inbound, on_input=None, on_reply=None):
         processor = Processor(self.agent, self.store, self.runner.message_bus, service_mode=True)
         channel = self.runner.get_channel(inbound.channel)
+        if getattr(channel, 'supports_streaming', False):
+            async def stream(frame):
+                # Identity comes from the admitted inbound route, never model data.
+                if frame.get('session_id') == inbound.session_key:
+                    await channel.send_stream(inbound.session_key, frame)
+            processor.set_stream_callback(stream)
         if on_reply is None and getattr(channel, 'durable_delivery', False):
             processor.set_delivery_target({'channel': inbound.channel,
                                            'scope': channel.delivery_scope,

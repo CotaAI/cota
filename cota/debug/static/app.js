@@ -16,6 +16,7 @@ export function modelRequestSummary(record, now = Date.now() / 1000) {
   const duration = Number.isFinite(seconds) ? `${seconds.toFixed(1)}s` : '';
   const usage = record.usage;
   return [record.purpose || 'model', record.status === 'running' ? 'waiting for model' : record.status, duration,
+    record.transport?.attempts?.length && `HTTP attempt ${record.transport.attempts.length}`,
     usage && `input ${usage.prompt_tokens ?? '?'} · cache ${usage.cached_tokens ?? '?'} · output ${usage.completion_tokens ?? '?'} · reasoning ${usage.reasoning_tokens ?? '?'}`,
   ].filter(Boolean).join(' · ');
 }
@@ -241,6 +242,7 @@ function boot() {
           button('刷新请求', () => selectModelDebug(requestId)),
           requestStatusNode);
         if (data.request_size) body.append(section('Request size · characters / image bytes', data.request_size, true));
+        if (data.transport) body.append(section('Transport · attempts / header and response timing', data.transport, true));
         const budget = data.preparation?.context_budget;
         if (budget) body.append(section('Context budget · Pi estimates, not provider usage', budget, true));
         body.append(jsonView(data));

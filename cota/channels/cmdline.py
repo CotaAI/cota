@@ -4,6 +4,8 @@
 """
 
 import asyncio
+from collections import OrderedDict
+import hashlib
 import os
 from pathlib import Path
 import shlex
@@ -36,6 +38,7 @@ class CmdlineChannel(BaseChannel):
 
     name = "cmdline"
     supports_attachments = True
+    supports_streaming = True
     dialogue_modes = frozenset({'direct'})
 
     @staticmethod
@@ -58,6 +61,8 @@ class CmdlineChannel(BaseChannel):
         self._stdin_buffer = b''
         self._stdin_eof = False
         self._input_directory = Path.cwd()
+        self._stream_requests = OrderedDict()
+        self._stream_active = None
 
     def set_message_handler(self, handler: Callable) -> None:
         self._message_handler = handler
@@ -98,8 +103,87 @@ class CmdlineChannel(BaseChannel):
             else:
                 self._write_line(f"{' ' * len(prefix)}{line}")
 
+    @staticmethod
+    def _write_chunk(text):
+        sys.stderr.write(text)
+        sys.stderr.flush()
+
+    def _close_stream_line(self):
+        state = self._stream_requests.get(self._stream_active)
+        if state and state['open']:
+            self._write_chunk('\n')
+            state['open'] = False
+
+    async def send_stream(self, session_id, frame):
+        if session_id != self.session_key or frame.get('session_id') != session_id:
+            return
+        request_id, run_id, phase = (frame.get(key) for key in ('request_id', 'run_id', 'phase'))
+        if (not isinstance(request_id, str) or not 0 < len(request_id) <= 255 or
+                not isinstance(run_id, str) or not 0 < len(run_id) <= 255):
+            return
+        state = self._stream_requests.get(request_id)
+        if phase == 'start':
+            if state is not None:
+                return
+            self._close_stream_line()
+            state = {'run_id': run_id, 'size': 0, 'digest': hashlib.sha256(),
+                     'open': False, 'status': 'streaming'}
+            self._stream_requests[request_id] = state
+            while len(self._stream_requests) > 64:
+                self._stream_requests.popitem(last=False)
+            self._stream_active = request_id
+        elif (state is None or state['run_id'] != run_id or
+              (state['status'] != 'streaming' and not (phase == 'error' and state['status'] == 'ended'))):
+            return
+        elif phase == 'delta':
+            text = frame.get('text')
+            if not isinstance(text, str) or len(text) > 65536 or not text:
+                return
+            if self._stream_active != request_id:
+                return
+            if not state['open']:
+                self._write_chunk('Bot: ')
+                state['open'] = True
+            self._write_chunk(text)
+            state['size'] += len(text)
+            state['digest'].update(text.encode('utf-8'))
+        elif phase == 'end':
+            state['status'] = 'ended'
+        elif phase == 'error':
+            self._close_stream_line()
+            state['status'] = 'error'
+            self._write_line('[回复已中断]')
+
     async def send(self, msg: OutboundMessage) -> None:
-        self._print_message(msg)
+        state = self._stream_requests.get(msg.metadata.get('request_id')) if msg.session_id == self.session_key else None
+        if state is not None and state['size']:
+            size = state['size']
+            matches = (len(msg.content) >= size and
+                       hashlib.sha256(msg.content[:size].encode('utf-8')).digest() == state['digest'].digest())
+            if matches:
+                tail = msg.content[size:]
+                if state['open']:
+                    self._write_chunk(tail + '\n')
+                    state['open'] = False
+                elif tail:
+                    self._write_line(tail)
+            else:
+                self._close_stream_line()
+                self._print_message(msg)
+            state['status'] = 'committed'
+        else:
+            self._close_stream_line()
+            self._print_message(msg)
+            if state is not None:
+                state['status'] = 'committed'
+        request_id = msg.metadata.get('request_id')
+        if (msg.session_id == self.session_key and isinstance(request_id, str) and 0 < len(request_id) <= 255
+                and state is None):
+            self._stream_requests[request_id] = {'run_id': None, 'size': 0, 'open': False,
+                                                 'status': 'committed'}
+            while len(self._stream_requests) > 64:
+                self._stream_requests.popitem(last=False)
+        # Attachments always come from the durable reply, never previews.
         files = getattr(self, 'files', None)
         for item in msg.attachments:
             path = await asyncio.to_thread(files.resolve, msg.session_id, item['id']) if files else item['id']

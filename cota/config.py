@@ -38,7 +38,8 @@ def validate_bot_config(config):
         if key in dialogue and (type(dialogue[key]) is not int or dialogue[key] < 1):
             raise ValueError(f'dialogue.{key} must be a positive integer')
     compaction = dialogue.get('compaction', {})
-    _object(compaction, {'reserve_tokens', 'keep_recent_tokens', 'max_request_bytes'}, 'dialogue.compaction')
+    _object(compaction, {'reserve_tokens', 'keep_recent_tokens', 'max_request_bytes',
+                         'max_images', 'max_image_bytes'}, 'dialogue.compaction')
     for key, value in compaction.items():
         if type(value) is not int or value < 1:
             raise ValueError(f'dialogue.compaction.{key} must be a positive integer')

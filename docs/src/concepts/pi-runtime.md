@@ -1,6 +1,6 @@
 # Pi runtime
 
-Cota 使用 Pi Agent Core 控制模型—工具循环，并复用 Pi coding-agent 的 Skill 发现、解析、目录格式化、token 估算与压缩组件，以及八个官方工具工厂（read/write/edit/bash/grep/find/ls/powershell）。Cota 没有接入 `AgentSession`，不会写 Pi 会话文件，也不会加载 coding-agent 的完整交互式工作环境。压缩切分和摘要由 Pi 公共 API 完成，Cota 对接模型、提交事件并恢复投影，详见 [执行流程](execution-flow.md)。
+Cota 使用 Pi Agent Core 控制模型—工具循环，并复用 Pi coding-agent 的 Skill 发现、解析、目录格式化、token 估算与压缩组件，以及八个官方工具工厂（read/write/edit/bash/grep/find/ls/powershell）。Cota 没有接入 `AgentSession`，不会写 Pi 会话文件，也不会加载 coding-agent 的完整交互式工作环境。压缩切分和摘要由 Pi 公共 API 完成，Pi 在 Node 内直接调用主对话和摘要模型；Cota 提供配置、提交事件并恢复投影，详见 [执行流程](execution-flow.md)。
 
 ## 版本与运行环境
 
@@ -36,18 +36,26 @@ COTA_RUNTIME_DIR="$PWD/.build/pi-runtime" python -m build
 
 ## Python 与 Node 的边界
 
-`PiBridge` 为每轮启动 worker，通过有序、带确认的 JSON-lines 消息交换请求。Pi 发出 `prepare`、`model`、`tool`、`authorize_tool`、`tool_result` 和事件通知；Python 在成功处理并提交需要持久化的状态后回复。连接关闭、超时或错误会结束本轮；先通过输入流关闭触发 AbortSignal，让 Pi 清理命令进程，再回收 worker。
+`PiBridge` 为每轮启动 worker，通过 JSON-lines 交换带确认的请求和独立的流式通知。普通 `openai` 端点由 Pi 官方 provider 在 Node 内直接组装请求并读取 SSE；主对话和压缩摘要走同一模型通道。Cota 在 `prepareRequest` 前后提供 Policy 与工具范围，通过 `onPayload` 观察实际请求，并接收完整模型输出和执行事实。Python 专用的 `custom`、`openai-rag` 端点继续使用其适配器传输，不伪装成流式接口，也不引入另一套 Agent 循环。
 
-桥接以 64 KiB 缓冲分段收发，独立限制每条 JSON 帧最多 128 MiB；不会把 asyncio 的行缓冲上限当作模型上下文容量。超长、截断或无效帧明确报错，不确认未完成的请求。模型工作上下文另受 token 和默认 32 MiB 序列化体积预算约束，复用 Pi 压缩后再继续请求。传输帧硬上限、工作上下文字节预算与模型 token 容量是三个不同边界。
+桥接独立处理顺序请求和有界的公开文字通知。慢速或断开的展示端不能阻塞执行确认；拥塞时允许舍弃预览片段，完整已提交回复仍为准。连接关闭、取消、超时或错误会结束本轮，通过 AbortSignal 让 Pi 清理模型连接和命令进程，再回收 worker。
+
+桥接以 64 KiB 缓冲分段收发，独立限制每条 JSON 帧最多 128 MiB；不会把 asyncio 的行缓冲上限当作模型上下文容量。超长、截断或无效帧明确报错，不确认未完成的请求。模型工作上下文另受 token、默认 32 MiB 序列化体积、8 张图片及16 MiB图片字节预算约束，复用 Pi 压缩后再继续请求。传输帧上限与工作上下文预算是不同边界。
 
 | Pi | Cota |
 | --- | --- |
-| 模型—工具循环、参数校验、顺序工具执行 | LLM 客户端与 Python 扩展工具能力 |
+| 原生模型调用、流式解析、模型—工具循环、顺序工具执行 | 模型配置、业务指导、执行授权与 Python 扩展能力 |
 | Skill 目录与八个原生工具实现 | 执行环境、资源根目录、读取证据与授权 |
 | 本轮暂态消息 | 事件投影、快照、历史恢复 |
-| 调用 `prepareRequest` | 每次请求重算 Policy guidance 与工具 schema |
+| 调用 `prepareRequest`，组装当前工作上下文 | 从已提交 DST 重算 Policy guidance 与工具 schema |
 
 工具以顺序模式执行。Pi 的 `beforeToolCall` 钩子让 Cota 在副作用前保存校验后的参数；checkpoint 失败不会获得确认。
+
+模型回复同时包含公开文字和工具调用时，完整 assistant 消息仍归属于第一条 `tool_started`；另保存一条以 `llm_event_id` 指向它的 `bot_utter` 用于历史展示和投递。两者同次提交后才执行工具；这条公开发言不再生成第二份模型上下文。隐藏推理不属于公开文字。
+
+原生请求单次默认总时限180秒、默认不自动重试；空行保活、SDK 退避以及请求观察钩子的等待不能延长该时限，详见 [endpoints.yml](../configuration/endpoints.md)。初始历史只同步一次；普通 prepare 只返回 system 指导、工具声明和已授权的附件位置，不往返传输包含图片的整份历史。压缩后才从 Cota 接收新的上下文投影。Debug 模式额外传回一次实际供应商请求。原生工具产生的图片结果仍按现有工具记录协议传递，尚未引入通用二进制资源协议。
+
+`text_delta` 只作为实时预览发送给支持它的 Channel；思考、工具参数等增量不作为用户回复。完整回复提交后以同一 request_id 替换预览，不新增逐 token Event。必要的 Pi 推理签名和续接内容保存在来源事件的可选 `llm.continuation` 中，用于恢复模型协议；普通聊天历史不展示它，普通无签名文本不会增加该字段。
 
 ## Skill 资源边界
 
@@ -65,6 +73,6 @@ COTA_RUNTIME_DIR="$PWD/.build/pi-runtime" python -m build
 
 运行记录查看 Cota Store / Trace；原始模型请求诊断属于单独的 debug 数据，不应把 Pi 目录当会话数据库。
 
-实现入口：`cota/runtime/pi_bridge.py`、`cota/runtime/pi_runtime.py`、`cota/runtime/pi/engine.mjs`、`cota/runtime/pi/skills.mjs`、`cota/runtime/pi/tools.mjs`、`cota/runtime/pi_distribution.py`。
+实现入口：`cota/runtime/pi_bridge.py`、`cota/runtime/pi_runtime.py`、`cota/runtime/pi/engine.mjs`、`cota/runtime/pi/model.mjs`、`cota/runtime/pi_models.py`、`cota/runtime/pi/skills.mjs`、`cota/runtime/pi/tools.mjs`、`cota/runtime/pi_distribution.py`。
 
 相关文档：[执行流程](execution-flow.md) · [DST](dst.md) · [Skills](../skills/overview.md) · [Tool 适配](tool-adapters.md)

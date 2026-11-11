@@ -22,6 +22,7 @@ def bundle(tmp_path):
     (vendor / 'http.mjs').write_text('http')
     (vendor / 'files.mjs').write_text('files')
     (vendor / 'context.mjs').write_text('context')
+    (vendor / 'model.mjs').write_text('model')
     coding = vendor / 'node_modules/@earendil-works/pi-coding-agent'
     coding.mkdir(parents=True)
     (coding / 'package.json').write_text(json.dumps({'version': '1.4.0'}))
@@ -129,3 +130,27 @@ def test_native_tool_adapter_is_required_in_bundle(tmp_path):
     (root / '_vendor/tools.mjs').unlink()
     with pytest.raises(RuntimeError, match='reinstall'):
         distribution.resolve_runtime(base_dir=root)
+
+
+def test_native_provider_is_shipped_and_required_by_release_runtime(tmp_path):
+    builder = load_builder()
+    assert 'model.mjs' in builder.INPUTS
+    root = bundle(tmp_path)
+    (root / '_vendor/model.mjs').write_text('provider')
+    distribution.resolve_runtime(base_dir=root)
+    (root / '_vendor/model.mjs').unlink()
+    with pytest.raises(RuntimeError, match='model.mjs'):
+        distribution.resolve_runtime(base_dir=root)
+
+
+@pytest.mark.asyncio
+async def test_release_smoke_uses_worker_status_and_observed_messages(monkeypatch):
+    from types import SimpleNamespace
+    path = Path(__file__).parents[1] / 'scripts/smoke_installed.py'
+    spec = importlib.util.spec_from_file_location('smoke_installed', path)
+    smoke = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke)
+    monkeypatch.setattr(smoke, 'resolve_runtime', lambda: SimpleNamespace(
+        bundled=True, worker=Path('/test/site-packages/cota/runtime/_vendor/worker.mjs')))
+    # The bridge itself uses the real source worker, with deterministic callbacks.
+    await smoke.smoke()

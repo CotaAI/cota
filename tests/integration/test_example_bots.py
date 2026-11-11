@@ -58,6 +58,9 @@ async def load_bot(tmp_path, monkeypatch):
         agent = Agent.load_from_path(str(target))
         agents.append(agent)
         adapter = agent.llm_instance('default').client
+        # This fixture exercises the Python HTTP adapter contract. Native Node
+        # streaming has its own real local SSE/worker integration tests.
+        agent.llm_instance('default').pi_provider = lambda: None
         original = adapter.client
         script = ModelHTTP(responses)
         adapter.client = AsyncOpenAI(api_key=original.api_key, base_url=original.base_url,
@@ -397,6 +400,8 @@ async def test_activity_catalog_failures_reach_pi_without_escaping_resources(loa
 async def test_portable_evaluation_runs_real_pi_and_judge_transport(tmp_path, monkeypatch):
     from cota.evaluation.runner import evaluate, rejudge
     import openai
+    from cota.llm import LLM
+    monkeypatch.setattr(LLM, 'pi_provider', lambda self: None)
 
     root = tmp_path / 'weather'
     shutil.copytree(BOTS / 'weather', root, ignore=TEMPLATE_IGNORE)
@@ -422,9 +427,10 @@ async def test_portable_evaluation_runs_real_pi_and_judge_transport(tmp_path, mo
                                'evidence': [facts['events'][-1]['event_id']]}]}
         return ModelHTTP([{'content': json.dumps(answer)}])(request)
 
-    original = openai.AsyncOpenAI
-    monkeypatch.setattr(openai, 'AsyncOpenAI', lambda **kwargs: original(
-        **kwargs, max_retries=0, http_client=httpx.AsyncClient(transport=httpx.MockTransport(transport))))
+    # Preserve the real SDK configuration and hooks; substitute only its HTTP
+    # transport so endpoint retry settings are not supplied twice by this test.
+    monkeypatch.setattr(openai, 'DefaultAsyncHttpxClient', lambda **kwargs: httpx.AsyncClient(
+        transport=httpx.MockTransport(transport), **kwargs))
     output = tmp_path / 'evaluation'
     result = await evaluate(root, output=output, debug=True)
     assert result['status'] == 'completed'
@@ -474,6 +480,7 @@ def test_init_weather_thirty_cases_run_through_eval_cli(tmp_path, monkeypatch):
             for i, _ in enumerate(data['reply-review'], 1)]}), 'finish_reason': 'stop'}
 
     monkeypatch.setattr(LLM, 'generate_chat', respond)
+    monkeypatch.setattr(LLM, 'pi_provider', lambda self: None)
     output = tmp_path / 'evaluation'
     monkeypatch.setattr('sys.argv', ['cota', 'eval', '--config', str(root), '--output', str(output)])
     with pytest.raises(SystemExit) as exit_info:

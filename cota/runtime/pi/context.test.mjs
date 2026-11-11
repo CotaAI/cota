@@ -147,3 +147,37 @@ test('attachment bytes follow the actual model hydration MIME and size policy', 
   const svg = [{...messages[0], cotaAttachments: [{id: 'svg', mime_type: 'image/svg+xml', size: 2 * 1024 * 1024}]}];
   assert(estimateRequest(svg, [], visionModel).serialized_bytes < 4096);
 });
+
+test('image retention has count and byte budgets independent of model capacity', () => {
+  const limits = compactionSettings({...model, contextWindow: 1000000});
+  assert.equal(limits.maxImages, 8);
+  assert.equal(limits.maxImageBytes, 16 * 1024 * 1024);
+  for (const options of [{max_images: 0}, {max_images: true}, {max_image_bytes: -1}])
+    assert.throws(() => compactionSettings(model, options), /image/i);
+});
+
+test('Pi reduces retained images under image-only pressure and keeps the latest complete batch', async () => {
+  const messages = imageHistory(), before = JSON.stringify(messages), calls = [];
+  const largeModel = {...model, contextWindow: 1000000};
+  const limits = compactionSettings(largeModel, {max_images: 2, max_image_bytes: 2 * 1024 * 1024});
+  const result = await compactContext(messages, largeModel, limits, summaryStream(calls));
+  const kept = messages.slice(result.replaced_message_ids.length);
+  const budget = estimateRequest(kept);
+  assert(budget.images <= 2 && budget.image_bytes <= limits.maxImageBytes);
+  assert.equal(kept[0].role, 'assistant');
+  assert.equal(kept.at(-1).toolCallId, 'image5');
+  assert.equal(calls.length, 1);
+  assert.equal(JSON.stringify(messages), before);
+});
+
+test('an oversized current multi-image batch is not silently split or summarized away', async () => {
+  const messages = [msg('user', 'Compare all three images.', 'u'),
+    msg('assistant', [0, 1, 2].map(i => ({type: 'toolCall', id: `c${i}`, name: 'read', arguments: {path: `${i}.png`}})), 'a'),
+    ...[0, 1, 2].map(i => ({...msg('toolResult', [{type: 'image', mimeType: 'image/png', data: 'a'.repeat(100)}], `r${i}`),
+      toolCallId: `c${i}`, toolName: 'read'}))];
+  const calls = [];
+  await assert.rejects(compactContext(messages, model, compactionSettings(model, {max_images: 2}), summaryStream(calls)),
+    /latest.*(batch|message).*image|image.*budget/i);
+  assert.equal(calls.length, 0);
+  assert.equal(messages.filter(m => m.role === 'toolResult').length, 3);
+});

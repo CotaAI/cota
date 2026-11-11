@@ -76,9 +76,10 @@ async def test_provider_failure_is_logged_and_ends_run_without_fake_tool(mock_ag
     assert saved['execution']['status'] == 'failed'
     assert 'provider down' in saved['events'][-1]['payload']['error']
     logs = [r for r in caplog.records if r.name == 'cota.llm.observation']
-    assert len(logs) == 1 and logs[0].exc_info[0] is RuntimeError
+    assert len(logs) == 1 and logs[0].exc_info is None
     assert 'session=error' in logs[0].message and 'purpose=dialogue' in logs[0].message
-    assert 'provider down' in caplog.text and 'private question' not in caplog.text
+    assert 'error_type=RuntimeError' in caplog.text
+    assert 'provider down' not in caplog.text and 'private question' not in caplog.text
     headers = await store.model_debug_headers(dst.session_id)
     assert bool(headers) == debug
     if debug:
@@ -268,7 +269,8 @@ async def test_auxiliary_model_failure_can_fall_back_without_execution_event(tmp
         result = await policy.guidance(context(), PolicyServices(model=lambda name: SimpleNamespace(generate_chat=failing_model)))
     assert result['diagnostics'][0]['code'] == 'policy_fallback'
     assert result['policies']
-    assert 'purpose=policy' in caplog.text and 'network unavailable' in caplog.text
+    assert 'purpose=policy' in caplog.text and 'error_type=ConnectionError' in caplog.text
+    assert 'network unavailable' not in caplog.text
     assert [e.type for e in dst.events] == ['run_started']
     dst.append_event(Event('run_finished', {'status': 'completed'}))
     await store.save(dst)

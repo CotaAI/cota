@@ -18,9 +18,10 @@ from cota.events.tool import result_content, text_result
 from cota.executor.tools.base import ToolWrapper
 from cota.executor.environment import DEFAULT_DEPLOY, ExecutionEnvironment, NATIVE_TOOLS
 from cota.constant import DEFAULT_AGENT_LOOP_PROMPT, DEFAULT_DIALOGUE_MAX_TOKENS
-from .pi_bridge import PiBridge
+from .pi_bridge import PiBridge, PiModelError
 from .pi_context import to_openai
 from .pi_trace import PiTraceRecorder
+from .pi_models import PiModelObserver, public_message
 from cota.policy import PolicyContext, PolicyServices
 from cota.llm.observation import model_trace, model_purpose, observe_model_call
 
@@ -70,6 +71,8 @@ class PiAgentRuntime:
         self.group_trigger = None
         self._store = store
         self._channel_callback = None
+        self._stream_callback = None
+        self._stream_request_id = None
         registry = agent.get_tool_registry()
         registry.validate()
         self._tool_registry = copy(registry)
@@ -83,6 +86,7 @@ class PiAgentRuntime:
             owner = getattr(checkpoint, '__self__', None)
             diagnostic_store = owner if hasattr(owner, 'debug_enabled') else None
         self._trace = PiTraceRecorder(dst, store=diagnostic_store)
+        self._models = PiModelObserver(self._trace, self._checkpoint)
         self._system_prompt = ''
         self._available_skills = []
         self._checkpoint_callback = checkpoint
@@ -94,6 +98,10 @@ class PiAgentRuntime:
 
     def set_channel_callback(self, callback):
         self._channel_callback = callback
+
+    def set_stream_callback(self, callback):
+        """Bind an optional, ephemeral preview sink; never a durable delivery."""
+        self._stream_callback = callback
 
     def _get_user_query(self):
         if self.group_trigger:
@@ -192,6 +200,12 @@ class PiAgentRuntime:
                        'metadata': event.metadata, 'event_id': event.event_id,
                        **({'attachments': event.payload['attachments']} if event.payload.get('attachments') else {}),
                        'sequence': committed['sequence'] if committed else event.sequence, 'session_id': self.session_id}
+            origin = event.payload.get('llm')
+            if not origin and event.payload.get('llm_event_id'):
+                owner = next((e for e in events if e.event_id == event.payload['llm_event_id']), None)
+                origin = owner.payload.get('llm') if owner else None
+            if origin:
+                message['request_id'] = origin['request_id']
             try:
                 await self._channel_callback(message)
             except Exception:
@@ -228,7 +242,9 @@ class PiAgentRuntime:
         return guidance, read_skills
 
     async def _prepare(self, payload):
-        messages = [m for m in payload['messages'] if m['role'] != 'system']
+        native = payload.get('native') is True
+        source = self.dst.context_messages if native else payload['messages']
+        messages = [m for m in source if m['role'] != 'system' and not m.get('cotaDeferred')]
         base = self._system_prompt + payload.get('skillPrompt', '') + payload.get('toolPrompt', '')
 
         async def project(context):
@@ -266,9 +282,48 @@ class PiAgentRuntime:
             self._trace.preparation = {key: guidance[key] for key in
                 ('method', 'decisions', 'diagnostics', 'cache_hit', 'duration_ms', 'thoughts', 'omitted_policies')}
         await self._checkpoint()
+        if native:
+            return {'systemPrompt': messages[0]['content'], 'tools': tools,
+                    'attachments': await self._attachment_references(messages[1:])}
         return {'messages': messages, 'tools': tools}
 
+    async def _attachment_references(self, messages):
+        """Authorize files in Python; let Node hydrate scoped paths at the boundary."""
+        result = []
+        for message in messages:
+            files = []
+            for item in message.get('cotaAttachments', []):
+                try:
+                    path = await asyncio.to_thread(self.agent.files.resolve, self.session_id, item['id'])
+                    files.append({'id': item['id'], 'path': str(path), 'name': item['name'],
+                                  'mimeType': item['mime_type'], 'size': item['size'],
+                                  **({'local_copy': str(path)} if self._environment.type == 'machine' else {})})
+                except (OSError, AttributeError):
+                    files.append({'id': item['id'], 'note': 'Attachment unavailable'})
+            if files:
+                result.append({'message_id': message['cotaEventId'], 'files': files})
+        return result
+
     async def _handle_request(self, method, payload):
+        if method == 'stream':
+            if self._stream_callback is not None:
+                try:
+                    await self._stream_callback({**payload, 'session_id': self.session_id,
+                                                 'run_id': self.dst.execution.get('run_id')})
+                except Exception:
+                    logger.warning('Live preview unavailable; committed delivery continues')
+            return {}
+        if method == 'model_begin':
+            result = await self._models.begin(payload)
+            if payload['purpose'] == 'dialogue':
+                self._stream_request_id = result['request_id']
+            return result
+        if method == 'model_observation':
+            return await self._models.observe(payload)
+        if method == 'model_complete':
+            return await self._models.complete(payload)
+        if method == 'model_failed':
+            return await self._models.fail(payload)
         if method == 'skills_loaded':
             self._available_skills = [skill['name'] for skill in payload['skills']]
             inventory = payload.get('nativeTools')
@@ -357,6 +412,8 @@ class PiAgentRuntime:
         if method == 'event':
             event = payload['event']
             message = event.get('message', {})
+            if message.get('role') == 'assistant':
+                message = public_message(message)
             recorded = (self._trace.observe_assistant(message)
                         if event['type'] == 'message_end' and message.get('role') == 'assistant'
                         else self._trace.observe(event))
@@ -457,7 +514,10 @@ class PiAgentRuntime:
 
     async def run(self):
         with model_trace(self._trace, self._checkpoint):
-            return await self._run()
+            try:
+                return await self._run()
+            except PiModelError as error:
+                raise ModelCallError(str(error)) from error
 
     async def _run(self):
         previous = self.dst.execution
@@ -492,6 +552,8 @@ class PiAgentRuntime:
                     'Do not infer access to private personal memory. Current execution: '
                     + json.dumps(self.group_trigger or {}, ensure_ascii=False))
             llm = self.agent.llm_instance(self.llm)
+            from cota.llm.llm import LLM
+            provider = llm.pi_provider() if isinstance(llm, LLM) else None
             identity = getattr(getattr(llm, 'client', None), 'model', None)
             if not isinstance(identity, str):
                 identity = getattr(llm, 'name', None)
@@ -506,6 +568,7 @@ class PiAgentRuntime:
             if type(capacity) is int:
                 model['contextWindow'] = capacity
             outcome = await self._bridge.run({'messages': messages, 'maxIterations': self.max_iterations,
+                                               **({'provider': provider} if provider else {}),
                                                'model': model, 'compaction': self.agent.dialogue.get('compaction', {}),
                                                'cwd': self.agent.config_path or '.',
                                                'pythonExecutable': sys.executable,
@@ -517,6 +580,20 @@ class PiAgentRuntime:
             self._trace.record('run_finished', {'status': outcome['status']})
             await self._checkpoint()
         except BaseException as error:
+            if self._stream_request_id and self._stream_callback is not None:
+                try:
+                    # A provider may finish successfully before its bot/tool
+                    # carrier fails to commit. Close that preview too. Clients
+                    # ignore this for a reply they have already committed.
+                    async with asyncio.timeout(1):
+                        await self._handle_request('stream', {'request_id': self._stream_request_id,
+                                                              'phase': 'error'})
+                except Exception:
+                    pass
+            try:
+                await self._models.interrupt(error)
+            except Exception:
+                logger.warning('Could not finalize interrupted native model diagnostics')
             if current_run_id and self.dst.execution.get('run_id') == current_run_id:
                 status = 'interrupted' if isinstance(error, asyncio.CancelledError) else 'failed'
                 # Preserve failure facts even when the checkpoint failed. A new

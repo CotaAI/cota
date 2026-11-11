@@ -38,6 +38,9 @@ async def test_shell_debug_lifecycle_and_failure_isolation(monkeypatch, tmp_path
     state = {}
     class Channel:
         session_key = 'cmdline:test'
+        supports_streaming = True
+        async def send_stream(self, session_id, frame):
+            state['stream'] = (session_id, frame)
         def __init__(self, config, bus, debug):
             self.bus = bus
         async def start(self):
@@ -51,8 +54,13 @@ async def test_shell_debug_lifecycle_and_failure_isolation(monkeypatch, tmp_path
         def flush_output(self):
             pass
     agent = SimpleNamespace(store=MemoryStore(), workspace_path=str(tmp_path), name='test', cleanup=AsyncMock())
-    processor = SimpleNamespace(dst=None)
+    processor = SimpleNamespace(dst=None, set_stream_callback=Mock())
     async def handle(message):
+        callback = processor.set_stream_callback.call_args.args[0]
+        await callback({'session_id':message.session_key, 'request_id':'req', 'run_id':'run', 'phase':'start'})
+        assert state['stream'][0] == message.session_key
+        await callback({'session_id':'injected', 'request_id':'req', 'run_id':'run', 'phase':'delta'})
+        assert state['stream'][1]['phase'] == 'start'
         processor.dst = DST(message.session_key, None)
         if debug and not failure:
             assert state['inspector'].live_tracker() is processor.dst

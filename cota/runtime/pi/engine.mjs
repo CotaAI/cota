@@ -1,9 +1,10 @@
 /** Pi owns the loop; Cota owns context policy, tools, models and durable state. */
 import { createSkillResources } from './skills.mjs';
+import {nativeModel, nativeStream} from './model.mjs';
 import { createHttpTool } from './http.mjs';
 import { createNativeTools } from './tools.mjs';
 import { createSendFilesTool } from './files.mjs';
-import {resolveContextModel, compactionSettings, estimateRequest, compactContext} from './context.mjs';
+import {resolveContextModel, compactionSettings, estimateRequest, compactContext, exceedsImageBudget} from './context.mjs';
 import {shouldCompact} from '@earendil-works/pi-coding-agent';
 import { Agent } from '@earendil-works/pi-agent-core';
 import piPackage from '@earendil-works/pi-agent-core/package.json' with {type: 'json'};
@@ -34,13 +35,14 @@ export function assistantMessage(response, model) {
       content.some(c => c.type === 'toolCall') ? 'toolUse' : 'stop'};
 }
 
-export async function runAgent(options, rpc, signal) {
+export async function runAgent(options, rpc, signal, notify = async () => {}) {
   if (!Number.isInteger(options.maxIterations) || options.maxIterations < 1)
     throw new Error('maxIterations must be a positive integer');
   let turns = 0, limited = false, fatal;
   let schemas = [], latestAssistant;
   const pendingStarts = new Map();
-  const model = resolveContextModel(options.model);
+  const model = options.provider ? nativeModel(resolveContextModel(options.model), options.provider) : resolveContextModel(options.model);
+  let attachments = [];
   const settings = compactionSettings(model, options.compaction);
   let contextBudget;
   const request = async (method, payload) => {
@@ -51,7 +53,8 @@ export async function runAgent(options, rpc, signal) {
   const record = async event => {
     const recorded = await request('event', {event});
     if (recorded?.assistantMessage && latestAssistant)
-      Object.assign(latestAssistant, recorded.assistantMessage);
+      Object.assign(latestAssistant, options.provider ? Object.fromEntries(Object.entries(recorded.assistantMessage)
+        .filter(([key]) => ['cotaEventId', 'timestamp', 'cotaRunId'].includes(key))) : recorded.assistantMessage);
     return recorded;
   };
   const resources = await createSkillResources(options);
@@ -85,22 +88,41 @@ export async function runAgent(options, rpc, signal) {
     initialState: {model, messages: options.messages},
     toolExecution: 'sequential',
     prepareRequest: async ({context}) => {
-      const prepare = messages => request('prepare', {messages, skillPrompt: resources.prompt,
-        toolPrompt: native.prompt, nativeTools: native.schemas, extensionTools});
+      const prepare = async messages => {
+        const prepared = await request('prepare', {...(options.provider ? {native: true} : {messages}), skillPrompt: resources.prompt,
+          toolPrompt: native.prompt, nativeTools: native.schemas, extensionTools});
+        if (!options.provider) return prepared;
+        attachments = prepared.attachments ?? [];
+        return {...prepared, messages: [...(prepared.systemPrompt ? [{role: 'system', content: prepared.systemPrompt, timestamp: 0}] : []),
+          ...messages.filter(message => message.role !== 'system')]};
+      };
       let prepared = await prepare(context.messages);
       for (let attempt = 0; ; attempt++) {
         contextBudget = {...estimateRequest(prepared.messages, prepared.tools, model), context_window: model.contextWindow,
           capacity_source: model.capacitySource, reserve_tokens: settings.reserveTokens,
-          max_request_bytes: settings.maxRequestBytes};
+          max_request_bytes: settings.maxRequestBytes, max_images: settings.maxImages,
+          max_image_bytes: settings.maxImageBytes};
         const fixed = estimateRequest(prepared.messages.filter(m => m.role === 'system'), prepared.tools, model);
         if (fixed.budget_tokens >= model.contextWindow - settings.reserveTokens)
           throw new Error('System prompt and tool definitions exceed the model budget; reduce guidance or increase context_window');
         if (fixed.serialized_bytes >= settings.maxRequestBytes - Math.min(65536, Math.floor(settings.maxRequestBytes / 4)))
           throw new Error('System prompt and tool definitions exceed the byte budget; reduce guidance or increase compaction.max_request_bytes');
         if (!shouldCompact(contextBudget.budget_tokens, model.contextWindow, settings)
-            && contextBudget.serialized_bytes <= settings.maxRequestBytes) break;
-        if (attempt >= 2) throw new Error('Context still exceeds the Pi token/byte budget after compaction; narrow the task or increase the context budget');
+            && contextBudget.serialized_bytes <= settings.maxRequestBytes
+            && !exceedsImageBudget(contextBudget, settings)) break;
+        if (attempt >= 2) throw new Error('Context still exceeds the Pi token/byte/image budget after compaction; narrow the task or increase the context budget');
         const summaryStream = async (_model, summaryContext) => {
+          if (options.provider) {
+            const stream = await nativeStream({model, provider: options.provider, context: summaryContext,
+              purpose: 'compaction', maxTokens: Math.min(2000, settings.reserveTokens), rpc: request, signal});
+            const message = await stream.result();
+            if (['error', 'aborted'].includes(message.stopReason)) {
+              fatal ??= Object.assign(new Error(message.errorMessage || 'Native summary failed'),
+                message.cotaModelError ? {code: 'model_error'} : {});
+              throw fatal;
+            }
+            return stream;
+          }
           const response = await request('summarize', {messages: summaryContext.messages,
             systemPrompt: getCurrentSystemPrompt(summaryContext.messages), maxTokens: Math.min(2000, settings.reserveTokens)});
           const message = assistantMessage(response, model);
@@ -133,7 +155,9 @@ export async function runAgent(options, rpc, signal) {
         if (!permission.allowed) return {block: true, reason: permission.reason};
       }
     },
-    streamFn: async (_, context) => {
+    streamFn: async (_, context, streamOptions) => {
+      if (options.provider) return nativeStream({model, provider: options.provider, context, attachments, contextBudget,
+        rpc: request, signal: streamOptions?.signal ?? signal, notify, onComplete: message => {latestAssistant = message;}});
       const response = await request('model', {
         messages: context.messages, systemPrompt: getCurrentSystemPrompt(context.messages), tools: schemas, contextBudget,
       });
@@ -156,7 +180,8 @@ export async function runAgent(options, rpc, signal) {
   agent.subscribe(async event => {
     if (event.type === 'message_end' && event.message.role === 'assistant'
         && ['error', 'aborted'].includes(event.message.stopReason)) {
-      fatal ??= new Error(event.message.errorMessage || 'Pi model request interrupted');
+      fatal ??= Object.assign(new Error(event.message.errorMessage || 'Pi model request interrupted'),
+        options.provider && event.message.cotaModelError && !signal?.aborted ? {code: 'model_error'} : {});
       throw fatal;
     }
     if (event.type === 'tool_execution_start') {

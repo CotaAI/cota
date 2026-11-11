@@ -60,3 +60,16 @@ def test_setup_rejects_old_node(monkeypatch):
     monkeypatch.setattr('subprocess.run', lambda *a, **kw: SimpleNamespace(stdout='v20.0.0\n'))
     with pytest.raises(RuntimeError, match='22.19.0'):
         setup(check_only=True)
+
+
+@pytest.mark.parametrize('field', ['max_images', 'max_image_bytes'])
+@pytest.mark.parametrize('value', [0, -1, True, '8', 1.5])
+def test_image_budget_settings_are_positive_integers(field, value):
+    from cota.config import validate_bot_config
+    with pytest.raises(ValueError, match=field):
+        validate_bot_config({'dialogue': {'compaction': {field: value}}})
+
+
+def test_image_budget_settings_are_part_of_the_bot_contract():
+    from cota.config import validate_bot_config
+    validate_bot_config({'dialogue': {'compaction': {'max_images': 8, 'max_image_bytes': 16777216}}})

@@ -44,11 +44,15 @@ policy:
 | `dialogue.compaction.reserve_tokens` | 上下文预留 token；默认取输出上限与 `min(16384, context_window/4)` 中较大者，必须覆盖 `max_tokens` 且小于模型容量 |
 | `dialogue.compaction.keep_recent_tokens` | Pi 切分时尽量保留的最近 token；默认 `min(20000, (context_window-reserve_tokens)/2)`，须小于剩余预算 |
 | `dialogue.compaction.max_request_bytes` | 序列化工作上下文（含工具定义、图片 Base64 与待注入图片的估计体积）的字节预算，默认 32 MiB（33554432），正整数且不超过 64 MiB；超出时也复用 Pi 压缩 |
+| `dialogue.compaction.max_images` | 有效模型上下文中的图片数量预算，默认 8，正整数 |
+| `dialogue.compaction.max_image_bytes` | 有效上下文中的图片解码后总字节预算，默认 16 MiB（16777216），正整数；与 Base64 后的整体请求预算分别计算 |
 | `dialogue.pi_node` | 可选 Node 路径或可执行文件名称 |
 
 `mode` 和 `response` 的行为需结合 [群聊](../deployment/group.md) 与 Application 使用。`use_proxy_user`、`max_proxy_step`、`proxy_prompt` 和顶层 `user_proxy.description` 仍被配置校验接受，但当前带输入标识的 Processor 路径明确拒绝启用 proxy 模拟，不作为可部署对话方案。
 
-Token 预算与字节预算分别检查：图片 Base64 不当作文本 token，但会占用传输体积。任一预算超限都触发 Pi 摘要；图片较多时会降低 Pi 的最近 token 保留目标，直到完整的最近工具调用/结果批次能放下。旧 Events 与图片不删除。单个最近批次仍过大时明确失败，需读取较小图片或在已确认服务限制后调整预算，不会静默丢图。32 MiB 是 Cota 的运行预算，不是供应商声明的请求上限；供应商限制更小时应相应降低。
+Token、整体序列化字节、图片数量和图片字节预算分别检查。图片 Base64 不当作文本 token，但会占用传输体积。任一预算超限都复用 Pi 摘要，并降低最近 token 保留目标，直到完整的最近工具调用/结果批次能放下。旧 Events 与图片不删除。单个最近批次仍过大时明确失败，需读取较小/较少图片，或在确认服务限制后调整预算；不会静默拆开同批次多图。32 MiB 是 Cota 的运行预算，不是供应商声明的请求上限。
+
+压缩依据通用预算与消息顺序，不推断图片“已审阅”或“旧版本”。Pi 摘要读取文本证据，无法凭空补做视觉审校；需要时 Agent 重新读取对应资产。近期完整工具批次受到保护，但更早批次的图片可能移出模型上下文，多图比较应一次读取所需参考图与目标图。请求体引用/缓存与减少模型视觉上下文是不同问题。
 
 ## Prompt 变量
 

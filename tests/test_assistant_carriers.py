@@ -42,9 +42,11 @@ async def test_two_calls_share_one_durable_message_and_restore(mock_agent, tmp_p
         assert dst.context_messages[1]['cotaEventId'] == owner.event_id
         assert dst.context_messages[1]['content'][0]['text'] == 'Read two resources.'
         bots = [e for e in dst.events if e.type == 'bot_utter']
-        assert [e.text for e in bots] == ['done']
-        assert 'message' not in bots[0].payload['llm']  # text is stored once
-        assert dst.context_messages[-1]['cotaEventId'] == bots[0].event_id
+        assert [e.text for e in bots] == ['Read two resources.', 'done']
+        assert bots[0].payload['llm_event_id'] == owner.event_id
+        assert 'llm' not in bots[0].payload
+        assert 'message' not in bots[-1].payload['llm']
+        assert dst.context_messages[-1]['cotaEventId'] == bots[-1].event_id
         detail = await store.model_debug('s', owner.payload['llm']['request_id'])
         assert bool(detail) == debug
         if debug:
@@ -226,3 +228,56 @@ def test_later_proposed_call_cannot_drop_its_carrier_link():
     dst, owner = carrier_fixture()
     with pytest.raises(ValueError, match='original assistant carrier'):
         dst.append_event(Event('tool_started', {'tool_call_id': 'b', 'tool': 'lookup', 'arguments': {'city': 'Shanghai'}}, run_id='r'))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('fail_checkpoint', [False, True])
+async def test_public_commentary_commits_before_effects_and_is_never_duplicated(mock_agent, fail_checkpoint):
+    from cota.executor.tools import FunctionTool
+    store, dst = MemoryStore(), DST('commentary', mock_agent)
+    dst.append_event(UserUtterEvent('do the work'))
+    published, effects = [], []
+
+    async def publish(message):
+        saved = await store.event_by_id(dst.session_id, message['event_id'])
+        assert saved['payload']['text'] == message['text']
+        published.append(message['text'])
+
+    async def effect():
+        assert published == ['I will check both resources.']
+        effects.append(True)
+        return 'checked'
+
+    mock_agent.get_tool_registry().register(FunctionTool('check', 'check', {'type': 'object', 'properties': {}}, effect))
+    mock_agent._llm_mock.generate_chat.side_effect = [
+        {'content': 'I will check both resources.', 'tool_calls': [call('check', {}, 'a'), call('check', {}, 'b')]},
+        {'content': 'All done.'},
+    ]
+
+    async def save(tracker):
+        if fail_checkpoint and any(e.type == 'tool_started' for e in tracker.events):
+            raise OSError('checkpoint unavailable')
+        await store.save(tracker)
+
+    runtime = PiAgentRuntime(mock_agent, dst, dst.session_id, checkpoint=save, store=store)
+    runtime.set_channel_callback(publish)
+    if fail_checkpoint:
+        with pytest.raises(OSError, match='checkpoint unavailable'):
+            await runtime.run()
+        assert not published and not effects
+        assert not any(e['type'] == 'bot_utter' for e in (await store.export_session(dst.session_id))['events'])
+    else:
+        await runtime.run()
+        assert published == ['I will check both resources.', 'All done.']
+        assert len(effects) == 2
+        restored = await store.load(dst.session_id, mock_agent)
+        assert restored.context_messages == dst.context_messages
+        assert sum('I will check both resources.' in str(m) for m in restored.context_messages) == 1
+        progress = next(e for e in dst.events if e.type == 'bot_utter')
+        assert [e['payload']['text'] for e in await store.history(dst.session_id)] == [
+            'do the work', 'I will check both resources.', 'All done.']
+        from cota.events import BotUtterEvent
+        with pytest.raises(ValueError, match='Duplicate bot commentary'):
+            dst.append_event(BotUtterEvent(progress.text, llm_event_id=progress.payload['llm_event_id'], run_id=progress.run_id))
+        with pytest.raises(ValueError, match='carrier text'):
+            dst.append_event(BotUtterEvent('forged', llm_event_id=progress.payload['llm_event_id'], run_id=progress.run_id))

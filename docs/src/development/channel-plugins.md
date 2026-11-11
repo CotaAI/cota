@@ -119,3 +119,9 @@ receipt = await submission.receipt()
 ```
 
 相关文档：[Channel 边界](../concepts/channel.md) · [Endpoints 配置](../configuration/endpoints.md) · [Application](../deployment/application.md) · [群聊](../deployment/group.md) · [可靠投递](../deployment/delivery.md)
+
+## 可选的实时预览
+
+插件默认只接收完整、已提交的回复。支持实时编辑消息的 Channel 可以声明 `supports_streaming = True` 并实现 `async send_stream(session_id, frame)`。Application 从已经接收的输入绑定可信会话路由，Processor 把该回调独立于正式回复与 outbox 传给 runtime。
+
+frame 包含 `session_id`、`run_id`、`request_id`、`phase`（start/delta/end/error），delta 另有 `text`。该接口只接收公开文字；必须快速返回并使用有界缓冲，不能把片段写入持久化投递队列。最终已提交回复仍通过 `send()` 发送，request_id 用于替换预览。end 不等于持久化成功；不支持预览的平台保留完整回复投递即可。接口示例和重连语义见 [Web 接入协议](../deployment/api.md#实时文字预览)。

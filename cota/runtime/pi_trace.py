@@ -46,6 +46,8 @@ class PiTraceRecorder:
         usage = pending['message'].get('usage', {})
         if usage.get('totalTokens', 0) > 0:
             origin['usage'] = {k: usage.get(k, 0) for k in ('input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens')}
+        if pending['message'].get('cotaContinuation'):
+            origin['continuation'] = deepcopy(pending['message']['cotaContinuation'])
         return origin
 
     def observe_assistant(self, message):
@@ -135,6 +137,13 @@ class PiTraceRecorder:
             self._tool_started_at[call_id] = perf_counter()
             if pending['owner_id'] is None:
                 pending['owner_id'] = event.event_id
+                text = '\n'.join(b['text'] for b in pending['message']['content'] if b['type'] == 'text')
+                if text:
+                    # The carrier owns model context; this linked view owns
+                    # public delivery. Both facts commit before tool effects.
+                    self.dst.append_event(BotUtterEvent(text, metadata={'source': 'model',
+                        'request_id': pending['metadata']['request_id']},
+                        llm_event_id=event.event_id, run_id=event.run_id))
             return event
         if kind == 'tool_execution_end':
             call_id = event['toolCallId']

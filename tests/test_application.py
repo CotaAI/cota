@@ -27,8 +27,10 @@ async def test_receipts_deduplicate_and_wait_is_scoped_to_one_input(mock_agent):
         assert duplicate.duplicate is True
         assert await duplicate.wait() == result
         assert [m['text'] for m in result['messages']] == ['first', 'hello']
-        assert all(set(m) == {'type', 'session_id', 'event_id', 'sequence', 'role', 'text', 'message_id', 'timestamp'}
-                   for m in result['messages'])
+        fields = {'type', 'session_id', 'event_id', 'sequence', 'role', 'text', 'message_id', 'timestamp'}
+        assert set(result['messages'][0]) == fields
+        assert set(result['messages'][1]) == fields | {'request_id'}
+        assert isinstance(result['messages'][1]['request_id'], str)
         with pytest.raises(ValueError, match='message_id'):
             await app.submit(user_id='bob', session_id='room', text='first', message_id='one')
         elsewhere = await app.submit(user_id='alice', session_id='elsewhere', text='first', message_id='one')

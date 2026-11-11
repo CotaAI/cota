@@ -20,12 +20,20 @@ export function compactionSettings(model, options = {}) {
   const reserveTokens = options.reserve_tokens ?? Math.max(model.maxTokens, Math.min(16384, Math.floor(model.contextWindow / 4)));
   const keepRecentTokens = options.keep_recent_tokens ?? Math.min(20000, Math.floor((model.contextWindow - reserveTokens) / 2));
   const maxRequestBytes = options.max_request_bytes ?? 32 * 1024 * 1024;
+  const maxImages = options.max_images ?? 8;
+  const maxImageBytes = options.max_image_bytes ?? 16 * 1024 * 1024;
   if (!Number.isInteger(reserveTokens) || reserveTokens < model.maxTokens || reserveTokens >= model.contextWindow
       || !Number.isInteger(keepRecentTokens) || keepRecentTokens < 1 || keepRecentTokens >= model.contextWindow - reserveTokens)
     throw new Error('Invalid compaction budget: reserve_tokens must cover output; keep_recent_tokens must fit remaining context');
   if (!Number.isInteger(maxRequestBytes) || maxRequestBytes < 1 || maxRequestBytes > 64 * 1024 * 1024)
     throw new Error('compaction.max_request_bytes must be a positive integer no larger than 64 MiB');
-  return {enabled: true, reserveTokens, keepRecentTokens, maxRequestBytes};
+  if (!Number.isInteger(maxImages) || maxImages < 1 || !Number.isInteger(maxImageBytes) || maxImageBytes < 1)
+    throw new Error('compaction.max_images and max_image_bytes must be positive integers');
+  return {enabled: true, reserveTokens, keepRecentTokens, maxRequestBytes, maxImages, maxImageBytes};
+}
+
+export function exceedsImageBudget(budget, settings) {
+  return budget.images > settings.maxImages || budget.image_bytes > settings.maxImageBytes;
 }
 
 export function estimateRequest(messages, tools = [], model = {}) {
@@ -80,12 +88,18 @@ export async function compactContext(messages, model, settings, streamFn, signal
   let cut = findCutPoint(entries, 0, entries.length, keep);
   // Pi still chooses legal boundaries. Its token heuristic intentionally ignores
   // Base64 length, so lower the retention target separately for wire-size pressure.
-  if (settings.maxRequestBytes) {
+  if (settings.maxRequestBytes || settings.maxImages || settings.maxImageBytes) {
     const systems = messages.filter(m => m.role === 'system');
     const byteTarget = settings.maxRequestBytes - Math.min(65536, Math.floor(settings.maxRequestBytes / 4));
-    while (estimateRequest([...systems, ...history.slice(cut.firstKeptEntryIndex)], tools, model).serialized_bytes > byteTarget) {
-      if (keep <= 1)
+    while (true) {
+      const budget = estimateRequest([...systems, ...history.slice(cut.firstKeptEntryIndex)], tools, model);
+      const bytesExceeded = settings.maxRequestBytes && budget.serialized_bytes > byteTarget;
+      if (!bytesExceeded && !exceedsImageBudget(budget, settings)) break;
+      if (keep <= 1) {
+        if (exceedsImageBudget(budget, settings))
+          throw new Error('Latest message/tool batch exceeds the image budget; use fewer/smaller images or increase compaction.max_images/max_image_bytes');
         throw new Error('Latest message/tool batch exceeds the byte budget; read a smaller image or increase compaction.max_request_bytes');
+      }
       keep = Math.max(1, Math.floor(keep / 2));
       cut = findCutPoint(entries, 0, entries.length, keep);
     }
@@ -116,7 +130,7 @@ export async function compactContext(messages, model, settings, streamFn, signal
     turnPrefixMessages: cut.isSplitTurn ? history.slice(cut.turnStartIndex, cut.firstKeptEntryIndex) : [],
     isSplitTurn: cut.isSplitTurn, tokensBefore: estimateRequest(messages).budget_tokens, fileOps, settings},
   model, undefined, undefined,
-  'Preserve user constraints, speaker identities, confirmed decisions, exact project/file paths, verified outcomes, unresolved work and unknown external effects. Do not invent facts.',
+  'Preserve user constraints, speaker identities, confirmed decisions, exact project/file paths, verified outcomes, unresolved work and unknown external effects. Image pixels are not included in this summary request: preserve only visual observations actually recorded in text, distinguish unreviewed images, and retain paths for re-reading. Never invent image-review results or treat reading an image as approval.',
   signal, 'off', summaryStream, undefined, {enabled: false, maxRetries: 0});
   signal?.throwIfAborted();
   if (!result.summary?.trim()) throw new Error('Pi returned an empty compaction summary');

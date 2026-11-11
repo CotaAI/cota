@@ -30,6 +30,8 @@ class Connection:
     managed: bool = False
     cursors: dict = field(default_factory=dict)
     replay_session: str | None = None
+    stream_queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=32))
+    stream_next: dict | None = None
 
 
 class WebSocketTransport:
@@ -99,7 +101,7 @@ class WebSocketTransport:
     async def _send_loop(self, connection):
         try:
             while True:
-                frame = await connection.queue.get()
+                frame = await self._next_frame(connection)
                 # Membership and credentials can be revoked after resume, even
                 # while history/live frames are waiting in a slow client's queue.
                 session_id = frame.get('session_id', connection.session_id)
@@ -118,6 +120,57 @@ class WebSocketTransport:
             raise
         except Exception:
             await self._close(connection.socket)
+
+    @staticmethod
+    async def _next_frame(connection):
+        # Durable messages have priority and their own capacity. Preview traffic
+        # cannot occupy the replay/outbox queue or advance its cursor.
+        if not connection.queue.empty():
+            return connection.queue.get_nowait()
+        if connection.stream_next is not None:
+            frame, connection.stream_next = connection.stream_next, None
+            return frame
+        if not connection.stream_queue.empty():
+            return connection.stream_queue.get_nowait()
+        durable = asyncio.create_task(connection.queue.get())
+        preview = asyncio.create_task(connection.stream_queue.get())
+        try:
+            await asyncio.wait((durable, preview), return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (durable, preview):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(durable, preview, return_exceptions=True)
+        if not durable.cancelled():
+            if not preview.cancelled():
+                connection.stream_next = preview.result()
+            return durable.result()
+        return preview.result()
+
+    async def send_stream(self, session_id, frame):
+        """Best-effort public previews for current subscribers; no replay."""
+        if not isinstance(frame, dict) or frame.get('session_id') != session_id:
+            return
+        if frame.get('phase') not in ('start', 'delta', 'end', 'error'):
+            return
+        if any(not isinstance(frame.get(key), str) or not 0 < len(frame[key]) <= 255
+               for key in ('session_id', 'run_id', 'request_id')):
+            return
+        if 'text' in frame and (not isinstance(frame['text'], str) or len(frame['text']) > 65536):
+            return
+        public = {'type': 'stream', **{key: frame[key] for key in
+                  ('session_id', 'run_id', 'request_id', 'phase', 'text') if key in frame}}
+        for connection in tuple(self._connections.get(session_id, ())):
+            if session_id not in connection.sessions or (connection.replaying and connection.replay_session == session_id):
+                continue
+            try:
+                connection.stream_queue.put_nowait(public)
+            except asyncio.QueueFull:
+                # Abandon an incomplete preview rather than blocking generation.
+                # Clients retain the authoritative final message/reconnect path.
+                while not connection.stream_queue.empty():
+                    connection.stream_queue.get_nowait()
+                connection.stream_queue.put_nowait({**public, 'phase': 'error', 'text': ''})
 
     async def _authorize_connection(self, connection, session_id=None):
         user_id = await self.service.authenticate(connection.token)

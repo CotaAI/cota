@@ -256,3 +256,19 @@ resume/subscribe 可传 `recent:true` 只回放最近 50 条，ready 同时包�
 
 实时投递按已持久化的消息前缀补齐：如果较高 sequence 的通知先到达，服务端先查询并投递此前缺少的聊天消息，
 再发送较高 sequence。执行回调乱序不会让客户端游标越过尚未收到的已保存回复。
+
+### 实时文字预览
+
+普通 OpenAI 兼容主模型通过 Pi 原生流式调用时，已订阅的 WebSocket 可收到临时帧：
+
+```json
+{"type":"stream","session_id":"...","run_id":"...","request_id":"...","phase":"start"}
+{"type":"stream","session_id":"...","run_id":"...","request_id":"...","phase":"delta","text":"你好"}
+{"type":"stream","session_id":"...","run_id":"...","request_id":"...","phase":"end"}
+```
+
+`delta.text` 是本片段的公开文字；不包含推理、工具参数和工具结果。`end` 表示模型文字生成结束，正式保存仍以随后到达的 `type: message` 为准。纯工具调用可能只有 start/end，不应保留空白气泡。模型、执行提交或预览传输中断时可能收到 `phase: error`；仅预览中断不意味着任务执行失败，执行状态仍看 receipt。
+
+正式 Bot message 可带不透明的 `request_id`，用于替换相应预览。客户端按 request_id 合并增量、按 event_id 保存正式消息，并忽略已经完成请求的迟到片段。预览没有 event_id/sequence，不推进历史游标，不写浏览器消息缓存、不参与投递重试，也不在重连时回放。重连仍从正式历史恢复；未提交的片段不能当成最终交付。
+
+每个连接有独立有界预览队列，与正式消息队列分开；拥塞时可以放弃预览，不能阻塞模型或挤占可靠消息队列。预览沿用现有会话订阅及逐帧授权，身份仍由外围应用提供。`/cota.js` 的 `client.on('stream', handler)` 接收已经合并的预览，`client.streams` 仅保存在内存；正式 message 自动移除对应预览。HTTP 查询仍只返回已保存消息，Web Channel 没有新增 SSE 或 Socket.IO 协议。

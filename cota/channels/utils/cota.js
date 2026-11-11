@@ -12,6 +12,9 @@ class CotaClient {
     this.attempt = 0;
     this.connected = false;
     this.retries = {};
+    // Transient previews are intentionally outside cached state/cursors.
+    this.streams = new Map();
+    this.closedStreams = new Set();
     try {this.storage = options.storage || localStorage;}
     catch (_) {this.storage = {getItem() {throw new Error('storage blocked');}};}
     this.maxCachedMessages = Math.max(1, Math.min(500, options.maxCachedMessages || 200));
@@ -111,7 +114,14 @@ class CotaClient {
         this.save();
         for (const message_id of Object.keys(this.state.pending)) this.sendPending(message_id, socket);
         this.emit('connected', data);
+      } else if (data.type === 'stream') {
+        if (this.connected) this.receiveStream(data);
       } else if (data.type === 'message') {
+        if (data.session_id && data.session_id !== this.state.session_id) return;
+        if (data.role === 'bot' && data.request_id) {
+          this.streams.delete(data.request_id);
+          this.closeStream(data.request_id);
+        }
         if (!this.state.messages.some(message => message.event_id === data.event_id)) {
           this.state.messages.push(data);
           this.state.messages.sort((a, b) => a.sequence - b.sequence);
@@ -147,10 +157,50 @@ class CotaClient {
     socket.onclose = () => {
       if (this.socket !== socket) return;
       this.connected = false;
+      this.clearStreams();
       this.emit('disconnected', {});
       if (!this.stopped) this.timer = setTimeout(() => this.connect(), Math.min(1000 * 2 ** this.attempt++, 10000));
     };
     socket.onerror = () => {if (!this.stopped && this.socket === socket) this.emit('error', {message: '连接暂不可用，正在重连'});};
+  }
+  closeStream(request_id) {
+    this.closedStreams.add(request_id);
+    if (this.closedStreams.size > 1000) this.closedStreams.delete(this.closedStreams.values().next().value);
+  }
+  clearStreams() {
+    for (const [request_id, preview] of this.streams) {
+      this.closeStream(request_id);
+      this.emit('stream', {...preview, phase: 'error', interrupted: true});
+    }
+    this.streams.clear();
+  }
+  receiveStream(data) {
+    if (data.session_id !== this.state.session_id ||
+        !['start', 'delta', 'end', 'error'].includes(data.phase) ||
+        ['request_id', 'run_id'].some(key => typeof data[key] !== 'string' || !data[key] || data[key].length > 255) ||
+        (data.text !== undefined && (typeof data.text !== 'string' || data.text.length > 65536)) ||
+        this.closedStreams.has(data.request_id) ||
+        this.state.messages.some(m => m.role === 'bot' && m.request_id === data.request_id)) return;
+    let preview = this.streams.get(data.request_id);
+    if (data.phase === 'start') {
+      if (preview || this.streams.size >= 32) return;
+      preview = {session_id: data.session_id, request_id: data.request_id, run_id: data.run_id, text: ''};
+      this.streams.set(data.request_id, preview);
+    } else if (!preview || preview.run_id !== data.run_id ||
+               (preview.phase === 'end' && data.phase !== 'error')) return;
+    if (data.phase === 'delta') {
+      if (preview.text.length + (data.text || '').length > 131072) {
+        this.streams.delete(data.request_id); this.closeStream(data.request_id);
+        this.emit('stream', {...preview, phase: 'error', interrupted: true});
+        return;
+      }
+      preview.text += data.text || '';
+    }
+    preview.phase = data.phase;
+    if (data.phase === 'error' || (data.phase === 'end' && !preview.text)) {
+      this.streams.delete(data.request_id); this.closeStream(data.request_id);
+    }
+    this.emit('stream', {...preview});
   }
   sendPending(message_id, socket = this.socket) {
     const pending = this.state.pending[message_id];
@@ -233,6 +283,7 @@ class CotaClient {
   close() {
     this.stopped = true;
     this.connected = false;
+    this.clearStreams();
     clearTimeout(this.timer);
     for (const timer of Object.values(this.retries)) clearTimeout(timer);
     this.socket?.close();

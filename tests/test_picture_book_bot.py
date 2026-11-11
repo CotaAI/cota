@@ -380,6 +380,8 @@ async def test_real_pi_long_tool_chain_and_sqlite_resume(book_modules, tmp_path)
         await train_policy(root, yaml.safe_load((root / 'agent.yml').read_text())['policy'])
         agent = Agent.load_from_path(str(root))
         adapter = agent.llm_instance('default').client
+        # Controlled Python SDK boundary; native streaming is tested separately.
+        agent.llm_instance('default').pi_provider = lambda: None
         original = adapter.client
         adapter.client = AsyncOpenAI(api_key='TEST_ONLY', base_url='https://model.example/v1', max_retries=0,
                                     http_client=httpx.AsyncClient(transport=httpx.MockTransport(model)))
@@ -534,7 +536,6 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
     import shutil
     import shlex
     import sys
-    from unittest.mock import AsyncMock
     from aiohttp import web
     from cota.agent import Agent
     from cota.message.message import Message
@@ -552,7 +553,7 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
     project.mkdir(parents=True)
     make_book(project)
     (project / 'art.png').unlink()
-    observed = []
+    observed, main_requests = [], []
     async def generate(request):
         observed.append('generate')
         assert request.headers['Authorization'] == 'Bearer IMAGE_TEST'
@@ -568,8 +569,21 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
         assert images and bytes(images[0]).startswith(b'\x89PNG')
         return web.json_response({'data': [{'b64_json': base64.b64encode(image_bytes()).decode()}]})
     async def vision(request):
-        observed.append('vision')
         body = await request.json()
+        if body['model'] == 'main-test':
+            assert request.headers['Authorization'] == 'Bearer MAIN_TEST'
+            assert body['stream'] is True
+            main_requests.append(body)
+            reply = sequence.pop(0)
+            delta = {'role': 'assistant', 'content': reply.get('content', '')}
+            if reply.get('tool_calls'):
+                delta['tool_calls'] = [{'index': i, **call} for i, call in enumerate(reply['tool_calls'])]
+            frames = [{'id': 'main', 'model': 'main-test', 'object': 'chat.completion.chunk',
+                       'choices': [{'index': 0, 'delta': data, 'finish_reason': reason}]}
+                      for data, reason in ((delta, None), ({}, 'tool_calls' if reply.get('tool_calls') else 'stop'))]
+            return web.Response(text=''.join('data: ' + json.dumps(frame) + '\n\n' for frame in frames)
+                                + 'data: [DONE]\n\n', content_type='text/event-stream')
+        observed.append('vision')
         assert body['model'] == 'vision-test'
         assert any(c.get('type') == 'image_url' for c in body['messages'][0]['content'])
         return web.json_response({'choices': [{'message': {'content': '受控视觉响应：请人工复核，不能认定实际绘画质量。'}}]})
@@ -583,7 +597,7 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
     await site.start()
     port = site._server.sockets[0].getsockname()[1]
     endpoints = yaml.safe_load((root / 'endpoints.yml').read_text())
-    endpoints['llms']['default'].update(key='MAIN_TEST', apibase='https://main.example/v1', model='main-test')
+    endpoints['llms']['default'].update(key='MAIN_TEST', apibase=f'http://127.0.0.1:{port}/v1', model='main-test')
     endpoints['picture_book']['image'].update(key='IMAGE_TEST', apibase=f'http://127.0.0.1:{port}/v1', model='illustrator-test')
     endpoints['picture_book']['vision'].update(key='VISION_TEST', apibase=f'http://127.0.0.1:{port}/v1', model='vision-test')
     (root / 'endpoints.yml').write_text(yaml.safe_dump(endpoints))
@@ -604,10 +618,9 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
         from cota.policy import train_policy
         await train_policy(root, yaml.safe_load((root / 'agent.yml').read_text())['policy'])
         agent = Agent.load_from_path(str(root))
-        model = AsyncMock(side_effect=sequence)
-        monkeypatch.setattr(agent.llm_instance('default'), 'generate_chat', model)
         await agent.create_processor().handle_message(Message(text='制作并发布一个审阅稿', session_id='production', sender_id='reader', receiver='bot'))
         assert observed == ['generate', 'edit', 'vision']
+        assert len(main_requests) == 9 and not sequence
         assert (project / 'book.pdf').read_bytes().startswith(b'%PDF-')
         events = await agent.store.events('production')
         results = [e for e in events if e['type'] == 'tool_result']

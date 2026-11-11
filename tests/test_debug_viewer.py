@@ -275,8 +275,12 @@ async def test_model_diagnostics_resolve_carriers_without_changing_events(store,
         'tool_call_id': 'c1', 'tool': 'read', 'arguments': {},
         'llm': {'request_id': 'tools', 'request_sequence': 2, 'model': 'default', 'stop_reason': 'toolUse',
                 'message': {'content': [
+                    {'type': 'text', 'text': 'Checking both resources.'},
                     {'type': 'toolCall', 'id': 'c1', 'name': 'read', 'arguments': {}},
                     {'type': 'toolCall', 'id': 'c2', 'name': 'read', 'arguments': {}}], 'stop_reason': 'toolUse'}},
+    }, run_id='r'))
+    commentary = append(Event('bot_utter', {
+        'text': 'Checking both resources.', 'llm_event_id': tool_owner.event_id,
     }, run_id='r'))
     tool = append(Event('tool_started', {
         'tool_call_id': 'c2', 'tool': 'read', 'arguments': {}, 'llm_event_id': tool_owner.event_id,
@@ -303,7 +307,7 @@ async def test_model_diagnostics_resolve_carriers_without_changing_events(store,
     before = await store.export_session(dst.session_id)
     viewer = DebugServer(Inspector(SimpleNamespace(name='test', store=store, workspace_path='/tmp'), dst.session_id, lambda: dst))
     route = '/' + viewer.token + '/api/model-debug'
-    for event, request_id in ((owner, 'q'), (tool_owner, 'tools'), (tool, 'tools'), (output, 'tools')):
+    for event, request_id in ((owner, 'q'), (tool_owner, 'tools'), (commentary, 'tools'), (tool, 'tools'), (output, 'tools')):
         response = await request_debug(viewer, route + f'?event_sequence={event.sequence}')
         assert response.status == 200
         assert json.loads(response.text) == records[request_id]

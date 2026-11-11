@@ -89,3 +89,49 @@ async def test_invalid_frame_reports_protocol_error_without_echoing_content(work
     with pytest.raises(PiBridgeError, match='Invalid JSON') as error:
         await PiBridge().run({}, None)
     assert 'PRIVATE_FRAME_CONTENT' not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_whole_turn_timeout_has_a_descriptive_error_and_stops_worker(worker):
+    worker("import time\ntime.sleep(10)\n")
+    with pytest.raises(TimeoutError, match='Pi run.*total.*timeout'):
+        await asyncio.wait_for(PiBridge(timeout=.1).run({}, None), 4)
+
+
+@pytest.mark.asyncio
+async def test_stream_notifications_do_not_block_durable_request_processing(worker):
+    worker('''print(json.dumps({'type':'notification','method':'stream','payload':{'phase':'delta','text':'hello'}}),flush=True)
+print(json.dumps({'type':'request','id':1,'method':'checkpoint','payload':{}}),flush=True)
+ack=json.loads(sys.stdin.readline())
+assert ack['id']==1
+print(json.dumps({'type':'done','result':{'status':'completed'}}),flush=True)
+''')
+    checkpoint = asyncio.Event()
+    seen = []
+    async def handler(method, payload):
+        if method == 'stream':
+            await asyncio.wait_for(checkpoint.wait(), 1)
+            seen.append(payload['text'])
+        else:
+            checkpoint.set()
+            return {}
+    assert await PiBridge(timeout=3).run({}, handler) == {'status': 'completed'}
+    assert seen == ['hello']
+
+
+@pytest.mark.asyncio
+async def test_notification_callback_failure_does_not_retry_or_fail_model(worker):
+    worker('''print(json.dumps({'type':'notification','method':'stream','payload':{'phase':'delta','text':'hello'}}),flush=True)
+print(json.dumps({'type':'done','result':{'status':'completed'}}),flush=True)
+''')
+    async def handler(method, payload):
+        raise ConnectionError('viewer disconnected')
+    assert await PiBridge(timeout=3).run({}, handler) == {'status': 'completed'}
+
+
+@pytest.mark.asyncio
+async def test_unknown_notification_is_rejected_without_echoing_private_payload(worker):
+    worker("print(json.dumps({'type':'notification','method':'PRIVATE','payload':{}}),flush=True)\n")
+    with pytest.raises(PiBridgeError, match='notification') as error:
+        await PiBridge(timeout=3).run({}, None)
+    assert 'PRIVATE' not in str(error.value)

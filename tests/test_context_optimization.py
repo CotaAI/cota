@@ -8,6 +8,64 @@ from cota.llm.openai import OpenAIClient
 from cota.policy import PolicyCatalog
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize('backend', ['memory', 'sqlite'])
+@pytest.mark.parametrize('pressure', ['count', 'bytes'])
+async def test_image_only_budget_compacts_without_losing_evidence_or_replay(mock_agent, tmp_path, backend, pressure):
+    import base64
+    import io
+    Image = pytest.importorskip('PIL.Image')
+    from cota.dst import DST
+    from cota.events import UserUtterEvent
+    from cota.executor.tools import FunctionTool
+    from cota.runtime.pi_runtime import PiAgentRuntime
+    from cota.store import MemoryStore, SQLStore
+    from tests.test_pi_runtime import call
+
+    output = io.BytesIO()
+    Image.new('RGB', (64, 64), 'red').save(output, format='PNG')
+    image_bytes = output.getvalue()
+    encoded = base64.b64encode(image_bytes).decode()
+    mock_agent._llm_mock.context_window = 1000000
+    mock_agent.dialogue['compaction'] = ({'max_images': 2} if pressure == 'count'
+                                        else {'max_image_bytes': 2 * len(image_bytes)})
+    mock_agent.get_tool_registry().register(FunctionTool('picture', 'Read an image',
+        {'type': 'object', 'properties': {}},
+        lambda: {'content': [{'type': 'image', 'mimeType': 'image/png', 'data': encoded}]}))
+    decisions = iter([{'tool_calls': [call('picture', {}, f'image{i}')]} for i in range(3)]
+                     + [{'content': 'Saved the images for review.'}])
+    requests, summaries = [], []
+
+    async def model(**kwargs):
+        if 'context summarization assistant' in kwargs['messages'][0]['content']:
+            summaries.append(kwargs)
+            assert encoded not in str(kwargs)
+            return {'content': 'Create a picture book. Earlier images were read; their visual quality has not been confirmed.'}
+        requests.append(kwargs)
+        return next(decisions)
+
+    mock_agent._llm_mock.generate_chat.side_effect = model
+    store = MemoryStore() if backend == 'memory' else SQLStore(db=str(tmp_path / 'images.db'))
+    dst = DST('images', mock_agent)
+    dst.append_event(UserUtterEvent('Create a picture book.'))
+    try:
+        await PiAgentRuntime(mock_agent, dst, dst.session_id, checkpoint=store.save, store=store).run()
+        assert dst.execution['status'] == 'completed'
+        assert len(requests) == 4 and len(summaries) == 1
+        images = [b for m in requests[-1]['messages'] if isinstance(m.get('content'), list)
+                  for b in m['content'] if b['type'] == 'image_url']
+        assert 0 < len(images) <= 2
+        results = [e for e in dst.events if e.type == 'tool_result']
+        assert len(results) == 3
+        assert all(e.payload['content'][0]['data'] == encoded for e in results)
+        restored = await store.load(dst.session_id, mock_agent)
+        replay = DST.from_events(dst.session_id, dst.events, agent=mock_agent, run_metadata=dst.run_metadata)
+        assert restored.state_dict() == replay.state_dict() == dst.state_dict()
+    finally:
+        if backend == 'sqlite':
+            store.engine.dispose()
+
+
 def test_request_size_ignores_image_encoding_and_provider_usage_is_not_an_estimate():
     from cota.llm.metrics import request_metrics
     value = request_metrics({'messages': [

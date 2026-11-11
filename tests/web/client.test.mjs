@@ -203,3 +203,74 @@ test('closed clients ignore late frames and cannot recreate cleared cache', asyn
   assert.equal(stored.has(client.storageKey),false);
   assert.equal(client.state.messages.length,0);
 });
+
+test('stream previews are memory only, session scoped, final wins over late frames', async()=>{
+  const {client,sockets,stored}=harness();await client.ready;
+  const ws=sockets[0];ws.onopen();ws.frame({type:'ready',cursor:4});
+  const stream=(phase,text)=>({type:'stream',session_id:'s',run_id:'run',request_id:'req',phase,...(text===undefined?{}:{text})});
+  const seen=[];client.on('stream', value=>seen.push(value));
+  const before=stored.get(client.storageKey);
+  ws.frame(stream('start'));ws.frame(stream('delta','hello'));
+  assert.equal(client.streams.get('req').text,'hello');
+  assert.equal(client.state.cursor,4);assert.equal(stored.get(client.storageKey),before);
+  ws.frame({...stream('delta','wrong'),session_id:'other'});
+  assert.equal(client.streams.get('req').text,'hello');
+  ws.frame(stream('end'));assert.equal(client.streams.get('req').text,'hello');
+  ws.frame({type:'message',session_id:'s',event_id:'e',sequence:5,role:'bot',text:'hello!',request_id:'req'});
+  assert.equal(client.streams.size,0);
+  const count=seen.length;
+  ws.frame(stream('delta','late'));ws.frame(stream('end'));ws.frame(stream('start'));
+  assert.equal(client.streams.size,0);assert.equal(seen.length,count);
+  assert.ok(!stored.get(client.storageKey).includes('"streams"'));
+  client.close();
+});
+
+test('disconnect clears previews and delayed frames cannot resurrect them', async()=>{
+  const {client,sockets}=harness();await client.ready;
+  const ws=sockets[0];ws.onopen();ws.frame({type:'ready',cursor:0});
+  const frame={type:'stream',session_id:'s',run_id:'run',request_id:'req'};
+  ws.frame({...frame,phase:'start'});ws.frame({...frame,phase:'delta',text:'partial'});
+  assert.equal(client.streams.size,1);
+  ws.close();assert.equal(client.streams.size,0);
+  ws.frame({...frame,phase:'delta',text:'late'});assert.equal(client.streams.size,0);
+  client.close();
+});
+
+test('preview memory is bounded and an overflow waits for the durable final', async()=>{
+  const {client,sockets}=harness();await client.ready;
+  const ws=sockets[0];ws.onopen();ws.frame({type:'ready',cursor:0});
+  const frame={type:'stream',session_id:'s',run_id:'run',request_id:'req'};
+  ws.frame({...frame,phase:'start'});
+  for(let i=0;i<3;i++) ws.frame({...frame,phase:'delta',text:'x'.repeat(65536)});
+  assert.equal(client.streams.size,0);
+  ws.frame({...frame,phase:'start'});assert.equal(client.streams.size,0);
+  for(let i=0;i<100;i++) ws.frame({...frame,request_id:'req'+i,phase:'start'});
+  assert.equal(client.streams.size,32);
+  client.close();
+});
+
+test('error after stream end clears an uncommitted preview', async()=>{
+  const {client,sockets}=harness();await client.ready;
+  const ws=sockets[0];ws.onopen();ws.frame({type:'ready',cursor:0});
+  const frame={type:'stream',session_id:'s',run_id:'run',request_id:'req'};
+  ws.frame({...frame,phase:'start'});ws.frame({...frame,phase:'end'});ws.frame({...frame,phase:'error'});
+  assert.equal(client.streams.size,0);
+  client.close();
+});
+
+test('tool-only request closes its empty preview before the next text request commits', async()=>{
+  const {client,sockets}=harness();await client.ready;
+  const ws=sockets[0];ws.onopen();ws.frame({type:'ready',cursor:0});
+  const frame={type:'stream',session_id:'s',run_id:'run',request_id:'tool-only'};
+  const seen=[];client.on('stream', data=>seen.push({phase:data.phase,size:client.streams.size}));
+  ws.frame({...frame,phase:'start'});ws.frame({...frame,phase:'end'});
+  assert.equal(client.streams.size,0);
+  assert.equal(seen.at(-1).phase,'end');assert.equal(seen.at(-1).size,0);
+  ws.frame({...frame,phase:'delta',text:'late'});assert.equal(client.streams.size,0);
+  const answer={...frame,request_id:'answer'};
+  ws.frame({...answer,phase:'start'});ws.frame({...answer,phase:'delta',text:'done'});ws.frame({...answer,phase:'end'});
+  assert.equal(client.streams.size,1);
+  ws.frame({type:'message',session_id:'s',event_id:'e',sequence:1,role:'bot',request_id:'answer',text:'done'});
+  assert.equal(client.streams.size,0);assert.equal(client.state.messages.length,1);
+  client.close();
+});

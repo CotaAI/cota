@@ -1,9 +1,11 @@
 """Main LLM class for high-level language model operations."""
 
+import asyncio
 from typing import List, Dict, Text, Optional, Any
 
 from .factory import LLMClientFactory
 from .observation import observe_model_call
+from .limits import request_limits
 
 
 class LLM:
@@ -19,6 +21,7 @@ class LLM:
         Args:
             config: Configuration dictionary containing client type and parameters
         """
+        self.timeout_seconds, self.max_retries = request_limits(config)
         self.supports_images = config.get('vision', False)
         if type(self.supports_images) is not bool:
             raise ValueError('endpoints.yml llms.<name>.vision must be boolean')
@@ -27,6 +30,20 @@ class LLM:
             raise ValueError('endpoints.yml llms.<name>.context_window must be an integer greater than 1')
         self.client = LLMClientFactory.create_client(config)
         self.name = config.get('model')
+
+    def pi_provider(self):
+        """Resolve an ordinary endpoint for Pi; never serialize it into traces.
+
+        Python-specific custom/RAG adapters deliberately retain their own model
+        transport. They are not silently treated as compatible streaming APIs.
+        """
+        from .openai import OpenAIClient
+        if type(self.client) is not OpenAIClient:
+            return None
+        return {'apiKey': self.client.client.api_key, 'baseUrl': str(self.client.client.base_url),
+                'model': self.client.model, 'thinking': self.client.thinking,
+                'vision': self.supports_images, 'timeoutSeconds': self.timeout_seconds,
+                'maxRetries': self.max_retries}
 
     async def generate_chat(
         self, 
@@ -58,7 +75,19 @@ class LLM:
         }
         if temperature is not None:
             request['temperature'] = temperature
-        return await observe_model_call(self.client.generate_chat, request, llm=self.name)
+        return await observe_model_call(self._generate_chat, request, llm=self.name)
+
+    async def _generate_chat(self, **request):
+        # HTTP read timeouts measure inactivity, not total time. A provider may
+        # keep a queued request alive indefinitely with whitespace or heartbeats.
+        deadline = asyncio.timeout(self.timeout_seconds)
+        try:
+            async with deadline:
+                return await self.client.generate_chat(**request)
+        except TimeoutError:
+            if deadline.expired():
+                raise TimeoutError(f'Model request exceeded total timeout of {self.timeout_seconds:g} seconds') from None
+            raise
 
     async def close(self):
         await self.client.close()

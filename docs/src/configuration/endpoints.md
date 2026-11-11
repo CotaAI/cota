@@ -61,13 +61,32 @@ base_store:
 
 | `type` | 支持字段 |
 | --- | --- |
-| `openai`（默认） | `key`、`apibase`、`model`、可选 `thinking` |
+| `openai`（默认） | `key`、`apibase`、`model`、可选 `thinking`、`timeout_seconds`、`max_retries` |
 | `openai-rag` | 上述字段，加必填 `knowledge_id` 和可选 `rag_prompt` |
-| `custom` | `key`、完整 HTTP URL `apibase`、`model`，其余配置传入 JSON 请求体 |
+| `custom` | `key`、完整 HTTP URL `apibase`、`model`；支持本地 `timeout_seconds`，其余业务配置传入 JSON 请求体 |
 
 OpenAI 类型的 `apibase` 为 API base URL；custom 类型直接 POST 到该 URL。custom 服务应返回 `content` 和可选的 OpenAI 风格 `tool_calls`。`openai-rag` 依赖服务商支持 retrieval 扩展。不是所有看起来兼容 OpenAI 的服务都支持工具调用或该扩展。
 
-`max_tokens` 等每轮对话设置放在 `agent.yml` 的 `dialogue` 中；它们不是 openai factory 自动透传的额外字段。LLM 使用完成后由 Agent cleanup 关闭。
+`max_tokens` 等每轮对话设置放在 `agent.yml` 的 `dialogue` 中；它们不是 openai factory 自动透传的额外字段。主对话和压缩摘要使用普通 openai 端点时，由 Node 中的 Pi 官方 provider 发起流式请求；Policy、评测等 Python 辅助调用仍使用 Python 模型接口。Python 专用 custom/openai-rag 保留现有传输。LLM 使用完成后由 Agent cleanup 关闭。
+
+### 请求时限与重试
+
+`llms.<name>.timeout_seconds` 默认 **180 秒**，为单次逻辑模型调用的总时限，包含请求准备、网络等待、完整响应读取，以及 SDK 的重试和退避。持续返回空行保活也不能延长总时限。它与 `agent.yml` 的整轮 `dialogue.run_timeout_seconds` 独立，先达到的限制生效；超时明确失败，不自动重跑工具或整个任务。
+
+OpenAI / openai-rag 的 `max_retries` 默认 **0**，不沿用 SDK 隐式重试；可显式配置 0–5 次，由官方 SDK 决定可重试的连接错误和 HTTP 状态。重试仍受同一个总时限约束，可能产生额外模型调用成本。custom 不提供自动重试，只接受 `max_retries: 0`。这些本地控制字段与 `vision`、`context_window` 均不发送到 custom 请求体。
+
+```yaml
+llms:
+  default:
+    type: openai
+    key: replace-with-provider-key
+    apibase: https://api.example.com/v1
+    model: replace-with-tool-capable-model
+    timeout_seconds: 180
+    max_retries: 0
+```
+
+普通日志记录请求标识、HTTP 尝试、状态和完整响应返回时间；Debug 的 Model Requests 另保存 `transport` 详情。Pi 原生流式请求记录 `first_text_ms`，表示第一个公开文字片段到达，未输出文字时为 null。响应头到达不能当作首 token；完整结果返回时间也不是纯模型推理时间。Python 辅助或专用适配器的非流式调用不伪造首 token 指标。详见 [Debug](../deployment/debug.md)。
 
 `llms.<name>.context_window` 可填写供应商确认的上下文 token 容量（大于1的整数，并须大于 `dialogue.max_tokens`）。该字段只供 Pi 预算与压缩使用，不发送给供应商；未填写时先查 Pi 内置模型目录，未知型号使用标记为 fallback 的65,536 token保守运行预算，不代表供应商实际容量。供应商返回的 usage 在普通模式也用于后续预算，不依赖 Debug。`dialogue.compaction` 可调整预留和最近保留预算，详见 [agent.yml](agent.md)。
 

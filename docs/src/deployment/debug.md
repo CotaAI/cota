@@ -29,7 +29,6 @@ Debug 页面启动失败时记录警告，Bot 服务继续运行；已开启的�
 | Skills & Tools | 本轮初始 Skill 与工具清单、来源、可用状态、缺失原因和执行环境，可切换历史运行；目录不是 Skill 已执行的证明 |
 | Model Requests | 最近请求的状态、purpose、完整 request/response，包括没有产生 Bot/工具事件的失败请求 |
 | DST | Store 恢复的状态、当前内存状态、物理快照；按需读取，不写回 |
-| Deliveries | 当前会话对应回复的投递状态、尝试次数、错误类型与下次重试时间；按事件位置分页，不触发重试 |
 
 Events 的序号属于完整事实流。聊天历史只展示 user_utter/bot_utter，因而可跳号。
 快照是某个事件位置的恢复缓存，不是把另一个窗口的“最新 DST”强制同步到数据库。
@@ -47,13 +46,16 @@ Events 的序号属于完整事实流。聊天历史只展示 user_utter/bot_utt
 | --- | --- |
 | debug.request | 最终请求 prompt、工具声明及参数 |
 | debug.response | Cota 适配后的模型响应 |
-| debug.provider_response | 供应商原始响应，若适配器提供 |
+| debug.provider_response | Pi 原生调用为组装完成的 Pi 消息；Python 适配器为供应商响应，若提供 |
 | debug.preparation | Policy 的选择、thought、预算省略和准备诊断 |
 | debug.request_size | 按 system/user/assistant/tool 分类的实际字符数、system 内 Policy/Skill 目录大小、工具定义字符数、图片数量和内联字节数 |
-| debug.preparation.context_budget | Pi token 估算、实际 usage 推导预算、模型容量及来源、预留 token；serialized_bytes / max_request_bytes 展示工作上下文的序列化体积与预算，包含图片 Base64，独立于 token 估算；估算不等同供应商计费 |
+| debug.transport | OpenAI 适配器的总时限、最大重试次数和各 HTTP 尝试：number、started_ms、headers_ms、status_code、status；完整响应返回时记录 response_ready_ms；Pi 原生流另记录首个公开文字的 first_text_ms |
+| debug.preparation.context_budget | Pi token 估算、实际 usage 推导预算、模型容量及来源、预留 token；serialized_bytes / max_request_bytes 展示序列化预算，images / max_images 和 image_bytes / max_image_bytes 展示图片预算；估算不等同供应商计费 |
 | debug.usage | 供应商报告的输入、缓存命中、输出和推理 token 数；未提供时不伪造 |
 
 Model Requests 列表显示运行中请求的等待时长，详情显示本次耗时、实际用量和上下文构成，选中该页时自动刷新。等待模型期间没有新的执行事件是正常情况，不额外添加心跳 Event。查看较早的请求时仍可手动刷新或返回列表。
+
+`transport` 时间均从该次 Cota 模型调用开始计时。响应头可能先于空行保活到达，`headers_ms` 不是首 token 延迟；`response_ready_ms` 是适配器收到完整模型响应的时间。Pi 原生流式请求的 `first_text_ms` 是首个公开文字增量的时间，并不包含此前可能已产生的推理 token；Python 非流式请求不伪造该指标。这些时间不能单独区分供应商排队与上传/网络耗时。模型请求诊断日志记录标识、尝试和状态，不通过异常堆栈复制供应商错误响应体；需要详情时查看 Debug 记录。外围应用自行记录异常时也应遵循自己的敏感信息处理规则。
 
 模型最终回复与同批次工具调用沿 llm_event_id 找到来源请求。没有诊断就不显示 debug。
 这是**只读聚合**：底层诊断独立保存于 SQL `model_debug` 表或 MemoryStore 映射，没有把大请求复制进每条 Event，也不参与 DST 恢复。
@@ -77,3 +79,5 @@ Model Requests 列表显示运行中请求的等待时长，详情显示本次�
 请求中可能包含用户内容和业务资料；该页面是开发调试入口，不是可分享给终端用户的 Bot 链接。
 
 状态及事件契约见 [DST](../concepts/dst.md)，排查步骤见 [故障排除](troubleshooting.md)。
+
+Web 与 Shell 的流式片段是临时展示，不会在 Events 中逐条出现。完整公开文字仍保存为 bot_utter；同一响应包含工具调用时，公开发言关联首个 tool_started，模型上下文只投影一次。包含 Pi 续接签名的响应可在来源事件中保留 llm.continuation，用于恢复协议，不会出现在公共聊天历史里。
