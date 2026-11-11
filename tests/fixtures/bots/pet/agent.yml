@@ -1,4 +1,5 @@
-deploy: service
+environment:
+  type: none
 
 system:
   name: Pet Care Bot

@@ -204,7 +204,7 @@ class FakeJudge:
 def configured_bot(tmp_path):
     bot = tmp_path / 'bot'
     save_cases(bot)
-    (bot / 'agent.yml').write_text('deploy: service\n')
+    (bot / 'agent.yml').write_text('{}\n')
     (bot / 'endpoints.yml').write_text(yaml.safe_dump({'llms': {'default': {
         'key': 'PRIVATE_KEY', 'apibase': 'https://example.test/v1', 'model': 'test'}},
         'base_store': {'type': 'sql', 'dialect': 'mysql', 'password': 'DB_SECRET'}}))

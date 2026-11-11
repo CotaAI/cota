@@ -93,22 +93,11 @@ class Tool(ABC):
         """Whether this tool is enabled by default."""
         return True
 
-    _service_mode: bool = False
-
-    def bind_service_mode(self, enabled: bool) -> None:
-        """Enable or disable service mode for this tool.
-
-        In service mode, tools must reject operations that could expose
-        server-local resources (file paths, shell commands, etc.).
-        """
-        self._service_mode = enabled
-
-    def for_execution(self, user_id: Optional[str], service_mode: bool = False) -> "Tool":
+    def for_execution(self, user_id: Optional[str]) -> "Tool":
         """Bind a private tool view; clients and resource ownership stay shared."""
         bound = copy(self)
         if hasattr(bound, "bind_user"):
             bound.bind_user(user_id)
-        bound.bind_service_mode(service_mode)
         return bound
 
     @property

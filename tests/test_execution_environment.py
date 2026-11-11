@@ -245,7 +245,7 @@ def test_native_names_cannot_be_reconfigured_as_extension_tools(name):
 @pytest.mark.asyncio
 async def test_agent_load_resolves_machine_workspace_without_changing_internal_workspace(tmp_path):
     from cota.agent import Agent
-    (tmp_path / 'agent.yml').write_text('deploy: personal\nenvironment:\n  type: machine\n  workspace: files\n')
+    (tmp_path / 'agent.yml').write_text('environment:\n  type: machine\n  workspace: files\n')
     (tmp_path / 'endpoints.yml').write_text('{}')
     agent = Agent.load_from_path(str(tmp_path))
     try:

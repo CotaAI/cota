@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 NATIVE_TOOLS = frozenset({'read', 'write', 'edit', 'bash', 'grep', 'find', 'ls', 'powershell'})
-DEFAULT_DEPLOY = 'service'
+DEFAULT_DEPLOY = 'personal'
 
 
 def validate_deploy(deploy):
@@ -26,9 +26,6 @@ class ExecutionEnvironment:
 
     def validate_deployment(self, deploy):
         validate_deploy(deploy)
-        if deploy == 'service' and self.type != 'none':
-            raise ValueError('deploy: service cannot use the unrestricted machine environment; '
-                             'isolated and client execution backends are not implemented')
 
     @classmethod
     def for_deployment(cls, deploy, config, *, base_path):
@@ -36,12 +33,10 @@ class ExecutionEnvironment:
         validate_deploy(deploy)
         if not isinstance(config, dict):
             raise ValueError('environment must be an object')
-        if deploy == 'personal':
-            config = {'type': 'machine', **config}
-            if config['type'] == 'machine':
-                config = {'workspace': 'files', **config}
+        config = {'type': 'machine', **config}
+        if config['type'] == 'machine':
+            config = {'workspace': 'files', **config}
         environment = cls.from_config(config, base_path=base_path)
-        environment.validate_deployment(deploy)
         return environment
 
     def __post_init__(self):

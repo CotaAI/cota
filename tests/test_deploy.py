@@ -1,4 +1,4 @@
-"""Deployment purpose is distinct from machine location and channel transport."""
+"""Deploy defaults to personal; all bots get machine access unless overridden."""
 import pytest
 
 from cota.agent import Agent
@@ -23,33 +23,32 @@ def test_invalid_deploy_modes(deploy):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('deploy,kind', [('personal', 'machine'), ('service', 'none')])
-async def test_load_deploy_resolves_default_environment_at_bot(tmp_path, deploy, kind):
-    (tmp_path / 'agent.yml').write_text(f'deploy: {deploy}\n')
+async def test_load_deploy_resolves_default_environment_at_bot(tmp_path):
+    (tmp_path / 'agent.yml').write_text('{}\n')
     (tmp_path / 'endpoints.yml').write_text('{}')
     agent = Agent.load_from_path(str(tmp_path))
     try:
-        assert agent.deploy == deploy
-        assert agent.environment.type == kind
-        assert agent.environment.workspace == (str(tmp_path / 'files') if kind == 'machine' else None)
+        assert agent.deploy == 'personal'
+        assert agent.environment.type == 'machine'
+        assert agent.environment.workspace == str(tmp_path / 'files')
         assert not (tmp_path / 'files').exists()
     finally:
         await agent.cleanup()
 
 
-def test_omitted_deploy_does_not_grant_machine_access():
+def test_omitted_deploy_defaults_to_personal_with_machine():
     agent = Agent()
-    assert agent.deploy == 'service'
+    assert agent.deploy == 'personal'
+    assert agent.environment.type == 'machine'
+
+
+def test_explicit_none_environment_disables_machine_tools():
+    agent = Agent(environment=ExecutionEnvironment())
     assert agent.environment.type == 'none'
+    validate_bot_config({'environment': {'type': 'none'}})
 
 
-def test_personal_can_disable_machine_tools():
-    agent = Agent(deploy='personal', environment=ExecutionEnvironment())
-    assert agent.environment.type == 'none'
-    validate_bot_config({'deploy': 'personal', 'environment': {'type': 'none'}})
-
-
-def test_personal_environment_options_keep_deployment_defaults(tmp_path):
+def test_environment_options_keep_defaults(tmp_path):
     options = {'workspace': 'documents', 'shell': 'bash'}
     environment = ExecutionEnvironment.for_deployment('personal', options, base_path=tmp_path)
     assert environment.type == 'machine'
@@ -60,33 +59,25 @@ def test_personal_environment_options_keep_deployment_defaults(tmp_path):
 
 def test_old_host_backend_is_not_an_alias():
     with pytest.raises(ValueError, match='environment'):
-        validate_bot_config({'deploy': 'personal', 'environment': {'type': 'host', 'workspace': '/tmp'}})
+        validate_bot_config({'environment': {'type': 'host', 'workspace': '/tmp'}})
 
 
-def test_service_cannot_bind_unrestricted_machine(tmp_path):
-    with pytest.raises(ValueError, match='service'):
-        validate_bot_config({'deploy': 'service', 'environment': {'type': 'machine', 'workspace': str(tmp_path)}})
-    environment = ExecutionEnvironment('machine', str(tmp_path))
-    with pytest.raises(ValueError, match='service'):
-        Agent(deploy='service', environment=environment)
-
-
-def test_mutated_service_agent_is_rejected_before_runtime(mock_agent, tmp_path):
-    mock_agent.deploy = 'service'
-    mock_agent.environment = ExecutionEnvironment('machine', str(tmp_path))
-    with pytest.raises(ValueError, match='service'):
-        PiAgentRuntime(mock_agent, DST('s', mock_agent), 's')
+def test_service_deploy_also_gets_machine_defaults(tmp_path):
+    """After removing deploy restrictions, service bots also default to machine."""
+    environment = ExecutionEnvironment.for_deployment('service', {}, base_path=tmp_path)
+    assert environment.type == 'machine'
+    assert environment.workspace == str(tmp_path / 'files')
 
 
 @pytest.mark.asyncio
-async def test_deploy_revocation_blocks_native_side_effect_and_restores_provenance(mock_agent, tmp_path):
+async def test_environment_revocation_blocks_native_side_effect(mock_agent, tmp_path):
     mock_agent.deploy = 'personal'
     mock_agent.environment = ExecutionEnvironment('machine', str(tmp_path))
     mock_agent.skill_paths = []
     target = tmp_path / 'private.txt'
 
     async def model(**kwargs):
-        mock_agent.deploy = 'service'
+        mock_agent.environment = ExecutionEnvironment()
         if mock_agent._llm_mock.generate_chat.call_count == 1:
             return {'tool_calls': [call('write', {'path': str(target), 'content': 'forbidden'}, 'w')]}
         return {'content': 'blocked'}
@@ -106,10 +97,10 @@ async def test_deploy_revocation_blocks_native_side_effect_and_restores_provenan
     assert restored.context_messages == dst.context_messages
 
 
-def test_metadata_rejects_service_machine_binding(tmp_path):
+def test_metadata_accepts_any_deploy_environment_combination(tmp_path):
+    """Historical metadata with any deploy+environment combo is valid."""
     from cota.events import Event
     from cota.run_metadata import validate_run_metadata
     metadata = {'r': {'available_skills': [], 'deploy': 'service',
                       'environment': {'type': 'machine', 'workspace': str(tmp_path), 'timeout_seconds': 60}}}
-    with pytest.raises(ValueError, match='service'):
-        validate_run_metadata(metadata, [Event('run_started', {}, run_id='r')])
+    validate_run_metadata(metadata, [Event('run_started', {}, run_id='r')])

@@ -69,7 +69,6 @@ class PiAgentRuntime:
         self._deploy = getattr(agent, 'deploy', DEFAULT_DEPLOY)
         if not isinstance(self._environment, ExecutionEnvironment):
             raise TypeError('Agent environment must be an ExecutionEnvironment')
-        self._environment.validate_deployment(self._deploy)
         self._native_tools = set()
         self.group_trigger = None
         self._store = store
@@ -80,7 +79,7 @@ class PiAgentRuntime:
         registry.validate()
         self._tool_registry = copy(registry)
         self._tool_registry._tools = {
-            tool.name: tool.for_execution(dst.user_id, service_mode)
+            tool.name: tool.for_execution(dst.user_id)
             for tool in registry.list_tools()
         }
         self._publication_cursor = len(dst.events)

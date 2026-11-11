@@ -42,7 +42,7 @@ async def test_discovery_is_metadata_and_does_not_change_state(store, mock_agent
     assert runtime._available_skills == ['weather']
     metadata = (await store.run_metadata('s', 'r'))
     assert metadata['available_skills'] == ['weather']
-    assert metadata['deploy'] == 'service'
+    assert metadata['deploy'] == 'personal'
     if debug:
         assert {k: v for k, v in metadata['discovery'].items() if k != 'tools'} == payload
         tools = {item['name']: item for item in metadata['discovery']['tools']}
