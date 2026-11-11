@@ -5,8 +5,7 @@ artifact before the worker proceeds. Policy guidance is separate from user text;
 Environment authorization and backend operations enforce native tool access.
 """
 import asyncio
-from copy import copy, deepcopy
-import base64
+from copy import copy
 import json
 import logging
 import shutil
@@ -21,14 +20,13 @@ from cota.executor.environment import DEFAULT_DEPLOY, ExecutionEnvironment, NATI
 from cota.constant import DEFAULT_AGENT_LOOP_PROMPT, DEFAULT_DIALOGUE_MAX_TOKENS
 from .pi_bridge import PiBridge, PiModelError
 from .pi_context import to_openai
+from .pi_images import ContextImages
 from .pi_trace import PiTraceRecorder
 from .pi_models import PiModelObserver, public_message
 from cota.policy import PolicyContext, PolicyServices
 from cota.llm.observation import model_trace, model_purpose, observe_model_call
 
 logger = logging.getLogger(__name__)
-_IMAGE_ATTACHMENT_MIMES = ('image/png', 'image/jpeg', 'image/webp', 'image/gif')
-_IMAGE_ATTACHMENT_MAX_BYTES = 2 * 1024 * 1024
 
 
 def validate_runtime_selection(dialogue):
@@ -94,6 +92,8 @@ class PiAgentRuntime:
         self._models = PiModelObserver(self._trace, self._checkpoint)
         self._system_prompt = ''
         self._available_skills = []
+        self._images = ContextImages(dst, files=getattr(agent, 'files', None),
+                                     local_files=self._environment.type == 'machine')
         self._checkpoint_callback = checkpoint
         self._checkpoint_failed = False
         self._bridge = PiBridge(
@@ -218,8 +218,12 @@ class PiAgentRuntime:
             except Exception:
                 logger.exception('Committed reply publication failed: %s', event.event_id)
 
+    def _working_context(self, messages=None):
+        self._images.supports_images = getattr(self.agent.llm_instance(self.llm), 'supports_images', False) is True
+        return self._images.project(self.dst.context_messages if messages is None else messages)
+
     async def _initial_context(self):
-        return self.dst.context_messages
+        return self._working_context()
 
     async def _policy_guidance(self, messages):
         # Only successful reads whose results remain in the model context count.
@@ -250,7 +254,7 @@ class PiAgentRuntime:
 
     async def _prepare(self, payload):
         native = payload.get('native') is True
-        source = self.dst.context_messages if native else payload['messages']
+        source = self.dst.context_messages
         messages = [m for m in source if m['role'] != 'system' and not m.get('cotaDeferred')]
         base = self._system_prompt + payload.get('skillPrompt', '') + payload.get('toolPrompt', '')
 
@@ -289,32 +293,17 @@ class PiAgentRuntime:
             self._trace.preparation = {key: guidance[key] for key in
                 ('method', 'decisions', 'diagnostics', 'cache_hit', 'duration_ms', 'thoughts', 'omitted_policies')}
         await self._checkpoint()
+        resources = self._images.catalog()
         if native:
-            return {'systemPrompt': messages[0]['content'], 'tools': tools,
-                    'attachments': await self._attachment_references(messages[1:])}
-        return {'messages': messages, 'tools': tools,
-                'attachments': await self._attachment_references(messages[1:])}
-
-    async def _attachment_references(self, messages):
-        """Authorize current input; older attachment metadata needs no file I/O."""
-        result = []
-        current = next((message for message in reversed(messages)
-                        if message.get('role') == 'user' and not message.get('cotaCompaction')), None)
-        for message in [current] if current else []:
-            files = []
-            for item in message.get('cotaAttachments', []):
-                try:
-                    path = await asyncio.to_thread(self.agent.files.resolve, self.session_id, item['id'])
-                    files.append({'id': item['id'], 'path': str(path), 'name': item['name'],
-                                  'mimeType': item['mime_type'], 'size': item['size'],
-                                  **({'local_copy': str(path)} if self._environment.type == 'machine' else {})})
-                except (OSError, AttributeError):
-                    files.append({'id': item['id'], 'note': 'Attachment unavailable'})
-            if files:
-                result.append({'message_id': message['cotaEventId'], 'files': files})
-        return result
+            return {'systemPrompt': messages[0]['content'], 'tools': tools, 'imageResources': resources}
+        return {'messages': self._working_context(messages), 'tools': tools, 'imageResources': resources}
 
     async def _handle_request(self, method, payload):
+        if method == 'image_resource':
+            try:
+                return await asyncio.to_thread(self._images.load, payload['id'])
+            except (OSError, ValueError):
+                return {'error': 'Image resource unavailable; contents not reviewed'}
         if method == 'stream':
             if self._stream_callback is not None:
                 try:
@@ -340,7 +329,7 @@ class PiAgentRuntime:
             if self._environment.type == 'machine':
                 self._native_tools = self._environment.validate_inventory(inventory)
             else:
-                self._native_tools = set(self._environment.tool_names(has_skills=bool(self._available_skills)))
+                self._native_tools = set(self._environment.tool_names(has_skills=bool(self._available_skills or self._images.catalog())))
             tools = self._tool_inventory(inventory)
             logger.info('Run %s tools available: %s; unavailable: %s', self.dst.execution['run_id'],
                         ', '.join(t['name'] for t in tools if t['available']) or 'none',
@@ -390,7 +379,7 @@ class PiAgentRuntime:
                 'summary': payload['summary'], 'replaced_message_ids': ids,
             })
             await self._checkpoint()
-            return {'messages': [m for m in self.dst.context_messages if not m.get('cotaDeferred')]}
+            return {'messages': self._working_context(), 'imageResources': self._images.catalog()}
         if method == 'send_files':
             self._trace.require_started(payload['toolCallId'], 'send_files', payload['args'])
             try:
@@ -410,8 +399,7 @@ class PiAgentRuntime:
             try:
                 if self._trace.debug_enabled:
                     self._trace.preparation['context_budget'] = payload.get('contextBudget', {})
-                messages = await self._attachment_context(payload['messages'])
-                response = await self._call_llm(to_openai(messages, payload['systemPrompt']), payload['tools'])
+                response = await self._call_llm(to_openai(payload['messages'], payload['systemPrompt']), payload['tools'])
             except Exception as error:
                 if self._checkpoint_failed:
                     raise
@@ -445,44 +433,6 @@ class PiAgentRuntime:
             await self._trace.link_model_debug(recorded)
             return acknowledgement
         raise ValueError(f'Unknown Pi request: {method}')
-
-    async def _attachment_context(self, messages):
-        """Hydrate current scoped files at the provider boundary, never in Event/DST.
-
-        PDFs remain references. Image-capable providers receive bounded image
-        inputs; personal tools can read the scoped local copy when appropriate.
-        """
-        result = deepcopy(messages)
-        vision = getattr(self.agent.llm_instance(self.llm), 'supports_images', False) is True
-        for message in result:
-            if (message.get('role') != 'user' or not message.get('cotaAttachments')
-                    or message.get('cotaAttachmentsHydrated')):
-                continue
-            blocks = [{'type': 'text', 'text': message['content']}] if isinstance(message['content'], str) else message['content']
-            for item in message['cotaAttachments']:
-                try:
-                    path = await asyncio.to_thread(self.agent.files.resolve, self.session_id, item['id'])
-                    if (vision and item['mime_type'] in _IMAGE_ATTACHMENT_MIMES
-                            and item['size'] <= _IMAGE_ATTACHMENT_MAX_BYTES):
-                        value = await asyncio.to_thread(path.read_bytes)
-                        blocks.append({'type': 'image', 'mimeType': item['mime_type'],
-                                       'data': base64.b64encode(value).decode()})
-                    else:
-                        if item['mime_type'].startswith('image/'):
-                            note = ('Image exceeds automatic model-input limit of 2 MiB; process it with appropriate image tools before interpretation.'
-                                    if item['size'] > _IMAGE_ATTACHMENT_MAX_BYTES else
-                                    'Selected model is not configured for image input; use an appropriate vision tool before interpretation.')
-                        else:
-                            note = 'File contents have not been parsed; use appropriate tools before claiming to understand this file.'
-                        info = {'attachment_id': item['id'], 'name': item['name'], 'note': note}
-                        if self._environment.type == 'machine':
-                            info['local_copy'] = str(path)
-                        blocks.append({'type': 'text', 'text': json.dumps(info, ensure_ascii=False)})
-                except (OSError, AttributeError):
-                    blocks.append({'type': 'text', 'text': f"Attachment unavailable: {item['id']}"})
-            message['content'] = (blocks if any(b.get('type') == 'image' for b in blocks)
-                                  else '\n'.join(b.get('text', '') for b in blocks))
-        return result
 
     @staticmethod
     def _pi_tool_result_value(name, result):
@@ -541,7 +491,8 @@ class PiAgentRuntime:
         if previous and latest_id == previous.get('input_event_id'):
             return
         try:
-            messages = await self._initial_context()
+            # Group cutoffs become authoritative when run_started is applied.
+            messages = [] if self.group_trigger else await self._initial_context()
             if not self.group_trigger and (not messages or messages[-1]['role'] not in ('user', 'toolResult')):
                 return
             current_run_id = uuid4().hex
@@ -552,7 +503,7 @@ class PiAgentRuntime:
                 **(self.group_trigger or {}),
             }, run_id=current_run_id))
             if self.group_trigger:
-                messages = self.dst.context_messages
+                messages = self._working_context()
             await self._checkpoint()
             with model_purpose('knowledge'):
                 knowledge = await self.dst.format_knowledge(self.prompt, query=self._get_user_query())
@@ -570,15 +521,12 @@ class PiAgentRuntime:
                 identity = getattr(llm, 'name', None)
             capacity = getattr(llm, 'context_window', None)
             model = {'maxTokens': self.agent.dialogue.get('max_tokens', DEFAULT_DIALOGUE_MAX_TOKENS)}
-            model['attachmentImages'] = {
-                'mimeTypes': list(_IMAGE_ATTACHMENT_MIMES) if getattr(llm, 'supports_images', False) is True else [],
-                'maxBytes': _IMAGE_ATTACHMENT_MAX_BYTES,
-            }
             if isinstance(identity, str):
                 model['id'] = identity
             if type(capacity) is int:
                 model['contextWindow'] = capacity
-            outcome = await self._bridge.run({'messages': messages, 'maxIterations': self.max_iterations,
+            outcome = await self._bridge.run({'messages': messages, 'imageResources': self._images.catalog(),
+                                               'maxIterations': self.max_iterations,
                                                **({'provider': provider} if provider else {}),
                                                'model': model, 'compaction': self.agent.dialogue.get('compaction', {}),
                                                'cwd': self.agent.config_path or '.',

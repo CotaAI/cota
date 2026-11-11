@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .common import confined, model_config, read_json, sha256, write_json, atomic_bytes
+from .production import Production, ProductionBlocked
 
 MAX_IMAGE_BYTES = 32 * 1024 * 1024
 
@@ -103,113 +104,184 @@ def _image_result(client, config, result):
     return _download_image(client, config, url)
 
 
-def generate(root, project, prompt_file, output, *, references=(), client=None):
+def _artifact_path(project, output, suffix):
+    path = confined(project, output)
+    if path.suffix.lower() != suffix:
+        raise ValueError(f'Output must end in {suffix}')
+    if path.is_relative_to(confined(project, '.bookbot')) or path.name.endswith('.request.json'):
+        raise ValueError('Output cannot replace internal production evidence')
+    return path
+
+
+def generate(root, project, prompt_file, output, *, asset, references=(), client=None):
     """One image per request; explicit image.api selects the provider protocol."""
-    from PIL import Image
-    config = model_config(root, 'image')
-    prompt = confined(project, prompt_file).read_text(encoding='utf-8')
-    if not prompt.strip() or len(prompt) > 32000 or len(references) > 8:
-        raise ValueError('Provide a nonempty prompt (up to 32000 chars) and at most eight reference images')
-    images = [image_data(project, path) for path in references]
-    api = config.get('api', 'openai')
-    if api == 'qwen':
-        if config['model'].startswith('qwen-image-3.0') and len(images) > 3:
-            raise ValueError('Qwen Image 3.0 supports at most three reference images')
-        for _, data, _ in images:
-            with Image.open(io.BytesIO(data)) as image:
-                width, height = image.size
-            if len(data) > 10 * 1024 * 1024 or max(width, height) > 8000 or max(width, height) / min(width, height) > 10:
-                raise ValueError('Qwen references require <=10 MiB, <=8000 pixels per side and <=10:1 aspect ratio')
-    path = confined(project, output)
-    if path.suffix.lower() != '.png':
-        raise ValueError('Generated image output must end in .png')
-    settings = {key: config[key] for key in (('size',) if api == 'qwen' else
-                                            ('size', 'quality', 'response_format')) if key in config}
-    identity = sha256((_identity(config, prompt, images) + json.dumps(settings, sort_keys=True)).encode())
-    journal = path.with_suffix('.request.json')
-    previous = read_json(journal) if journal.exists() else None
-    if path.exists():
-        if previous and previous.get('status') == 'completed' and previous['input_hash'] == identity:
-            if sha256(path.read_bytes()) == previous['sha256']:
-                return {**previous, 'reused': True}
-        raise ValueError('Output already exists with different or unverified input; choose a new revision filename')
-    if previous and previous.get('status') == 'started':
-        raise ValueError('Prior generation has an unknown outcome; inspect provider history, then use a new revision filename')
-    record = {'status': 'started', 'model': config['model'], 'api': api, 'input_hash': identity,
-              'prompt': prompt, 'references': [str(p.relative_to(project)) for p, _, _ in images],
-              'output': str(path.relative_to(project)), 'started_at': time.time()}
-    write_json(journal, record)
-    # A timeout/cancellation leaves started: a provider may already have charged.
-    with ExitStack() as stack:
-        client = client or stack.enter_context(httpx.Client(trust_env=False))
+    with Production(project, asset) as production:
+        from PIL import Image
+        config = model_config(root, 'image')
+        prompt = confined(project, prompt_file).read_text(encoding='utf-8')
+        if not prompt.strip() or len(prompt) > 32000 or len(references) > 8:
+            raise ValueError('Provide a nonempty prompt (up to 32000 chars) and at most eight reference images')
+        images = [image_data(project, path) for path in references]
+        api = config.get('api', 'openai')
         if api == 'qwen':
-            body = {'model': config['model'], 'prompt': prompt, 'n': 1, **settings}
-            if images:
-                inputs = [f'data:{mime};base64,' + base64.b64encode(data).decode() for _, data, mime in images]
-                body['image'] = inputs[0] if len(inputs) == 1 else inputs
-            result = _request(client, config, '/images/generations', json=body)
-        elif images:
-            result = _request(client, config, '/images/edits',
-                              data={'model': config['model'], 'prompt': prompt, 'n': '1', **settings},
-                              files=[('image[]', (p.name, data, mime)) for p, data, mime in images])
-        else:
-            result = _request(client, config, '/images/generations',
-                              json={'model': config['model'], 'prompt': prompt, 'n': 1, **settings})
-        data = _image_result(client, config, result)
-    try:
-        with Image.open(io.BytesIO(data)) as image:
-            image.load()
-            png = io.BytesIO()
-            image.convert('RGBA').save(png, 'PNG')
-        atomic_bytes(path, png.getvalue())
-    except (KeyError, IndexError, TypeError, ValueError, OSError, Image.DecompressionBombError):
-        raise ValueError('Model output is not a valid PNG/JPEG/WebP image; check provider format') from None
-    record.update(status='completed', sha256=sha256(path.read_bytes()), finished_at=time.time())
-    write_json(journal, record)
-    return {**record, 'reused': False}
+            if config['model'].startswith('qwen-image-3.0') and len(images) > 3:
+                raise ValueError('Qwen Image 3.0 supports at most three reference images')
+            for _, data, _ in images:
+                with Image.open(io.BytesIO(data)) as image:
+                    width, height = image.size
+                if len(data) > 10 * 1024 * 1024 or max(width, height) > 8000 or max(width, height) / min(width, height) > 10:
+                    raise ValueError('Qwen references require <=10 MiB, <=8000 pixels per side and <=10:1 aspect ratio')
+        path = _artifact_path(project, output, '.png')
+        settings = {key: config[key] for key in (('size',) if api == 'qwen' else
+                                                ('size', 'quality', 'response_format')) if key in config}
+        identity = sha256((_identity(config, prompt, images) + json.dumps(settings, sort_keys=True)).encode())
+        journal = path.with_suffix('.request.json')
+        previous = read_json(journal) if journal.exists() else None
+        if previous is not None and (previous.get('asset') != asset or previous.get('kind') != 'generation'):
+            raise ProductionBlocked('generation_evidence_conflict', asset, 'Output journal belongs to different production evidence',
+                                    'Preserve the existing journal and use the correct asset/output; do not overwrite evidence')
+        if path.exists():
+            if (previous and previous.get('status') == 'completed' and previous['input_hash'] == identity
+                    and previous.get('asset') == asset):
+                if sha256(path.read_bytes()) == previous['sha256']:
+                    return {**previous, 'reused': True}
+            raise ValueError('Output already exists with different or unverified input; choose a new revision filename')
+        if previous is not None:
+            if previous.get('status') == 'started':
+                raise ProductionBlocked('prior_outcome_unknown', asset, 'Previous generation outcome is unknown',
+                                        'Inspect saved journals and provider history; do not replace its journal')
+            raise ProductionBlocked('generation_evidence_invalid', asset, 'Saved output is missing; its journal cannot be overwritten',
+                                    'Preserve the request evidence and inspect the missing asset before proceeding')
+        for _, completed in production.generations:
+            if completed.get('status') == 'completed' and completed.get('input_hash') == identity:
+                source = confined(project, completed['output'])
+                data = source.read_bytes()
+                if sha256(data) != completed['sha256']:
+                    raise ProductionBlocked('generation_evidence_invalid', asset,
+                        'Saved image changed; generation cannot be silently repeated',
+                        'Inspect existing assets and report the damaged evidence')
+                alias = {**completed, 'output': str(path.relative_to(project)), 'reused_from': completed['output']}
+                atomic_bytes(path, data)
+                write_json(journal, alias)
+                return {**alias, 'reused': True}
+        attempt = production.check_generation()
+        record = {'kind': 'generation', 'asset': asset, 'attempt': attempt,
+                  'status': 'started', 'model': config['model'], 'api': api, 'input_hash': identity,
+                  'prompt': prompt, 'references': [str(p.relative_to(project)) for p, _, _ in images],
+                  'output': str(path.relative_to(project)), 'started_at': time.time()}
+        write_json(journal, record)
+        # A timeout/cancellation leaves started: a provider may already have charged.
+        with ExitStack() as stack:
+            client = client or stack.enter_context(httpx.Client(trust_env=False))
+            if api == 'qwen':
+                body = {'model': config['model'], 'prompt': prompt, 'n': 1, **settings}
+                if images:
+                    inputs = [f'data:{mime};base64,' + base64.b64encode(data).decode() for _, data, mime in images]
+                    body['image'] = inputs[0] if len(inputs) == 1 else inputs
+                result = _request(client, config, '/images/generations', json=body)
+            elif images:
+                result = _request(client, config, '/images/edits',
+                                  data={'model': config['model'], 'prompt': prompt, 'n': '1', **settings},
+                                  files=[('image[]', (p.name, data, mime)) for p, data, mime in images])
+            else:
+                result = _request(client, config, '/images/generations',
+                                  json={'model': config['model'], 'prompt': prompt, 'n': 1, **settings})
+            data = _image_result(client, config, result)
+        try:
+            with Image.open(io.BytesIO(data)) as image:
+                image.load()
+                png = io.BytesIO()
+                image.convert('RGBA').save(png, 'PNG')
+            atomic_bytes(path, png.getvalue())
+        except (KeyError, IndexError, TypeError, ValueError, OSError, Image.DecompressionBombError):
+            raise ValueError('Model output is not a valid PNG/JPEG/WebP image; check provider format') from None
+        record.update(status='completed', sha256=sha256(path.read_bytes()), finished_at=time.time())
+        write_json(journal, record)
+        return {**record, 'reused': False}
 
 
-def review(root, project, prompt_file, images, output, *, client=None):
-    config = model_config(root, 'vision')
-    if not 1 <= len(images) <= 8:
-        raise ValueError('Review requires one to eight actual images')
-    prompt = confined(project, prompt_file).read_text(encoding='utf-8')
-    if not prompt.strip() or len(prompt) > 32000:
-        raise ValueError('Review prompt must be nonempty and at most 32000 characters')
-    inputs = [image_data(project, image) for image in images]
-    evidence = [{'image': number, 'path': str(p.relative_to(project)), 'sha256': sha256(data)}
-                for number, (p, data, _) in enumerate(inputs, 1)]
-    path = confined(project, output)
-    if path.suffix != '.json':
-        raise ValueError('Review output must end in .json')
-    identity = sha256((_identity(config, prompt, inputs) + json.dumps(evidence, sort_keys=True)
-                       + ':labelled-review-v1').encode())
-    if path.exists():
-        previous = read_json(path)
-        if previous.get('input_hash') == identity:
-            return {**previous, 'reused': True}
-        raise ValueError('Review already exists; choose a new revision filename')
-    content = [{'type': 'text', 'text': prompt + '\n\n'
-        'Each image is preceded by its numbered project path and content hash. '
-        'Identify observations by that path; distinguish review targets and references as instructed. '
-        'Report specific visible issues, uncertain items and whether the requested correction is visible. '
-        'Do not treat a reference as the target, invent unobserved details or approve the whole book.'}]
-    for item, (_, data, mime) in zip(evidence, inputs):
-        content.extend([
-            {'type': 'text', 'text': 'Image input: ' + json.dumps(item, ensure_ascii=False)},
-            {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,' + base64.b64encode(data).decode()}},
-        ])
-    with ExitStack() as stack:
-        client = client or stack.enter_context(httpx.Client(trust_env=False))
-        result = _request(client, config, '/chat/completions', json={
-            'model': config['model'], 'messages': [{'role': 'user', 'content': content}]})
+def _cached_review(path, journal, identity, asset):
+    if not path.exists() and not journal.exists():
+        return None
     try:
-        text = result['choices'][0]['message']['content']
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError()
-    except (KeyError, IndexError, TypeError, ValueError):
-        raise ValueError('Vision model did not return review text') from None
-    record = {'model': config['model'], 'input_hash': identity, 'content': text, 'prompt': prompt,
-              'images': [item['path'] for item in evidence], 'image_inputs': evidence, 'created_at': time.time()}
-    write_json(path, record)
-    return record
+        metadata = read_json(journal)
+        if metadata.get('status') == 'started':
+            raise ProductionBlocked('review_outcome_unknown', asset, 'Previous review outcome is unknown',
+                                    'Inspect the saved request; do not retry under a different output name')
+        data = path.read_bytes()
+        report = json.loads(data)
+        if (metadata.get('status') != 'completed' or metadata.get('input_hash') != identity
+                or metadata.get('report_hash') != sha256(data) or report.get('input_hash') != identity
+                or report.get('asset') != asset):
+            raise ValueError('Invalid cached review')
+        return report
+    except ProductionBlocked:
+        raise
+    except (OSError, ValueError, TypeError, AttributeError):
+        raise ProductionBlocked('review_evidence_invalid', asset, 'Saved review evidence is missing or modified',
+                                'Inspect existing evidence; do not request a fresh verdict to replace it') from None
+
+
+def review(root, project, prompt_file, images, output, *, asset, client=None):
+    with Production(project, asset) as production:
+        config = model_config(root, 'vision')
+        if not 1 <= len(images) <= 8:
+            raise ValueError('Review requires one to eight actual images')
+        prompt = confined(project, prompt_file).read_text(encoding='utf-8')
+        if not prompt.strip() or len(prompt) > 32000:
+            raise ValueError('Review prompt must be nonempty and at most 32000 characters')
+        inputs = [image_data(project, image) for image in images]
+        evidence = [{'image': number, 'role': 'target' if number == 1 else 'reference',
+                     'path': str(p.relative_to(project)), 'sha256': sha256(data)}
+                    for number, (p, data, _) in enumerate(inputs, 1)]
+        path = _artifact_path(project, output, '.json')
+        prompt = prompt.strip()
+        identity = sha256((_identity(config, prompt, inputs) + ':' + asset + ':fixed-review-v2').encode())
+        canonical = production.review_path(identity)
+        journal = canonical.with_suffix('.request.json')
+        if path.exists() and read_json(path).get('input_hash') != identity:
+            raise ValueError('Review already exists; choose a new revision filename')
+        production.bind_criteria(prompt)
+        cached = _cached_review(canonical, journal, identity, asset)
+        if cached is not None:
+            reused = {**cached, 'reused': True, 'reused_from': str(canonical.relative_to(project)),
+                      'current_image_inputs': evidence}
+            if path.exists():
+                existing = read_json(path)
+                if any(existing.get(key) != value for key, value in cached.items()):
+                    raise ProductionBlocked('review_evidence_invalid', asset, 'Requested review evidence was modified',
+                                            'Inspect the existing reports; do not obtain a fresh judge to replace evidence')
+            else:
+                write_json(path, reused)
+            return reused
+        write_json(journal, {'kind': 'review', 'asset': asset, 'status': 'started', 'input_hash': identity})
+        content = [{'type': 'text', 'text': prompt + '\n\n'
+            'Each image is preceded by its numbered project path and content hash. '
+            'Image 1 is the review target; later images are references only, not extra pages to approve. '
+            'Identify observations by that path; distinguish review targets and references as instructed. '
+            'Report specific visible issues, uncertain items and whether the requested correction is visible. '
+            'Separate definite criteria violations from optional aesthetic preferences. '
+            'Use the fixed criteria only; do not invent new requirements or turn uncertainty into a failure. '
+            'Do not treat a reference as the target, invent unobserved details or approve the whole book.'}]
+        for item, (_, data, mime) in zip(evidence, inputs):
+            content.extend([
+                {'type': 'text', 'text': 'Image input: ' + json.dumps(item, ensure_ascii=False)},
+                {'type': 'image_url', 'image_url': {'url': f'data:{mime};base64,' + base64.b64encode(data).decode()}},
+            ])
+        with ExitStack() as stack:
+            client = client or stack.enter_context(httpx.Client(trust_env=False))
+            result = _request(client, config, '/chat/completions', json={
+                'model': config['model'], 'messages': [{'role': 'user', 'content': content}]})
+        try:
+            text = result['choices'][0]['message']['content']
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError()
+        except (KeyError, IndexError, TypeError, ValueError):
+            raise ValueError('Vision model did not return review text') from None
+        record = {'asset': asset, 'model': config['model'], 'input_hash': identity, 'content': text, 'prompt': prompt,
+                  'images': [item['path'] for item in evidence], 'image_inputs': evidence, 'created_at': time.time()}
+        write_json(canonical, record)
+        write_json(journal, {'kind': 'review', 'asset': asset, 'status': 'completed', 'input_hash': identity,
+                             'report_hash': sha256(canonical.read_bytes())})
+        write_json(path, record)
+        return {**record, 'reused': False}

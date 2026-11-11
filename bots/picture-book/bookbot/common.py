@@ -29,7 +29,10 @@ def project_path(root, value):
 
 
 def read_json(path):
-    return json.loads(Path(path).read_text(encoding='utf-8'))
+    value = json.loads(Path(path).read_text(encoding='utf-8'))
+    if not isinstance(value, dict):
+        raise ValueError('Project JSON records must be objects')
+    return value
 
 
 def atomic_bytes(path, value):

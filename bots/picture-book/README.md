@@ -69,6 +69,22 @@ doctor 只检查配置与依赖，不消耗模型额度，也不代表接口已�
 
 Shell 中可用 `/file "/路径/参考图.png"` 添加参考图或资料，再输入说明并回车发送；直接回车可只发送附件，`/clear` 清空待发送列表。主模型是否直接理解图片取决于 endpoints.yml 的 `vision` 配置；默认由专门的视觉服务处理。
 
+## 有限修订与审阅复用
+
+绘本配套命令按作品里的稳定对象 ID（`--asset page-04`、`--asset cover`）累计生成：首次生成后最多再修两轮。修订文件名可以变，对象 ID 不变；重启聊天也不会重置次数。相同输入已有完整图片时直接复用，不再次付费。生成结果未知时，即使换名也不再发起该对象的请求。
+
+审阅先固定该对象的验收标准。相同图片字节、标准和模型复用同一份观察；复制图片或换报告名不再次请求模型。`.bookbot/` 保存固定标准、规范审阅证据与请求记录，原生成日志仍在图片旁边；这些是作品文件，不是 Cota 的新 Event/数据库表。`image_inputs` 是服务实际见到的原标签，复用别名通过 `current_image_inputs` 对照，不伪造新的观察。
+
+```sh
+uv run scripts/book.py --project rabbit-cloud-v1 generate --asset page-04 --prompt prompts/page-04.txt --output illustrations/page-04-r1.png
+uv run scripts/book.py --project rabbit-cloud-v1 review --asset page-04 --prompt reviews/page-04-criteria.txt --image illustrations/page-04-r1.png --output reviews/page-04-r1.json
+uv run scripts/book.py --project rabbit-cloud-v1 status
+```
+
+`status.production` 显示每个对象的次数、剩余可生成数和报告位置；旧版未标识日志单列 `untracked_requests`，不会猜文件名或修改历史。未归属不代表没有花过额度：续作先核对旧记录与对象，不能以新 ID 把旧页面当作首次生成；未核实时先保留已有作品、继续非付费工作并报告。达到上限、结果未知或证据损坏时，命令返回非零退出码及可读 JSON（`reason`、`asset`、`retryable: false`、`next`）。Bot 应保留版本、停止该对象重试，继续独立工作并明确未验收项；不能换 ID、改标准或另建作品来绕过。真正改变要求的新制作任务须来自用户。
+
+这些约束限制重复成本，审阅仍可能存在不确定性，不会自动把 `book.json.qa` 改为通过。相同图的观察冲突应如实标记待确认；可选审美建议不应触发无限重画。正式交付仍需完成原有验收；未完成时仅交付明确标记的审阅稿。
+
 ## Web 聊天与附件
 
 退出 shell 后，在本 Bot 目录使用标准 Cota 入口：

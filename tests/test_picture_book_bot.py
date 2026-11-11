@@ -86,16 +86,16 @@ def test_image_generate_edit_reuse_and_vision_receive_real_bytes(book_modules, b
         return httpx.Response(200, json={'data': [{'b64_json': base64.b64encode(image_bytes()).decode()}]})
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        first = models.generate(root, project, prompt, 'first.png', client=client)
-        again = models.generate(root, project, prompt, 'first.png', client=client)
+        first = models.generate(root, project, prompt, 'first.png', client=client, asset='test-asset')
+        again = models.generate(root, project, prompt, 'first.png', client=client, asset='test-asset')
         assert again['reused'] is True and len(requests) == 1
         assert first['sha256'] == again['sha256']
-        models.generate(root, project, prompt, 'second.png', references=[reference], client=client)
-        report = models.review(root, project, prompt, [reference], 'review.json', client=client)
+        models.generate(root, project, prompt, 'second.png', references=[reference], client=client, asset='test-asset')
+        report = models.review(root, project, prompt, [reference], 'review.json', client=client, asset='test-asset')
         assert report['content'] == '图中有一只小兔。'
         prompt.write_text('改成小猫')
         with pytest.raises(ValueError, match='already exists'):
-            models.generate(root, project, prompt, 'first.png', client=client)
+            models.generate(root, project, prompt, 'first.png', client=client, asset='test-asset')
     assert len(requests) == 3
     for record in project.rglob('*.json'):
         assert 'PRIVATE_' not in record.read_text()
@@ -114,7 +114,7 @@ def test_model_error_is_safe_and_never_publishes_placeholder(book_modules, book_
         return response
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ValueError) as error:
-            book_modules['models'].generate(root, project, prompt, 'failed.png', client=client)
+            book_modules['models'].generate(root, project, prompt, 'failed.png', client=client, asset='test-asset')
     assert 'PRIVATE_' not in str(error.value)
     assert len(requests) == 1 and not (project / 'failed.png').exists()
 
@@ -164,9 +164,9 @@ def test_qwen_generation_reference_edit_and_url_download(book_modules, book_root
         return httpx.Response(200, json={'data':[{'url':'https://images.example/book.png?sig=PRIVATE_SIGNED_URL'}]})
 
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
-        first = book_modules['models'].generate(root, project, 'prompt.txt', 'first.png', client=client)
-        assert book_modules['models'].generate(root, project, 'prompt.txt', 'first.png', client=client)['reused']
-        book_modules['models'].generate(root, project, 'prompt.txt', 'edited.png', references=['reference.png'], client=client)
+        first = book_modules['models'].generate(root, project, 'prompt.txt', 'first.png', client=client, asset='test-asset')
+        assert book_modules['models'].generate(root, project, 'prompt.txt', 'first.png', client=client, asset='test-asset')['reused']
+        book_modules['models'].generate(root, project, 'prompt.txt', 'edited.png', references=['reference.png'], client=client, asset='test-asset')
     assert len(calls) == 4 and first['status'] == 'completed'
     assert (project / 'edited.png').read_bytes().startswith(b'\x89PNG')
     assert all('PRIVATE_' not in p.read_text() for p in project.glob('*.json'))
@@ -186,7 +186,7 @@ def test_qwen_rejects_unapproved_image_urls_without_get(book_modules, book_root,
         return httpx.Response(200, json={'data':[{'url':url}]})
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
         with pytest.raises(ValueError) as error:
-            book_modules['models'].generate(root, project, 'prompt.txt', 'bad.png', client=client)
+            book_modules['models'].generate(root, project, 'prompt.txt', 'bad.png', client=client, asset='test-asset')
     assert len(calls) == 1 and 'pass' not in str(error.value)
     assert not (project / 'bad.png').exists()
 
@@ -213,7 +213,7 @@ def test_qwen_download_failure_does_not_leak_url_or_retry(book_modules, book_roo
         return httpx.Response(200, content=b'invalid image')
     with httpx.Client(transport=httpx.MockTransport(handle), follow_redirects=True) as client:
         with pytest.raises(ValueError) as error:
-            book_modules['models'].generate(root, project, 'prompt.txt', 'bad.png', client=client)
+            book_modules['models'].generate(root, project, 'prompt.txt', 'bad.png', client=client, asset='test-asset')
     assert len(calls) == 2 and 'PRIVATE_' not in str(error.value)
     assert not (project / 'bad.png').exists()
     assert json.loads((project / 'bad.request.json').read_text())['status'] == 'started'
@@ -229,7 +229,7 @@ def test_qwen_reference_limits_are_checked_before_requests(book_modules, book_ro
     with httpx.Client(transport=httpx.MockTransport(unexpected)) as client:
         with pytest.raises(ValueError, match='three|3'):
             book_modules['models'].generate(root, project, 'prompt.txt', 'bad.png',
-                references=['reference.png'] * 4, client=client)
+                references=['reference.png'] * 4, client=client, asset='test-asset')
     assert not (project / 'bad.request.json').exists()
 
 
@@ -259,7 +259,7 @@ def test_qwen_download_stream_limit_without_content_length(book_modules, book_ro
         return httpx.Response(200, stream=Chunks())
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
         with pytest.raises(ValueError, match='exceeds'):
-            book_modules['models'].generate(root, project, 'prompt.txt', 'bad.png', client=client)
+            book_modules['models'].generate(root, project, 'prompt.txt', 'bad.png', client=client, asset='test-asset')
     assert not (project / 'bad.png').exists()
 
 
@@ -450,7 +450,7 @@ def test_generation_timeout_is_not_automatically_repeated(book_modules, book_roo
     with httpx.Client(transport=httpx.MockTransport(fail)) as client:
         for _ in range(2):
             with pytest.raises(ValueError) as error:
-                book_modules['models'].generate(root, project, 'prompt.txt', 'uncertain.png', client=client)
+                book_modules['models'].generate(root, project, 'prompt.txt', 'uncertain.png', client=client, asset='test-asset')
             assert 'PRIVATE_' not in str(error.value)
     assert count == 1
     assert json.loads((project / 'uncertain.request.json').read_text())['status'] == 'started'
@@ -553,6 +553,10 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
     project.mkdir(parents=True)
     make_book(project)
     (project / 'art.png').unlink()
+    for attempt in range(1, 4):
+        (project / f'archived-{attempt}.request.json').write_text(json.dumps({
+            'kind': 'generation', 'asset': 'blocked-page', 'status': 'completed', 'attempt': attempt,
+            'input_hash': f'archived-{attempt}', 'output': f'archived-{attempt}.png', 'started_at': attempt}))
     observed, main_requests = [], []
     async def generate(request):
         observed.append('generate')
@@ -605,9 +609,10 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
     sequence = [
         {'tool_calls': [call('read', {'path': str(root / 'skills/creating-childrens-picture-books/SKILL.md')}, 'skill')]},
         {'tool_calls': [call('write', {'path': 'books/example/prompt.txt', 'content': '原创角色，在纯背景下站立，无文字'}, 'prompt')]},
-        {'tool_calls': [call('bash', {'command': script + 'generate --prompt prompt.txt --output character.png', 'timeout': 300}, 'generate')]},
-        {'tool_calls': [call('bash', {'command': script + 'generate --prompt prompt.txt --reference character.png --output art.png', 'timeout': 300}, 'edit')]},
-        {'tool_calls': [call('bash', {'command': script + 'review --prompt prompt.txt --image character.png --image art.png --output review.json', 'timeout': 300}, 'vision')]},
+        {'tool_calls': [call('bash', {'command': script + 'generate --asset character-reference --prompt prompt.txt --output character.png', 'timeout': 300}, 'generate')]},
+        {'tool_calls': [call('bash', {'command': script + 'generate --asset page-01 --prompt prompt.txt --reference character.png --output art.png', 'timeout': 300}, 'edit')]},
+        {'tool_calls': [call('bash', {'command': script + 'generate --asset blocked-page --prompt prompt.txt --output must-not-generate.png', 'timeout': 300}, 'bounded')]},
+        {'tool_calls': [call('bash', {'command': script + 'review --asset page-01 --prompt prompt.txt --image art.png --image character.png --output review.json', 'timeout': 300}, 'vision')]},
         {'tool_calls': [call('bash', {'command': script + 'build', 'timeout': 300}, 'pdf')]},
         {'tool_calls': [call('bash', {'command': script + 'deliverables --draft'}, 'deliverables')]},
         {'tool_calls': [call('send_files', {'paths': ['books/example/book.pdf', 'books/example/previews/overview.jpg', 'books/example/打印说明.md'], 'text': '审阅稿，尚未完成内容、视觉与语言验收。'}, 'deliver')]},
@@ -620,14 +625,23 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
         agent = Agent.load_from_path(str(root))
         await agent.create_processor().handle_message(Message(text='制作并发布一个审阅稿', session_id='production', sender_id='reader', receiver='bot'))
         assert observed == ['generate', 'edit', 'vision']
-        assert len(main_requests) == 9 and not sequence
+        assert len(main_requests) == 10 and not sequence
+        session = await agent.store.export_session('production')
+        blocked = next(e for e in session['events'] if e['type'] == 'tool_result'
+                       and e['payload']['tool_call_id'] == 'bounded')
+        assert blocked['payload']['status'] == 'error'
+        assert 'revision_limit_reached' in json.dumps(blocked)
+        assert not (project / 'must-not-generate.png').exists()
         for request in main_requests:
             assert {'read', 'write', 'edit', 'bash', 'send_files'} <= {
                 tool['function']['name'] for tool in request.get('tools', [])}
         assert (project / 'book.pdf').read_bytes().startswith(b'%PDF-')
         events = await agent.store.events('production')
         results = [e for e in events if e['type'] == 'tool_result']
-        assert len(results) == 8 and all(e['payload']['status'] == 'success' for e in results)
+        assert len(results) == 9
+        assert sum(e['payload']['status'] == 'success' for e in results) == 8
+        assert all(e['payload']['status'] == 'success' for e in results
+                   if e['payload']['tool_call_id'] != 'bounded')
         sent = next(e for e in events if e['type'] == 'bot_utter' and e['payload'].get('attachments'))
         assert len(sent['payload']['attachments']) == 3
         assert agent.files.resolve('production', sent['payload']['attachments'][0]['id']).is_file()

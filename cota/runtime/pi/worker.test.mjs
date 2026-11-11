@@ -27,12 +27,17 @@ const call = (id, args = '{"n":1}') => ({id, type: 'function', function: {name: 
 
 function harness(responses, tool = async () => ({content: [{type: 'text', text: 'ok'}]})) {
   const events = [], calls = [], contexts = [];
+  const history = [user];
   return {events, calls, contexts, rpc: async (method, payload) => {
     if (method === 'skills_loaded') return {};
-    if (method === 'prepare') return {messages: payload.messages, tools: [schema]};
+    if (method === 'prepare') {assert.equal(payload.messages, undefined); return {messages: history, tools: [schema]};}
     if (method === 'model') { contexts.push(payload); return responses.shift(); }
     if (method === 'tool') {calls.push(payload); return tool(payload);}
-    if (method === 'event') {events.push(payload.event); return {};}
+    if (method === 'event') {
+      events.push(payload.event);
+      if (payload.event.type === 'message_end' && payload.event.message.role !== 'system') history.push(payload.event.message);
+      return {};
+    }
     throw new Error(method);
   }};
 }
@@ -101,6 +106,7 @@ test('prepared context replaces the persisted projection, including compaction',
 
 function httpHarness({advertise = true, allowed = true, recordFailure = false, args = {url: 'http://127.0.0.1'}} = {}) {
   const records = [], authorizations = [], contexts = [], preparations = [], events = [], order = [];
+  const history = [user];
   const responses = [{tool_calls: [{id: 'http-1', type: 'function', function: {
     name: 'http_request', arguments: JSON.stringify(args),
   }}]}, {content: 'The HTTP request could not be completed.'}];
@@ -109,7 +115,7 @@ function httpHarness({advertise = true, allowed = true, recordFailure = false, a
     if (method === 'skills_loaded') return {};
     if (method === 'prepare') {
       preparations.push(payload);
-      return {messages: payload.messages, tools: advertise ? payload.extensionTools : []};
+      return {messages: history, tools: advertise ? payload.extensionTools : []};
     }
     if (method === 'model') { contexts.push(payload); return responses.shift(); }
     if (method === 'authorize_tool') {
@@ -120,7 +126,11 @@ function httpHarness({advertise = true, allowed = true, recordFailure = false, a
       if (recordFailure) throw new Error('HTTP result store unavailable');
       return {};
     }
-    if (method === 'event') { events.push(payload.event); return {}; }
+    if (method === 'event') {
+      events.push(payload.event);
+      if (payload.event.type === 'message_end' && payload.event.message.role !== 'system') history.push(payload.event.message);
+      return {};
+    }
     // Native HTTP must never fall back to a Python/custom-tool RPC.
     throw new Error(`Unexpected HTTP engine RPC: ${method}`);
   }};

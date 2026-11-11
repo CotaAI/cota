@@ -137,15 +137,14 @@ test('an indivisible latest image fails explicitly without dropping it or reques
   assert.equal(messages.at(-1).content[0].data.length, 1024 * 1024);
 });
 
-test('attachment bytes follow the actual model hydration MIME and size policy', () => {
+test('attachment metadata does not invent pixels outside canonical resource hydration', () => {
   const files = Array.from({length: 8}, (_, i) => ({id: `file${i}`, mime_type: 'image/png', size: 2 * 1024 * 1024}));
   const messages = [{...msg('user', 'Inspect these files with the appropriate tool.', 'u'), cotaAttachments: files}];
-  const textModel = resolveContextModel({attachmentImages: {mimeTypes: [], maxBytes: 2 * 1024 * 1024}});
-  assert(estimateRequest(messages, [], textModel).serialized_bytes < 4096);
-  const visionModel = resolveContextModel({attachmentImages: {mimeTypes: ['image/png'], maxBytes: 2 * 1024 * 1024}});
-  assert(estimateRequest(messages, [], visionModel).serialized_bytes > 20 * 1024 * 1024);
-  const svg = [{...messages[0], cotaAttachments: [{id: 'svg', mime_type: 'image/svg+xml', size: 2 * 1024 * 1024}]}];
-  assert(estimateRequest(svg, [], visionModel).serialized_bytes < 4096);
+  assert(estimateRequest(messages).serialized_bytes < 4096);
+  assert.equal(estimateRequest(messages).images, 0);
+  const hydrated = [{...messages[0], content: [{type: 'image', mimeType: 'image/png', data: 'eA=='}]}];
+  assert.equal(estimateRequest(hydrated).images, 1);
+  assert.equal(estimateRequest(hydrated).image_bytes, 1);
 });
 
 test('image retention has count and byte budgets independent of model capacity', () => {

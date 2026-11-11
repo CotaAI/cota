@@ -73,7 +73,11 @@ Normal workflow (no implementation-source reading required):
   4. Generate remaining art with --reference; fill book.json using build --help.
   5. build, inspect every rendered page, validate, then deliverables.
 Read only the help needed for the current step. For an existing project, status
-comes first; completed generation journals allow reuse without another paid call.''')
+comes first; completed generation journals allow reuse without another paid call.
+Always keep --asset stable across revision filenames. Each asset allows one initial
+image and two revisions; renamed files/session restarts do not reset that budget.
+retryable=false means stop retrying that asset and continue independent work.
+Do not change asset/project/criteria to bypass limits; report unresolved work.''')
     parser.add_argument('--project', help='Name inside workspace/books, or an absolute path inside it; required except for doctor/init')
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('doctor', help='Check configuration and local dependencies without model requests')
@@ -96,7 +100,12 @@ edits; returned URLs are downloaded only from approved HTTPS download_hosts (def
 is retained in errors or journals. The adjacent .request.json retains hashes and request status without
 credentials/base64. Identical completed output is reused; changed input needs a new
 revision filename. A started request has an unknown outcome: inspect provider history,
-never blindly retry it. Generate artwork without final Chinese text.''')
+never blindly retry it. Unknown outcomes block further requests for that asset.
+Identical completed inputs reuse saved bytes, even under a new output filename.
+Only three paid attempts per stable --asset: one initial image and two revisions.
+Keep confirmed assets stable; exhausted/uncertain assets must be reported without
+falsely setting QA to passed. Generate artwork without final Chinese text.''')
+    generate.add_argument('--asset', required=True, help='Stable page/cover ID, unchanged across revision filenames; max 1 initial + 2 revisions')
     generate.add_argument('--prompt', required=True, help='UTF-8 prompt file, relative to project')
     generate.add_argument('--output', required=True, help='PNG output, relative to project')
     generate.add_argument('--reference', action='append', default=[], help='Actual image file, relative to project; repeatable')
@@ -105,14 +114,25 @@ never blindly retry it. Generate artwork without final Chinese text.''')
         epilog='''All paths stay inside the project. Repeat --image for 1-8 actual PNG/JPEG/WebP
 images, each <=32 MiB. Include the character reference when checking continuity.
 Review every rendered page, not only a small contact sheet. Output must end in .json.
-Each --image must have its own flag. Name the target page/path and the reference
-path in the prompt; do not rely only on "image 1/image 2" or reuse another page's
-questions. The service receives labels/hashes next to the actual images; the saved
+Use a stable --asset target (e.g. page-04 for artwork, pdf-face-05 for a rendered
+PDF face). Fixed criteria belong to that target: keep the prompt file content stable,
+put actual version paths only in --image, target first then references. Filename
+changes do not create new review criteria. Do not alter criteria to seek approval.
+Each --image must have its own flag. Name the stable target and reference purpose
+in the fixed criteria; supply actual version paths through --image. Do not rely only
+on "image 1/image 2" or reuse another page's questions. The service receives labels/hashes next to the actual images; the saved
 report includes image_inputs in the same order. Review only the requested visible
 criteria and verify the specific correction on the new version.
-Identical reviews are reused; changed inputs need a new revision filename.
+Identical criteria and image bytes reuse one canonical observation, even with new
+output names or byte-identical image aliases. image_inputs remains the original
+service evidence; current_image_inputs maps aliases when reused. Canonical evidence
+is in .bookbot/reviews; do not edit/remove it to obtain another verdict. Conflicting
+manual observations are uncertain, not permission to keep rerolling the image.
+Changed pixels need a new review output filename; changed criteria require a
+separate user-requested production task rather than silently resetting this one.
 The report is evidence, not automatic QA approval. Correct issues and record the
 actual language/content/visual review before updating book.json qa flags.''')
+    review.add_argument('--asset', required=True, help='Stable review target; e.g. page-04 or pdf-face-05. Criteria are fixed on its first review')
     review.add_argument('--prompt', required=True, help='UTF-8 review instructions file, relative to project')
     review.add_argument('--image', action='append', required=True, help='Actual image file; repeat for up to eight images')
     review.add_argument('--output', required=True, help='Review JSON path, relative to project')
@@ -178,8 +198,10 @@ repeatedly rebuilding unchanged sources. Never set QA merely to make validate pa
                 shutil.copytree(SKILL / 'assets/project-template', project, dirs_exist_ok=True)
             result = {'project': str(project), 'manifest': str(project / 'book.json')}
         elif args.command == 'status':
+            from bookbot.production import production_status
             data = read_json(project / 'book.json')
             result = {'project': str(project), 'title': data.get('title'), 'qa': data.get('qa'),
+                      'production': production_status(project),
                       'render_input_hash': data.get('render_input_hash'),
                       'pages': [{key: page.get(key) for key in ('page', 'role', 'blank', 'asset')}
                                 for page in data.get('pages', [])],
@@ -188,12 +210,12 @@ repeatedly rebuilding unchanged sources. Never set QA merely to make validate pa
                                    for p in project.rglob('*.request.json')]}
         elif args.command == 'generate':
             from bookbot.models import generate
-            result = generate(ROOT, project, args.prompt, args.output, references=args.reference)
+            result = generate(ROOT, project, args.prompt, args.output, asset=args.asset, references=args.reference)
             # Prompt is saved in the project, not repeated in a long tool result.
             result.pop('prompt', None)
         elif args.command == 'review':
             from bookbot.models import review
-            result = review(ROOT, project, args.prompt, args.image, args.output)
+            result = review(ROOT, project, args.prompt, args.image, args.output, asset=args.asset)
             result.pop('prompt', None)
         elif args.command == 'build':
             from bookbot.layout import build
@@ -223,5 +245,5 @@ if __name__ == '__main__':
     try:
         sys.exit(main())
     except (ValueError, OSError, ImportError, subprocess.SubprocessError) as error:
-        print(json.dumps({'error': str(error)}, ensure_ascii=False), file=sys.stderr)
+        print(json.dumps({'error': str(error), **getattr(error, 'details', {})}, ensure_ascii=False), file=sys.stderr)
         sys.exit(1)

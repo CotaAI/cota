@@ -13,7 +13,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'cota/runtime/pi'
-INPUTS = ('package.json', 'package-lock.json', 'worker.mjs', 'engine.mjs', 'skills.mjs', 'tools.mjs', 'http.mjs', 'files.mjs', 'context.mjs', 'model.mjs')
+INPUTS = ('package.json', 'package-lock.json', 'worker.mjs', 'engine.mjs', 'skills.mjs', 'tools.mjs', 'http.mjs', 'files.mjs', 'context.mjs', 'image-context.mjs', 'model.mjs')
 
 
 def load_config():
@@ -128,7 +128,7 @@ def prepare(output, cache):
         subprocess.run([str(stage / 'node'), '--input-type=module', '-e',
                         'await import(process.argv[1]);', (stage / 'engine.mjs').as_uri()], check=True)
         # Test the staged dependencies, not the developer's node_modules.
-        tests = ['worker.test.mjs', 'http.test.mjs', 'context.test.mjs', 'model.test.mjs', 'worker-protocol.test.mjs']
+        tests = sorted(path.name for path in SOURCE.glob('*.test.mjs'))
         for test in tests:
             shutil.copy2(SOURCE / test, stage / test)
         subprocess.run([str(stage / 'node'), '--test', *(str(stage / test) for test in tests)], check=True)

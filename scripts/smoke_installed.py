@@ -22,6 +22,7 @@ async def smoke():
     assert runtime.bundled, 'Smoke must use the installed release wheel'
     assert 'site-packages' in str(runtime.worker), runtime.worker
     calls, events = [], []
+    history = [{'role': 'user', 'content': 'echo hello', 'timestamp': 1}]
     schema = {'type': 'function', 'function': {
         'name': 'echo', 'description': 'Echo a message',
         'parameters': {'type': 'object', 'properties': {'text': {'type': 'string'}}, 'required': ['text']},
@@ -31,7 +32,7 @@ async def smoke():
         if method == 'skills_loaded':
             return {}
         if method == 'prepare':
-            return {'messages': payload['messages'], 'tools': [schema]}
+            return {'messages': history, 'tools': [schema]}
         if method == 'model':
             if not calls:
                 return {'tool_calls': [{'id': 'call-1', 'type': 'function', 'function': {
@@ -41,12 +42,15 @@ async def smoke():
             calls.append(payload)
             return {'content': [{'type': 'text', 'text': 'hello'}]}
         if method == 'event':
-            events.append(payload['event'])
+            event = payload['event']
+            events.append(event)
+            if event['type'] == 'message_end' and event['message']['role'] != 'system':
+                history.append(event['message'])
             return {}
         raise AssertionError(method)
 
     result = await PiBridge().run({
-        'messages': [{'role': 'user', 'content': 'echo hello', 'timestamp': 1}],
+        'messages': history,
         'maxIterations': 3,
     }, handle)
     assert result['status'] == 'completed', result

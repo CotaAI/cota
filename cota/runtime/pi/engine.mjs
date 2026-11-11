@@ -1,7 +1,7 @@
 /** Pi owns the loop; Cota owns context policy, tools, models and durable state. */
 import { createSkillResources } from './skills.mjs';
-import {nativeModel, nativeStream, hydrateAttachments} from './model.mjs';
-import {projectImageContext} from './image-context.mjs';
+import {nativeModel, nativeStream} from './model.mjs';
+import {projectImageContext, hydrateImageRefs} from './image-context.mjs';
 import { createHttpTool } from './http.mjs';
 import { createNativeTools } from './tools.mjs';
 import { createSendFilesTool } from './files.mjs';
@@ -45,7 +45,6 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
   const pendingStarts = new Map();
   const model = options.provider ? nativeModel(resolveContextModel(options.model), options.provider) : resolveContextModel(options.model);
   let requestMessages;
-  const attachmentCache = new Map();
   const settings = compactionSettings(model, options.compaction);
   let contextBudget;
   const request = async (method, payload) => {
@@ -88,20 +87,20 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
     },
   }));
   const agent = new Agent({
-    initialState: {model, messages: options.messages},
+    initialState: {model, messages: options.messages.filter(message => !message.cotaDeferred)},
     toolExecution: 'sequential',
     prepareRequest: async ({context}) => {
       const prepare = async messages => {
-        const prepared = await request('prepare', {...(options.provider ? {native: true} : {messages}), skillPrompt: resources.prompt,
+        const prepared = await request('prepare', {native: !!options.provider, skillPrompt: resources.prompt,
           toolPrompt: native.prompt, nativeTools: native.schemas, extensionTools});
-        if (!options.provider) return prepared;
+        native.imageResources.register(prepared.imageResources);
+        if (!options.provider) return {...prepared, messages: prepared.messages.filter(message => !message.cotaDeferred)};
         return {...prepared, messages: [...(prepared.systemPrompt ? [{role: 'system', content: prepared.systemPrompt, timestamp: 0}] : []),
-          ...messages.filter(message => message.role !== 'system')]};
+          ...messages.filter(message => message.role !== 'system' && !message.cotaDeferred)]};
       };
       let prepared = await prepare(context.messages);
       for (let attempt = 0; ; attempt++) {
-        requestMessages = projectImageContext(await hydrateAttachments(prepared.messages, prepared.attachments,
-          options.provider ?? {vision: !!model.attachmentImages?.mimeTypes?.length}, attachmentCache));
+        requestMessages = projectImageContext(await hydrateImageRefs(prepared.messages, native.imageResources, settings), native.imageResources);
         contextBudget = {...estimateRequest(requestMessages, prepared.tools, model), context_window: model.contextWindow,
           capacity_source: model.capacitySource, reserve_tokens: settings.reserveTokens,
           max_request_bytes: settings.maxRequestBytes, max_images: settings.maxImages,
@@ -140,6 +139,7 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
         };
         const result = await compactContext(requestMessages, model, settings, summaryStream, signal, prepared.tools);
         const committed = await request('compact', result);
+        native.imageResources.register(committed.imageResources);
         prepared = await prepare(committed.messages);
       }
       schemas = prepared.tools;

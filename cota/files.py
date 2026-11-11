@@ -107,17 +107,60 @@ class FileStorage:
             result.append({key: record[key] for key in ('id', 'name', 'mime_type', 'size')})
         return validate_attachments(result)
 
-    def resolve(self, session_id, file_id):
+    def read(self, session_id, file_id):
+        """Read once and verify the exact bytes returned to the caller."""
         record = self._record(session_id, file_id)
         path = self.root / file_id / 'data'
         try:
-            if path.is_symlink() or not path.is_file() or path.stat().st_size != record['size']:
+            if path.is_symlink():
                 raise ValueError()
-            if hashlib.sha256(path.read_bytes()).hexdigest() != record['sha256']:
+            flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+            with os.fdopen(os.open(path, flags), 'rb') as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size != record['size']:
+                    raise ValueError()
+                data = stream.read(record['size'] + 1)
+            if len(data) != record['size'] or hashlib.sha256(data).hexdigest() != record['sha256']:
                 raise ValueError()
         except (OSError, ValueError, KeyError):
             raise FileNotFoundError('File unavailable or modified') from None
-        return path
+        return data
+
+    def resolve(self, session_id, file_id):
+        self.read(session_id, file_id)
+        return self.root / file_id / 'data'
+
+    def named_copy(self, session_id, file_id):
+        """A local viewing copy with its original filename; never the evidence.
+
+        OS viewers use filename extensions. Keep their editable copy separate
+        from immutable bytes used for history/downloads, and retain local edits.
+        """
+        source = self.resolve(session_id, file_id)
+        record = self._record(session_id, file_id)
+        directory = source.parent / 'view'
+        if directory.is_symlink() or directory.exists() and not directory.is_dir():
+            raise FileNotFoundError('Attachment viewing directory is unavailable')
+        directory.mkdir(mode=0o700, exist_ok=True)
+        target = directory / record['name']
+        if target.parent != directory or target.is_symlink():
+            raise FileNotFoundError('Attachment viewing copy is unavailable')
+        if target.exists():
+            if (not target.is_file() or target.stat().st_size != record['size']
+                    or hashlib.sha256(target.read_bytes()).hexdigest() != record['sha256']):
+                raise FileNotFoundError('Local viewing copy was modified; save it elsewhere before reopening')
+            return target
+        staged = directory / ('.view-' + uuid4().hex)
+        try:
+            data = source.read_bytes()
+            if len(data) != record['size'] or hashlib.sha256(data).hexdigest() != record['sha256']:
+                raise FileNotFoundError('Attachment changed while preparing its viewing copy')
+            staged.write_bytes(data)
+            os.chmod(staged, 0o600)
+            os.replace(staged, target)
+        finally:
+            staged.unlink(missing_ok=True)
+        return target
 
     def import_paths(self, session_id, user_id, workspace, paths):
         if not isinstance(paths, list) or not 1 <= len(paths) <= MAX_ATTACHMENTS:

@@ -22,6 +22,8 @@ Node.js 至少 22.19，固定版本见 `.node-version`。统一入口依次检�
 
 绘本复杂流程示例位于 [bots/picture-book](https://github.com/CotaAI/cota/tree/main/bots/picture-book)：复用 Pi 原生工具，独立连接图片生成/编辑与视觉接口，再制作中文 PDF。`tests/test_picture_book_bot.py` 覆盖协议、资产复用、PDF 留白与渲染、限时下载、真实 Pi 多步执行与 SQLite 恢复、WebSocket 历史。PDF 相关用例需要该 Bot 的可选 requirements、Poppler 和中文 TrueType 字体；缺少时明确跳过。实际创作质量需要另行配置模型、逐页审校；reply-review 不代替图像质量评测。
 
+`tests/test_picture_book_production.py` 和 `tests/test_picture_book_convergence.py` 用真实项目文件、独立 CLI 进程与受控 HTTPX 响应验证“首次生成＋两次修订”、跨文件名/会话的次数连续性、结果未知时停止、固定审阅标准、同图复用及证据完整性。真实 Pi 集成用例还验证受限命令按普通 `tool_result` 返回后，后续视觉审阅、PDF 制作和审阅稿附件仍能继续。约束属于绘本配套程序；测试不会向 Cota Runtime 加入绘本状态，也不调用真实付费模型。新项目使用稳定 `--asset`；旧日志缺少对象标识时显式列为未归属，不根据文件名猜测预算。
+
 ## 修改时选取测试
 
 ```bash

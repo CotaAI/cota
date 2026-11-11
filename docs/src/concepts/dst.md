@@ -74,7 +74,7 @@ Store 在 run 结束或距上次快照达到事件间隔时建立快照。间隔
 | `created_at` | 快照创建时间；不同于 `state.created_at` 的会话时间 |
 | `checksum` | 对除 checksum 外整个快照内容计算的哈希 |
 
-`context_messages` 保留模型响应与工具结果之间的稳定关联，供下一轮 Pi 初始化。当前请求的 system prompt、Skill 目录和 Policy guidance 由 `prepare` 动态加入，不作为固定指令混入历史投影。上下文压缩只改变这一投影，完整原始事件仍保留。
+`context_messages` 保留模型响应与工具结果之间的稳定关联，供下一轮 Pi 初始化。当前请求的 system prompt、Skill 目录和 Policy guidance 由 `prepare` 动态加入，不作为固定指令混入历史投影。上下文压缩只改变这一投影，完整原始事件仍保留。交给 Pi 的传输副本另把图片换成不可变资源引用，避免启动或恢复时携带全部历史 Base64；这不会回写或精简 DST，详见 [Pi runtime](pi-runtime.md#图片证据与工作上下文)。
 
 ## 恢复与不兼容处理
 

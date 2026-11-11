@@ -22,6 +22,7 @@ def bundle(tmp_path):
     (vendor / 'http.mjs').write_text('http')
     (vendor / 'files.mjs').write_text('files')
     (vendor / 'context.mjs').write_text('context')
+    (vendor / 'image-context.mjs').write_text('images')
     (vendor / 'model.mjs').write_text('model')
     coding = vendor / 'node_modules/@earendil-works/pi-coding-agent'
     coding.mkdir(parents=True)
@@ -154,3 +155,14 @@ async def test_release_smoke_uses_worker_status_and_observed_messages(monkeypatc
         bundled=True, worker=Path('/test/site-packages/cota/runtime/_vendor/worker.mjs')))
     # The bridge itself uses the real source worker, with deterministic callbacks.
     await smoke.smoke()
+
+
+def test_bundled_runtime_contains_all_local_module_dependencies():
+    import re
+    builder = load_builder()
+    for name in builder.INPUTS:
+        if not name.endswith('.mjs'):
+            continue
+        source = (builder.SOURCE / name).read_text()
+        for dependency in re.findall(r'''(?:from\s*|import\s*\()["']\./([^"']+\.mjs)["']''', source):
+            assert dependency in builder.INPUTS, f'{name} imports an unpackaged module: {dependency}'

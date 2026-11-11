@@ -12,7 +12,6 @@ export function resolveContextModel(options = {}) {
   return {id, name: id, api: 'openai-completions', provider: 'cota', baseUrl: '', reasoning: false,
     input: ['text', 'image'], contextWindow, maxTokens,
     capacitySource: options.contextWindow ? 'configured' : candidates.length ? 'pi_catalog' : 'fallback',
-    attachmentImages: options.attachmentImages ?? {},
     cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0}};
 }
 
@@ -39,7 +38,7 @@ export function exceedsImageBudget(budget, settings) {
 export function estimateRequest(messages, tools = [], model = {}) {
   const sections = {system: 0, user: 0, assistant: 0, tool_results: 0,
     tool_definitions: tools.length ? Math.ceil(JSON.stringify(tools).length / 4) : 0};
-  let images = 0, imageBytes = 0, attachmentBytes = 0;
+  let images = 0, imageBytes = 0;
   for (const message of messages) {
     const section = message.role === 'toolResult' ? 'tool_results' : message.role;
     if (section in sections) sections[section] += estimateTokens(message);
@@ -48,16 +47,6 @@ export function estimateRequest(messages, tools = [], model = {}) {
         images++;
         const data = block.data ?? '';
         imageBytes += Math.max(0, Math.floor(data.length * 3 / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0));
-      }
-    }
-    // Fall back to authorized attachment sizes for callers that have not yet
-    // hydrated their request; prepared runtime projections use actual pixels.
-    if (message.role === 'user' && !message.cotaAttachmentsHydrated) for (const file of message.cotaAttachments ?? []) {
-      if (model.attachmentImages?.mimeTypes?.includes(file.mime_type)
-          && file.size <= model.attachmentImages.maxBytes) {
-        images++; imageBytes += file.size;
-        attachmentBytes += Math.ceil(file.size / 3) * 4 + 128;
-        sections[section] += estimateTokens({role: 'user', content: [{type: 'image'}]});
       }
     }
   }
@@ -76,7 +65,7 @@ export function estimateRequest(messages, tools = [], model = {}) {
     ? 0 : calculateContextTokens(messages[last].usage) + instructionReserve
     + messages.slice(last + 1).reduce((n, m) => n + estimateTokens(m), 0);
   return {estimated_tokens: estimated, budget_tokens: Math.max(estimated, usage),
-    serialized_bytes: Buffer.byteLength(JSON.stringify({messages, tools}), 'utf8') + attachmentBytes,
+    serialized_bytes: Buffer.byteLength(JSON.stringify({messages, tools}), 'utf8'),
     sections, images, image_bytes: imageBytes, usage_based_tokens: usage || null,
     instruction_reserve_tokens: last < 0 ? 0 : instructionReserve};
 }

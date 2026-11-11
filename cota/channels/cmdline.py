@@ -21,6 +21,7 @@ from cota.files import MAX_ATTACHMENTS
 from .base import BaseChannel
 from .events import InboundMessage, OutboundMessage
 from .queue import MessageBus
+from .terminal_files import TerminalFiles
 
 _BUILTIN_INPUT = input
 
@@ -63,6 +64,7 @@ class CmdlineChannel(BaseChannel):
         self._input_directory = Path.cwd()
         self._stream_requests = OrderedDict()
         self._stream_active = None
+        self._received_files = TerminalFiles(lambda text: self._write_line(text))
 
     def set_message_handler(self, handler: Callable) -> None:
         self._message_handler = handler
@@ -93,6 +95,8 @@ class CmdlineChannel(BaseChannel):
     # ── Output ──────────────────────────────────────────────────────
 
     def _print_message(self, msg: OutboundMessage) -> None:
+        if not msg.content and msg.attachments:
+            return
         sender = msg.metadata.get("sender", "bot")
         text = msg.content
         prefix = "Bot: " if sender == "bot" else f"{sender.title()}: "
@@ -184,10 +188,32 @@ class CmdlineChannel(BaseChannel):
             while len(self._stream_requests) > 64:
                 self._stream_requests.popitem(last=False)
         # Attachments always come from the durable reply, never previews.
-        files = getattr(self, 'files', None)
-        for item in msg.attachments:
-            path = await asyncio.to_thread(files.resolve, msg.session_id, item['id']) if files else item['id']
-            self._write_line(f"File: {item['name']} — {path}")
+        await self._received_files.show(msg, getattr(self, 'files', None))
+
+    @staticmethod
+    async def _open_file(path):
+        """Only a user's /open command invokes the platform's document viewer."""
+        if sys.platform == 'win32':
+            await asyncio.to_thread(os.startfile, str(path))
+            return
+        command = 'open' if sys.platform == 'darwin' else 'xdg-open'
+        process = await asyncio.create_subprocess_exec(command, str(path),
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        try:
+            async with asyncio.timeout(10):
+                await process.wait()
+        except BaseException as error:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            await process.wait()
+            if isinstance(error, TimeoutError):
+                raise ValueError('等待系统打开附件超时，请根据文件路径手动打开') from None
+            raise
+        if process.returncode:
+            raise ValueError('系统未能打开附件，请根据文件路径手动打开')
 
     def flush_output(self) -> None:
         """Show input prompt after a turn (debug mode only).
@@ -285,7 +311,7 @@ class CmdlineChannel(BaseChannel):
 
     async def _input_loop(self) -> None:
         self._write_line(f"Session: {self.name}:{self._session_id}")
-        self._write_line('附件：/file "路径" 添加，/clear 清空；输入文字或直接回车发送。/stop 退出。')
+        self._write_line('附件：/file "路径" 添加，/clear 清空；/files 查看收到的附件，/open 编号打开。/stop 退出。')
         self._write_line("Input message:")
         pending = []
 
@@ -303,6 +329,21 @@ class CmdlineChannel(BaseChannel):
                     continue
 
                 command = message.split(maxsplit=1)
+                if command and command[0] in ('/files', '/open'):
+                    self._close_stream_line()
+                    try:
+                        if command[0] == '/files':
+                            if len(command) != 1:
+                                raise ValueError('用法：/files')
+                            self._received_files.listing()
+                        else:
+                            path = await self._received_files.open_path(
+                                command[1] if len(command) > 1 else '', getattr(self, 'files', None))
+                            await self._open_file(path)
+                            self._write_line(f'已请求打开：{path}')
+                    except (OSError, ValueError, TimeoutError) as error:
+                        self._write_line(f'附件错误：{error}')
+                    continue
                 if command and command[0] == '/file':
                     try:
                         if len(pending) >= MAX_ATTACHMENTS:

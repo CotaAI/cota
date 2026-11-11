@@ -104,36 +104,43 @@ test('native transport preserves P0 attempt states and completion timing',async 
   assert(transport.response_ready_ms>=transport.attempts[0].headers_ms);
 });
 
-test('native hydration keeps all references, missing-file notes, bounded pixels and immutable history',async t=>{
-  const {mkdtemp,writeFile,rm}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
-  const root=await mkdtemp(join(tmpdir(),'cota-model-'));t.after(()=>rm(root,{recursive:true,force:true}));
-  const path=join(root,'image.png');const data=Buffer.from('fake-image-bytes');await writeFile(path,data);
-  const attachments=[{message_id:'user-1',files:[{id:'image',name:'image.png',path,mimeType:'image/png',size:data.length},
-    {id:'pdf',name:'document.pdf',path:join(root,'private.pdf'),mimeType:'application/pdf',size:20},
-    {id:'missing',name:'gone.png',path:join(root,'gone.png'),mimeType:'image/png',size:10},
-    {id:'big',name:'big.png',path,mimeType:'image/png',size:2097153}]}];
-  const f=await fixture(t,async(_req,res)=>done(res));f.options.provider.vision=true;
-  f.options.messages=[{...user,cotaAttachments:attachments[0].files.map(file=>({id:file.id,name:file.name,mime_type:file.mimeType,size:file.size}))}];
-  const original=structuredClone(f.options.messages);
-  const rpc=async(method,payload)=>method==='prepare'?{systemPrompt:'policy',tools:[],attachments}:f.rpc(method,payload);
-  await runAgent(f.options,rpc);
-  const content=f.requests[0].body.messages.find(m=>m.role==='user').content;
-  assert.equal(content.filter(c=>c.type==='image_url').length,1);
-  assert.equal(content.find(c=>c.type==='image_url').image_url.url,`data:image/png;base64,${data.toString('base64')}`);
-  const text=content.filter(c=>c.type==='text').map(c=>c.text).join('\n');
-  assert.match(text,/document.pdf/);assert.match(text,/Attachment unavailable/);assert.match(text,/2 MiB/);
-  assert.doesNotMatch(text,/local_copy|private.pdf/);assert.deepEqual(f.options.messages,original);
+test('native resource hydration preserves metadata, unavailable notes and automatic image limits', async t => {
+  const data = Buffer.from('fake-image-bytes');
+  const resources = [
+    {id: 'f_image', path: '/bot/.cota/context-images/session/image.png', mimeType: 'image/png', size: data.length},
+    {id: 'f_missing', path: '/bot/.cota/context-images/session/missing.png', mimeType: 'image/png', size: 10},
+    {id: 'f_big', path: '/bot/.cota/context-images/session/big.png', mimeType: 'image/png', size: 2097153}];
+  const f = await fixture(t, async (_req, res) => done(res)); f.options.provider.vision = true;
+  f.options.imageResources = resources;
+  f.options.messages = [{...user, cotaAttachmentsHydrated: true, content: [
+    {type: 'text', text: 'image.png reference; pixels omitted'}, {type: 'text', text: 'gone.png reference; pixels omitted'},
+    {type: 'text', text: 'big.png exceeds automatic model-input limit of 2 MiB'},
+    {type: 'text', text: 'document.pdf: file contents not parsed'}],
+    cotaImageRefs: resources.map((resource, index) => ({index, ...resource, auto: index !== 2}))}];
+  const original = structuredClone(f.options.messages);
+  await runAgent(f.options, async (method, payload) => method === 'image_resource'
+    ? payload.id === 'f_image' ? {type: 'image', mimeType: 'image/png', data: data.toString('base64')}
+      : {error: 'Image resource unavailable; contents not reviewed'} : f.rpc(method, payload));
+  const content = f.requests[0].body.messages.find(m => m.role === 'user').content;
+  assert.equal(content.filter(c => c.type === 'image_url').length, 1);
+  assert.equal(content.find(c => c.type === 'image_url').image_url.url, `data:image/png;base64,${data.toString('base64')}`);
+  const text = content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+  assert.match(text, /document.pdf/); assert.match(text, /unavailable; contents not reviewed/); assert.match(text, /2 MiB/);
+  assert.doesNotMatch(text, /local_copy|private.pdf/); assert.deepEqual(f.options.messages, original);
 });
 
-test('native text-only model receives authorized file metadata and machine local copy',async t=>{
-  const f=await fixture(t,async(_req,res)=>done(res));
-  f.options.environment={type:'none'};
-  const attachments=[{message_id:'user-1',files:[{id:'file-1',name:'book.pdf',mimeType:'application/pdf',size:200,path:'/authorized/book.pdf'},
-    {id:'missing',note:'Attachment unavailable'}]}];
-  await runAgent(f.options,async(method,payload)=>method==='prepare'?{systemPrompt:'policy',tools:[],attachments}:f.rpc(method,payload));
-  const content=f.requests[0].body.messages.find(m=>m.role==='user').content;
-  assert.match(JSON.stringify(content),/book.pdf/);assert.match(JSON.stringify(content),/Attachment unavailable/);
-  assert.doesNotMatch(JSON.stringify(content),/authorized|local_copy/);
+test('native text-only model retains canonical file metadata without hydrating disabled references', async t => {
+  const f = await fixture(t, async (_req, res) => done(res));
+  const resource = {id: 'f_image', path: '/bot/.cota/context-images/session/image.png', mimeType: 'image/png', size: 10};
+  f.options.imageResources = [resource];
+  f.options.messages = [{...user, cotaAttachmentsHydrated: true, content: [
+    {type: 'text', text: 'book.pdf: File contents have not been parsed'},
+    {type: 'text', text: 'Image resource reference: Selected model is not configured for image input'}],
+    cotaImageRefs: [{index: 1, ...resource, auto: false}]}];
+  await runAgent(f.options, f.rpc);
+  const content = f.requests[0].body.messages.find(m => m.role === 'user').content;
+  assert.match(JSON.stringify(content), /book.pdf/); assert.match(JSON.stringify(content), /not configured/);
+  assert.equal(f.rpcCalls.some(call => call.method === 'image_resource'), false);
 });
 
 function oversizedHistory(){return [user,
@@ -237,8 +244,8 @@ test('request projection bounds restored image history and attachments before bu
       content: [{type: 'toolCall', id: `read-${i}`, name: 'read', arguments: {path: `/book/${i}.png`}}]},
     {role: 'toolResult', cotaEventId: `result-${i}`, timestamp: i + 2, toolCallId: `read-${i}`, toolName: 'read',
       details: {original: true}, content: [{type: 'image', data: Buffer.from(`old ${i}`).toString('base64'), mimeType: 'image/png'}]});
-  const attachment = {id: 'new-attachment', name: 'attachment.png', path: file, mimeType: 'image/png', size: bytes.length};
-  history.push({...user, cotaEventId: 'new-user', cotaAttachments: [{id: attachment.id, name: attachment.name, mime_type: attachment.mimeType, size: bytes.length}]});
+  const attachment = {id: 'f_new', path: '/bot/.cota/context-images/session/new.png', mimeType: 'image/png', size: bytes.length};
+  history.push({...user, cotaEventId: 'new-user', cotaAttachmentsHydrated: true, content: [{type: 'text', text: 'Image resource; pixels omitted'}], cotaImageRefs: [{index: 0, ...attachment}]});
   history.push({role: 'assistant', cotaEventId: 'compare', content: [0, 1].map(i =>
     ({type: 'toolCall', id: `compare-${i}`, name: 'read', arguments: {path: `/book/current-${i}.png`}}))});
   for (let i = 0; i < 2; i++) history.push({role: 'toolResult', cotaEventId: `current-${i}`, toolCallId: `compare-${i}`, toolName: 'read',
@@ -246,8 +253,9 @@ test('request projection bounds restored image history and attachments before bu
   const original = structuredClone(history);
   const f = await fixture(t, async (_req, res) => done(res));
   f.options.messages = history; f.options.provider.vision = true; f.options.compaction = {max_images: 3};
-  const attachments = [{message_id: 'old-user', files: [{...attachment, id: 'old-attachment'}]}, {message_id: 'new-user', files: [attachment]}];
-  const rpc = async (method, payload) => method === 'prepare' ? {systemPrompt: 'policy', tools: [], attachments} : f.rpc(method, payload);
+  f.options.imageResources = [attachment];
+  const rpc = async (method, payload) => method === 'prepare' ? {systemPrompt: 'policy', tools: []}
+    : method === 'image_resource' ? {type: 'image', mimeType: 'image/png', data: bytes.toString('base64')} : f.rpc(method, payload);
   const result = await runAgent(f.options, rpc);
   const wire = f.requests[0].body.messages;
   const pixels = wire.flatMap(m => Array.isArray(m.content) ? m.content.filter(b => b.type === 'image_url') : []);
@@ -264,23 +272,6 @@ test('request projection bounds restored image history and attachments before bu
   f.options.messages = [...result.messages, {...user, cotaEventId: 'restart-user', content: 'continue from your observations'}];
   await runAgent(f.options, rpc);
   assert.equal(f.requests[1].body.messages.flatMap(m => Array.isArray(m.content) ? m.content.filter(b => b.type === 'image_url') : []).length, 0);
-});
-
-test('authorized attachment hydration reuses unchanged pixels but detects a changed file version', async t => {
-  const {hydrateAttachments} = await import('./model.mjs');
-  const {mkdtemp, writeFile, rm} = await import('node:fs/promises');
-  const {tmpdir} = await import('node:os'); const {join} = await import('node:path');
-  const root = await mkdtemp(join(tmpdir(), 'cota-attachment-cache-'));
-  t.after(() => rm(root, {recursive: true, force: true}));
-  const path = join(root, 'image.png'); await writeFile(path, 'first');
-  const attachments = [{message_id: user.cotaEventId, files: [{id: 'immutable-user-file', path, mimeType: 'image/png', size: 5}]}];
-  const cache = new Map(), provider = {vision: true};
-  const first = await hydrateAttachments([user], attachments, provider, cache);
-  const second = await hydrateAttachments([user], attachments, provider, cache);
-  assert.equal(first[0].content.find(b => b.type === 'image'), second[0].content.find(b => b.type === 'image'));
-  await writeFile(path, 'other');
-  const changed = await hydrateAttachments([user], attachments, provider, cache);
-  assert.notEqual(changed[0].content.find(b => b.type === 'image').data, first[0].content.find(b => b.type === 'image').data);
 });
 
 test('an oversized active user input plus tool image batch fails before compaction can discard input pixels', async t => {
@@ -333,20 +324,6 @@ test('image provenance survives Pi truncation of long tool-result text', async t
   await runAgent(f.options, rpc);
   const summary = JSON.stringify(f.requests[0].body.messages);
   assert.match(summary, new RegExp(sourceId)); assert.match(summary, /sha256:/); assert.match(summary, /re-read/);
-});
-
-test('historical attachment references do not read files or return to fallback hydration/budgets', async () => {
-  const {hydrateAttachments} = await import('./model.mjs');
-  const {estimateRequest} = await import('./context.mjs');
-  const file = {id: 'old-reference', name: 'old.png', mime_type: 'image/png', size: 2048};
-  const messages = [{...user, cotaAttachments: [file]}, {...user, cotaEventId: 'new-user'}];
-  const result = await hydrateAttachments(messages, [], {vision: true});
-  assert.equal(result[0].cotaAttachmentsHydrated, true);
-  assert.match(JSON.stringify(result[0].content), /old-reference/);
-  assert.match(JSON.stringify(result[0].content), /re-read/);
-  assert.doesNotMatch(JSON.stringify(result[0].content), /unavailable|not configured/i);
-  assert.equal(estimateRequest(result, [], {attachmentImages: {mimeTypes: ['image/png'], maxBytes: 2097152}}).images, 0);
-  assert.deepEqual(await hydrateAttachments(result, [], {vision: true}), result);
 });
 
 test('deadline error type survives an unacknowledged failure observation', async t => {

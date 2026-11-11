@@ -38,7 +38,7 @@ policies:
           - thought: 保存用户确认内容；使用第五页已有图和角色参考做编辑，输出新版本，比较实际修改。更新清单后只重做受影响审校，并重新渲染完整成书。
           - skills: [creating-childrens-picture-books]
           - result: 编辑图帽子已变蓝，但脸型也发生变化。
-          - thought: 修改没有满足要求，不能当作完成交付。修复角色一致性后再验收，不重新随机生成整本。
+          - thought: 修改没有满足要求，不能当作完成交付。只在剩余两轮修订预算内针对角色一致性修复后再验收；用尽则保留版本并报告未解决项，不重新随机生成整本。
           - reply: 帽子的颜色已经改了，但角色外形还需要修正到与前面一致。我会保留其它页面和文字。
   - name: validated-delivery
     steps:
@@ -62,3 +62,28 @@ policies:
       - bot:
           - thought: 尊重停止后续制作的指令，不启动新的付费请求；当前输入在执行队列中处理，不声称已经即时撤销供应商请求。记录现有文件与未完成项。
           - reply: 好的，接下来不再启动绘图。现有故事、分镜和已保存的图片会保留，之后可以从这些成果继续。
+  - name: bounded-revision
+    steps:
+      - user: 第四页还是不太对，再继续改到满意。
+      - bot:
+          - thought: 沿用 page-04 的固定要求、稳定对象 ID 和已保存版本，只修具体问题；初次生成之后最多再修两轮，不以改名、改标准或重建项目恢复次数。
+          - skills: [creating-childrens-picture-books]
+          - result: generate 返回 revision_limit_reached，asset 为 page-04，attempts 为 3，retryable 为 false。
+          - thought: 本页不能继续付费重试。保存现有作品与未解决项，继续其它可独立完成的页面和排版；不把次数到顶当作质量通过，不绕过配套程序重新调用接口。
+          - reply: 第四页还有这处需要确认，我先保留现有版本，不再反复重画。其它页面可以继续整理，交付时我会明确标出这一项。
+  - name: stable-review-evidence
+    steps:
+      - user: 这张图刚刚说有问题，现在又说没有，到底以哪个为准？
+      - bot:
+          - thought: 检查当前版本哈希与固定标准对应的真实审阅记录，复用同图同标准的已有证据，不通过换报告文件名获得新结论，也不把后续随口看图当成已验证的更正。
+          - skills: [creating-childrens-picture-books]
+          - result: review 返回 reused 为 true，当前图片哈希与已有 image_inputs 一致，但另一条观察与原结论冲突。
+          - thought: 相同版本的观察冲突意味着不确定，不能假装已有可靠更正或据此自动重画整书。保留图片与两份观察并说明待确认，保持已通过内容稳定，继续独立工作。
+          - reply: 这两次观察互相冲突，目前不能据此确定需要重画。我先保留这张图，把争议点标为待确认，不会把它说成已经验收通过。
+  - name: avoid-cosmetic-loops
+    steps:
+      - user: 主要内容和角色都对了，这些颜色深浅差一点要不要一直调？
+      - bot:
+          - thought: 已满足明确要求且没有事实、图文或严重版式问题时，颜色深浅偏好属于可选润色。保留已通过版本，完成必要验收和交付，不因审美建议无限重新生成或重建。
+          - skills: [creating-childrens-picture-books]
+          - reply: 这些可以作为后续的可选润色，当前版本先保留下来。我会把重点放在必要检查和交付上。

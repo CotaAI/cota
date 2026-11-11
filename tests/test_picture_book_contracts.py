@@ -148,19 +148,22 @@ def test_review_labels_match_image_order_and_saved_versions(book):
         return httpx.Response(200, json={'choices': [{'message': {'content': 'A specific observation.'}}]})
 
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
-        report = models.review(root, project, 'prompt.txt', ['page-07.png', 'character.png'], 'review.json', client=client)
+        report = models.review(root, project, 'prompt.txt', ['page-07.png', 'character.png'], 'review.json', client=client, asset='test-asset')
         assert report['image_inputs'][0]['path'] == 'page-07.png'
         assert report['image_inputs'][1]['path'] == 'character.png'
+        assert report['image_inputs'][0]['role'] == 'target'
+        assert report['image_inputs'][1]['role'] == 'reference'
         content = bodies[0]['messages'][0]['content']
         assert 'page-07.png' in content[1]['text'] and content[2]['type'] == 'image_url'
         assert 'character.png' in content[3]['text'] and content[4]['type'] == 'image_url'
         assert report['image_inputs'][0]['sha256'] in content[1]['text']
         assert models.review(root, project, 'prompt.txt', ['page-07.png', 'character.png'],
-                             'review.json', client=client)['reused'] is True
-        # Same pixels under different names must not reuse a report with stale labels.
+                             'review.json', client=client, asset='test-asset')['reused'] is True
+        # Same pixels reuse observations, preserving original labels and an explicit current mapping.
         (project / 'other.png').write_bytes(png())
-        with pytest.raises(ValueError, match='already exists'):
-            models.review(root, project, 'prompt.txt', ['other.png', 'character.png'], 'review.json', client=client)
+        reused = models.review(root, project, 'prompt.txt', ['other.png', 'character.png'], 'review.json', client=client, asset='test-asset')
+        assert reused['image_inputs'][0]['path'] == 'page-07.png'
+        assert reused['current_image_inputs'][0]['path'] == 'other.png'
     assert len(bodies) == 1
     assert 'TEST_ONLY' not in (project / 'review.json').read_text()
 
@@ -171,7 +174,7 @@ def test_review_rejects_empty_instructions_before_model_request(book):
     (project / 'page.png').write_bytes(png())
     with httpx.Client(transport=httpx.MockTransport(lambda request: pytest.fail('No paid request'))) as client:
         with pytest.raises(ValueError, match='prompt'):
-            models.review(root, project, 'prompt.txt', ['page.png'], 'review.json', client=client)
+            models.review(root, project, 'prompt.txt', ['page.png'], 'review.json', client=client, asset='test-asset')
 
 
 def test_cli_returns_nonzero_for_unsupported_layout(book):

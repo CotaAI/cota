@@ -55,15 +55,25 @@ Pi 1.4 区分可执行工具和供应商工具声明：`AgentContext.tools` 绑�
 
 模型回复同时包含公开文字和工具调用时，完整 assistant 消息仍归属于第一条 `tool_started`；另保存一条以 `llm_event_id` 指向它的 `bot_utter` 用于历史展示和投递。两者同次提交后才执行工具；这条公开发言不再生成第二份模型上下文。隐藏推理不属于公开文字。
 
-原生请求单次默认总时限180秒、默认不自动重试；空行保活、SDK 退避以及请求观察钩子的等待不能延长该时限，详见 [endpoints.yml](../configuration/endpoints.md)。初始历史只同步一次；普通 prepare 只返回 system 指导、工具声明和已授权的附件位置，不往返传输包含图片的整份历史。压缩后才从 Cota 接收新的上下文投影。Debug 模式额外传回一次实际供应商请求。原生工具产生的图片结果仍按现有工具记录协议传递，尚未引入通用二进制资源协议。
+原生请求单次默认总时限180秒、默认不自动重试；空行保活、SDK 退避以及请求观察钩子的等待不能延长该时限，详见 [endpoints.yml](../configuration/endpoints.md)。初始历史只同步一次，图片由不可变资源引用代替，不携带历史 Base64。普通 prepare 不从 Node 传回历史；Cota 从已提交 DST 计算 Policy，原生 provider 接收 system 指导、工具声明及资源目录，自定义适配器接收同样精简过的消息。压缩后也使用这一投影恢复。Debug 模式额外传回一次实际供应商请求。工具首次产生的图片仍完整提交给 Cota，后续按需通过 `image_resource(id)` 加载，尚未引入通用二进制传输协议。
 
 `text_delta` 只作为实时预览发送给支持它的 Channel；思考、工具参数等增量不作为用户回复。完整回复提交后以同一 request_id 替换预览，不新增逐 token Event。必要的 Pi 推理签名和续接内容保存在来源事件的可选 `llm.continuation` 中，用于恢复模型协议；普通聊天历史不展示它，普通无签名文本不会增加该字段。
+
+## 图片证据与工作上下文
+
+原始 `tool_result.content`、用户附件及 DST 恢复规则保持不变。Cota 在启动、prepare 和压缩恢复的传输边界，把图片替换成简短说明和 `{id, path, mimeType, size}` 引用。工具图片 ID 是返回字节的 SHA-256；用户图片使用会话附件的不可变文件 ID。目录包含已压缩历史中的图片，因此重启后仍可复查摘要引用的旧版本。群聊中尚未进入本轮的输入不进入该目录。
+
+Pi 在请求模型前，仅加载最新用户输入中允许自动视觉输入的图片，以及上一条 assistant 之后尚待观察的工具图片批次；已有文字观察继续保留，历史像素不自动补回。加载前根据引用大小检查图片预算，相同内容不重复发送，Node 仅缓存最近少量资源。`auto: false` 的大图片或非视觉模型附件继续作为引用，由 Skill 选择合适工具处理。
+
+`/bot/.cota/context-images/<会话作用域>/...` 是供 Pi 官方 `read` 工具使用的只读虚拟路径，并非磁盘文件。Cota 通过该工具工厂的 Operations 接口，从本会话原始证据加载精确字节；即使工作目录中的同名文件已被覆盖，读取资源路径仍返回旧版本。未知 ID、跨会话资源、完整性错误不会退回任意宿主机路径。资源引用只证明图片存在，不代表已审阅或通过验收。
+
+Cota 负责证据、资源作用域和传输投影；Pi 继续负责模型—工具循环、原生读取与压缩算法。没有新增 Event、会话表或第二套压缩器。
 
 ## Skill 资源边界
 
 发现范围来自 `Agent.skill_paths`，默认仅为该 Bot 的 `skills/`。调用 Pi 的加载器时关闭默认全局目录，检查真实路径，拒绝越过资源根目录的符号链接。
 
-`environment.type: none` 下，read 仅能读取已发现 Skill 目录的普通文件；machine 下，同一个 read 还可读取宿主机业务文件，与其他可用原生工具使用同一个工作目录。machine 工作目录不构成沙箱。八个名称始终保留给 Pi；personal 的 machine 环境即使没有 Skill，也会按依赖可用性提供工具。配置与边界见 [工具与执行环境](tool-adapters.md)。
+`environment.type: none` 下，read 仅能读取已发现 Skill 目录的普通文件，以及本轮注册的会话图片资源；machine 下，同一个 read 还可读取宿主机业务文件，与其他可用原生工具使用同一个工作目录。machine 工作目录不构成沙箱。八个名称始终保留给 Pi；personal 的 machine 环境即使没有 Skill，也会按依赖可用性提供工具。配置与边界见 [工具与执行环境](tool-adapters.md)。
 
 `skills.mjs` 只负责发现与格式化目录；`tools.mjs` 使用官方 ToolDefinition 工厂构造工具，保留参数转换及 prompt guidelines。Cota 将这些 guidelines 与执行环境说明加入每次 prepare 的 system prompt，不引入完整 coding-agent system prompt。
 
@@ -75,6 +85,6 @@ Pi 1.4 区分可执行工具和供应商工具声明：`AgentContext.tools` 绑�
 
 运行记录查看 Cota Store / Trace；原始模型请求诊断属于单独的 debug 数据，不应把 Pi 目录当会话数据库。
 
-实现入口：`cota/runtime/pi_bridge.py`、`cota/runtime/pi_runtime.py`、`cota/runtime/pi/engine.mjs`、`cota/runtime/pi/model.mjs`、`cota/runtime/pi_models.py`、`cota/runtime/pi/skills.mjs`、`cota/runtime/pi/tools.mjs`、`cota/runtime/pi_distribution.py`。
+实现入口：`cota/runtime/pi_bridge.py`、`cota/runtime/pi_runtime.py`、`cota/runtime/pi_images.py`、`cota/runtime/pi/engine.mjs`、`cota/runtime/pi/model.mjs`、`cota/runtime/pi_models.py`、`cota/runtime/pi/skills.mjs`、`cota/runtime/pi/tools.mjs`、`cota/runtime/pi_distribution.py`。
 
 相关文档：[执行流程](execution-flow.md) · [DST](dst.md) · [Skills](../skills/overview.md) · [Tool 适配](tool-adapters.md)

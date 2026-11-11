@@ -13,6 +13,7 @@ import {
   createPowerShellToolDefinition, createLocalPowerShellOperations, getShellConfig, getPowerShellConfig,
 } from '@earendil-works/pi-coding-agent';
 import { within } from './skills.mjs';
+import {createImageResources, IMAGE_RESOURCE_ROOT} from './image-context.mjs';
 
 function validateEnvironment(deploy, environment) {
   if (!['personal', 'service'].includes(deploy)) throw new Error('deploy must be personal or service');
@@ -29,7 +30,7 @@ function validateEnvironment(deploy, environment) {
       || environment.timeout_seconds <= 0)) throw new Error('Machine requires absolute workspace and positive timeout');
 }
 
-export async function createNativeTools({cwd = process.cwd(), pythonExecutable, uvExecutable, deploy = 'service', environment = {type: 'none'}}, resources, request, signal) {
+export async function createNativeTools({cwd = process.cwd(), pythonExecutable, uvExecutable, imageResources: initialImages = [], deploy = 'service', environment = {type: 'none'}}, resources, request, signal) {
   validateEnvironment(deploy, environment);
   // This worker never installs dependencies during a Bot turn. Pi handles the
   // search binary lookup itself; its native offline switch prevents downloads.
@@ -41,12 +42,15 @@ export async function createNativeTools({cwd = process.cwd(), pythonExecutable, 
   const {skills} = resources;
   const roots = [...new Set(skills.map(skill => skill.baseDir))];
   const definitions = [], unavailable = {};
-  if (machine || skills.length) {
+  const imageResources = createImageResources(initialImages, request);
+  if (machine || skills.length || imageResources.size) {
     const definition = createReadToolDefinition(workdir);
-    if (!machine) definition.description += " Only files inside this Bot's discovered Skill directories are available.";
+    if (!machine) definition.description += " Only discovered Bot Skill files and registered image resource paths are available.";
     definitions.push({...definition, execute: async (id, args, signal, onUpdate) => {
       let bytes, file, mimeType;
       async function checked(path) {
+        if (imageResources.forPath(path)) return path;
+        if (path.startsWith(IMAGE_RESOURCE_ROOT)) throw new Error('Unknown image resource path');
         const canonical = await realpath(path);
         if (!machine && !roots.some(root => within(root, canonical)))
           throw new Error('Read is outside the Bot Skill resources');
@@ -54,16 +58,22 @@ export async function createNativeTools({cwd = process.cwd(), pythonExecutable, 
         return canonical;
       }
       // Capture exactly the bytes Pi consumes, not a second post-read hash.
-      const reader = createReadToolDefinition(workdir, {operations: {
+      const reader = createReadToolDefinition(workdir, {autoResizeImages: !imageResources.forPath(resolve(workdir, args.path)), operations: {
         access: async path => { await checked(path); },
-        readFile: async path => { file = await checked(path); bytes = await readFile(file); return bytes; },
+        readFile: async path => {
+          file = await checked(path);
+          const resource = imageResources.forPath(file);
+          bytes = resource ? Buffer.from((await imageResources.load(resource.id)).data, 'base64') : await readFile(file);
+          return bytes;
+        },
         detectImageMimeType: async path => {
-          mimeType = await detectSupportedImageMimeTypeFromFile(await checked(path));
+          const file = await checked(path);
+          mimeType = imageResources.forPath(file)?.mimeType ?? await detectSupportedImageMimeTypeFromFile(file);
           return mimeType;
         },
       }});
       const result = await reader.execute(id, args, signal, onUpdate);
-      const owner = file && skills.filter(skill => within(skill.baseDir, file))
+      const owner = file && !imageResources.forPath(file) && skills.filter(skill => within(skill.baseDir, file))
         .sort((a, b) => b.baseDir.length - a.baseDir.length)[0];
       let resource;
       if (owner && bytes && !result.isError) {
@@ -152,8 +162,8 @@ export async function createNativeTools({cwd = process.cwd(), pythonExecutable, 
     ? ` For Bot scripts with PEP 723 inline metadata (# /// script), use ${JSON.stringify(uvExecutable + ' run')} instead of the Python executable for automatic dependency isolation.` : '';
   const context = machine
     ? `Execution environment: machine. Bot directory: ${JSON.stringify(resolve(cwd))}. Working directory: ${JSON.stringify(workdir)}.${python}${uv} Relative tool paths use the working directory; a shell cd applies only to that command, not later tool calls. This is a starting directory, not a sandbox. Commands run on the deployment machine, not the chat user's device. Shell timeout limit: ${environment.timeout_seconds} seconds.`
-    : 'Execution environment: none. read can only access the advertised Bot Skill resources. No user filesystem or shell is available.';
-  return {tools, inventory: {available: tools.map(tool => tool.name), unavailable}, schemas: tools.map(tool => ({type: 'function', function: {
+    : 'Execution environment: none. read can only access advertised Bot Skill files and registered image resource paths. No user filesystem or shell is available.';
+  return {tools, imageResources, inventory: {available: tools.map(tool => tool.name), unavailable}, schemas: tools.map(tool => ({type: 'function', function: {
     name: tool.name, description: tool.description, parameters: tool.parameters,
   }})), prompt: '\n\n' + context + (guidelines.length ? '\n' + guidelines.join('\n') : '')};
 }

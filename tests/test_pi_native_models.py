@@ -144,7 +144,7 @@ async def test_native_prepare_uses_durable_projection_without_returning_history(
                                        'nativeTools': [], 'extensionTools': []})
     assert 'messages' not in prepared
     assert prepared['systemPrompt'] == 'You are helpful.Skills'
-    assert prepared['attachments'] == []
+    assert prepared['imageResources'] == []
 
 
 @pytest.mark.asyncio
@@ -345,28 +345,34 @@ async def test_native_tool_batch_commits_commentary_before_effect_and_refreshes_
 
 
 @pytest.mark.asyncio
-async def test_custom_prepare_returns_authorized_attachments_for_prebudget_projection(mock_agent):
+async def test_custom_prepare_projects_attachments_without_reading_pixels(mock_agent, tmp_path):
+    from unittest.mock import Mock
+    from cota.files import FileStorage
     from cota.events import UserUtterEvent
     from cota.runtime.pi_runtime import PiAgentRuntime
-    dst = DST('image-projection', mock_agent)
-    dst.append_event(UserUtterEvent('inspect'))
+    mock_agent.files = FileStorage(tmp_path)
+    item = mock_agent.files.put('images', 'u', 'one.png', b'\x89PNG\r\n\x1a\nimage')
+    mock_agent.files.read = Mock(side_effect=AssertionError('prepare must not read image bytes'))
+    dst = DST('images', mock_agent)
+    dst.append_event(UserUtterEvent('inspect', attachments=[item]))
     dst.append_event(Event('run_started', {}, run_id='image-run'))
-    runtime = PiAgentRuntime(mock_agent, dst, 'image-projection')
-    runtime._system_prompt = 'policy'
-    references = [{'message_id': dst.context_messages[0]['cotaEventId'], 'files': [{'id': 'image', 'note': 'unavailable'}]}]
-    runtime._attachment_references = AsyncMock(return_value=references)
-    prepared = await runtime._prepare({'messages': dst.context_messages, 'nativeTools': [], 'extensionTools': []})
-    assert prepared.get('attachments') == references
+    runtime = PiAgentRuntime(mock_agent, dst, 'images')
+    prepared = await runtime._prepare({'nativeTools': [], 'extensionTools': []})
+    assert prepared['imageResources'][0]['id'] == item['id']
+    assert prepared['messages'][1]['cotaAttachmentsHydrated'] is True
+    mock_agent.files.read.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_custom_transport_does_not_rehydrate_request_only_attachment_references(mock_agent):
+async def test_custom_transport_passes_request_only_images_without_rehydration(mock_agent):
     from cota.runtime.pi_runtime import PiAgentRuntime
     runtime = PiAgentRuntime(mock_agent, DST('images', mock_agent), 'images')
-    projected = [{'role': 'user', 'content': [{'type': 'text', 'text': 'Image pixels omitted: source image; re-read to inspect.'}],
+    projected = [{'role': 'user', 'content': [{'type': 'text', 'text': 'Image pixels omitted: re-read to inspect.'}],
                   'cotaAttachments': [{'id': 'image', 'mime_type': 'image/png', 'size': 5}],
                   'cotaAttachmentsHydrated': True}]
-    assert await runtime._attachment_context(projected) == projected
+    await runtime._handle_request('model', {'messages': projected, 'systemPrompt': 'test', 'tools': []})
+    sent = mock_agent._llm_mock.generate_chat.call_args.kwargs['messages']
+    assert sent[1]['content'] == projected[0]['content']
 
 
 @pytest.mark.asyncio
@@ -400,24 +406,17 @@ async def test_custom_adapter_restart_keeps_new_attachment_pixels_and_old_text_o
 
 
 @pytest.mark.asyncio
-async def test_attachment_authorization_skips_history_and_checks_current_integrity(mock_agent, tmp_path):
-    from unittest.mock import Mock
+async def test_attachment_resource_rpc_checks_current_integrity(mock_agent, tmp_path):
+    from cota.events import UserUtterEvent
     from cota.files import FileStorage
     from cota.runtime.pi_runtime import PiAgentRuntime
     mock_agent.files = FileStorage(tmp_path / 'files')
-    first = mock_agent.files.put('images', 'u', 'old.png', b'old image')
-    current = mock_agent.files.put('images', 'u', 'current.png', b'new image')
-    current_path = mock_agent.files.resolve('images', current['id'])
-    original_resolve = mock_agent.files.resolve
-    mock_agent.files.resolve = Mock(wraps=original_resolve)
-    messages = [{'role': 'user', 'cotaEventId': 'old', 'content': 'old input', 'cotaAttachments': [first]},
-                {'role': 'user', 'cotaEventId': 'current', 'content': 'new input', 'cotaAttachments': [current]},
-                {'role': 'user', 'cotaEventId': 'summary', 'content': 'summary', 'cotaCompaction': True}]
-    runtime = PiAgentRuntime(mock_agent, DST('images', mock_agent), 'images')
-    references = await runtime._attachment_references(messages)
-    assert [entry['message_id'] for entry in references] == ['current']
-    mock_agent.files.resolve.assert_called_once_with('images', current['id'])
-    current_path.write_bytes(b'bad image')
-    references = await runtime._attachment_references(messages)
-    assert references[0]['files'][0]['note'] == 'Attachment unavailable'
-    assert mock_agent.files.resolve.call_count == 2
+    current = mock_agent.files.put('images', 'u', 'current.png', b'\x89PNG\r\n\x1a\nimage')
+    path = mock_agent.files.resolve('images', current['id'])
+    dst = DST('images', mock_agent)
+    dst.append_event(UserUtterEvent('inspect', attachments=[current]))
+    runtime = PiAgentRuntime(mock_agent, dst, 'images')
+    await runtime._initial_context()
+    assert (await runtime._handle_request('image_resource', {'id': current['id']}))['type'] == 'image'
+    path.write_bytes(b'bad image')
+    assert 'error' in await runtime._handle_request('image_resource', {'id': current['id']})

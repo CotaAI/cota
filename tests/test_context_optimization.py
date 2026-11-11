@@ -165,7 +165,6 @@ async def test_pi_receives_provider_model_id_instead_of_endpoint_alias(mock_agen
     await runtime.run()
     assert runtime._bridge.run.call_args.args[0]['model']['id'] == 'actual-provider-model'
     assert runtime._bridge.run.call_args.args[0]['pythonExecutable'] == sys.executable
-    assert runtime._bridge.run.call_args.args[0]['model']['attachmentImages']['mimeTypes'] == []
 
 
 @pytest.mark.asyncio

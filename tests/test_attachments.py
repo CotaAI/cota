@@ -151,7 +151,7 @@ async def test_large_image_limit_is_explicit_to_the_model(mock_agent, tmp_path):
     item = mock_agent.files.put('s', 'u', 'large.png', b'\x89PNG\r\n\x1a\n' + b'x' * (2 * 1024 * 1024))
     dst = DST('s', mock_agent)
     dst.append_event(UserUtterEvent('看图', attachments=[item]))
-    messages = await PiAgentRuntime(mock_agent, dst, 's')._attachment_context(dst.context_messages)
+    messages = await PiAgentRuntime(mock_agent, dst, 's')._initial_context()
     assert 'image' in str(messages).lower() and 'limit' in str(messages).lower()
 
 
@@ -317,7 +317,33 @@ async def test_text_model_can_delegate_images_without_receiving_image_blocks(moc
     file = mock_agent.files.put('s', 'u', 'small.png', b'\x89PNG\r\n\x1a\nimage')
     dst = DST('s', mock_agent)
     dst.append_event(UserUtterEvent('请看图', attachments=[file]))
-    messages = await PiAgentRuntime(mock_agent, dst, 's')._attachment_context(dst.context_messages)
+    messages = await PiAgentRuntime(mock_agent, dst, 's')._initial_context()
     content = messages[0]['content']
-    assert isinstance(content, str)
-    assert 'not configured for image input' in content
+    assert isinstance(content, list)
+    assert not any(block['type'] == 'image' for block in content)
+    assert 'not configured for image input' in str(content)
+
+
+def test_named_local_copy_preserves_extension_scope_and_source(tmp_path):
+    files = files_class()(tmp_path / 'files')
+    item = files.put('s', 'u', '故事与分镜.md', '原始内容'.encode())
+    path = files.named_copy('s', item['id'])
+    assert path.name == '故事与分镜.md' and path.read_text() == '原始内容'
+    assert files.named_copy('s', item['id']) == path
+    with pytest.raises(FileNotFoundError):
+        files.named_copy('other', item['id'])
+    path.write_text('user edited copy')
+    assert files.resolve('s', item['id']).read_text() == '原始内容'
+    with pytest.raises(FileNotFoundError):
+        files.named_copy('s', item['id'])  # Do not silently overwrite local edits.
+
+
+def test_named_local_copy_rejects_symlink_directory(tmp_path):
+    files = files_class()(tmp_path / 'files')
+    item = files.put('s', 'u', 'data', b'original')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (files.root / item['id'] / 'view').symlink_to(outside, target_is_directory=True)
+    with pytest.raises(FileNotFoundError):
+        files.named_copy('s', item['id'])
+    assert not list(outside.iterdir())
