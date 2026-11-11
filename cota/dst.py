@@ -38,6 +38,8 @@ class DST:
         self._user_id = None
         self._events = ()
         self._run_ids = set()
+        self._event_ids = set()
+        self._event_map = {}
         self._latest_user_event = None
         self._latest_bot_event = None
         self._user_context = {}
@@ -136,7 +138,7 @@ class DST:
         current = self._execution.get('run_id')
         status = self._execution.get('status')
         if event.type == EventType.RUN_STARTED:
-            if not event.run_id or any(e.run_id == event.run_id for e in self._events):
+            if not event.run_id or event.run_id in self._run_ids:
                 raise ValueError('run_started requires a new, nonempty run_id')
             if status == 'running':
                 raise ValueError('Current execution is still running')
@@ -153,17 +155,16 @@ class DST:
         """
         self._check_state()
         event.validate()
-        if any(e.event_id == event.event_id for e in self._events):
+        if event.event_id in self._event_ids:
             raise ValueError(f'duplicate event_id: {event.event_id}')
         expected = len(self._events) + 1
         if event.sequence not in (None, 0, expected):
             raise ValueError(f'Expected event sequence {expected}')
         from cota.trace import validate_event_references
-        validate_event_references(event, self._events)
+        validate_event_references(event, self._events, event_map=self._event_map)
         self._validate_transition(event)
         event.sequence = expected
-        # Detach from the producer so it cannot mutate applied state by aliasing.
-        fact = Event.from_dict(event.as_dict()).freeze()
+        fact = event._frozen_copy()
         p, kind = fact.payload, fact.type
         current_run = self._execution.get('run_id')
         # Late/foreign run observations are facts for Trace, never commands to
@@ -172,11 +173,11 @@ class DST:
         running = self._execution.get('status') in (None, 'running')
         projects_tool = projects_execution and running
         from cota.events.context import apply_context
-        trigger_event = next((e for e in self._events if e.event_id == p.get('input_event_id')), None) if kind == EventType.RUN_STARTED else None
+        trigger_event = self._event_map.get(p.get('input_event_id')) if kind == EventType.RUN_STARTED else None
         deferred_ids = set()
         if kind == EventType.RUN_STARTED and (p.get('mode') == 'group' or p.get('context_input_id')):
             cutoff_id = p.get('context_input_id', p['input_event_id'])
-            cutoff = next(e.sequence for e in self._events if e.event_id == cutoff_id)
+            cutoff = self._event_map[cutoff_id].sequence
             deferred_ids = {e.event_id for e in self._events
                             if e.type == EventType.USER_UTTER and e.sequence > cutoff}
         context = apply_context(self._context_messages, fact, active_run=current_run if running else None,
@@ -212,6 +213,8 @@ class DST:
             self._latest_bot_event = fact
         self._context_messages = freeze_json(context)
         self._events += (fact,)
+        self._event_ids.add(fact.event_id)
+        self._event_map[fact.event_id] = fact
         if kind == EventType.RUN_STARTED:
             self._run_ids.add(fact.run_id)
         self._hash_fact(fact)
@@ -386,6 +389,8 @@ class DST:
                 state = deepcopy(snapshot['state'])
                 tracker._events = tuple(fact.freeze() for fact in facts[:start])
                 tracker._run_ids = {fact.run_id for fact in facts[:start] if fact.type == EventType.RUN_STARTED}
+                tracker._event_ids = {fact.event_id for fact in tracker._events}
+                tracker._event_map = {fact.event_id: fact for fact in tracker._events}
                 for name in ('user_id', 'user_context', 'active_skill', 'execution', 'context_messages'):
                     setattr(tracker, '_' + name, state[name])
                 tracker._context_messages = freeze_json(tracker._context_messages)

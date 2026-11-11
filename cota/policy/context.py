@@ -33,8 +33,9 @@ class PolicyContext:
         return '\n'.join(o.get('retrieval_text', o['text']) for o in self.observations if o['role'] in roles)
 
     @classmethod
-    def from_runtime(cls, messages, dst, available_skills, read_skills, max_chars=16000):
-        events = list(dst.events)
+    def from_runtime(cls, messages, dst, available_skills, read_skills, max_chars=16000, *, events=None):
+        if events is None:
+            events = list(dst.events)
         facts = {e.event_id: e for e in events}
         starts = {(e.run_id, e.payload['tool_call_id']): e for e in events if e.type == 'tool_started'}
         used, observations, remaining = set(), [], max_chars - 2

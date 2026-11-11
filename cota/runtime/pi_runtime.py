@@ -232,8 +232,9 @@ class PiAgentRuntime:
                     if m.get('role') == 'toolResult' and m.get('toolName') == 'read'
                     and not m.get('isError') and m.get('cotaResultEventId')}
         from cota.events.resources import skill_read_name
+        events = list(self.dst.events)
         read_skills = []
-        for result in self.dst.events:
+        for result in events:
             skill = skill_read_name(result)
             if not skill:
                 continue
@@ -244,7 +245,7 @@ class PiAgentRuntime:
                     and skill not in read_skills):
                 read_skills.append(skill)
         context = PolicyContext.from_runtime(messages, self.dst, self._available_skills, read_skills,
-                                             max_chars=self.agent.policy.context_chars)
+                                             max_chars=self.agent.policy.context_chars, events=events)
         services = getattr(self.agent, 'policy_services', None) or PolicyServices(model=self.agent.llm_instance)
         with model_purpose('policy'):
             guidance = await self.agent.policy.guidance(context, services)
