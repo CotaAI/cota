@@ -53,7 +53,7 @@ class PiAgentRuntime:
     """Cota's per-turn coordinator. Pi Core owns the only model/tool loop."""
 
     def __init__(self, agent, dst, session_id, prompt=None, llm=None,
-                 max_iterations=15, *, checkpoint=None, store=None, service_mode=False):
+                 max_iterations=15, *, checkpoint=None, store=None, sanitize_errors=False):
         validate_runtime_selection(agent.dialogue)
         self.agent = agent
         self.dst = dst
@@ -63,7 +63,7 @@ class PiAgentRuntime:
         self.max_iterations = max_iterations
         # Transport-managed error presentation and optional Python adapter
         # bindings are separate from the deployment's tool environment.
-        self._service_mode = bool(service_mode)
+        self._sanitize_errors = bool(sanitize_errors)
         self._group = agent.dialogue.get('mode', 'direct') == 'group'
         self._environment = getattr(agent, 'environment', ExecutionEnvironment())
         self._deploy = getattr(agent, 'deploy', DEFAULT_DEPLOY)
@@ -141,7 +141,7 @@ class PiAgentRuntime:
     def _files_allowed(self):
         event = self.dst.latest_user_event
         channel = event.metadata.get('channel') if event is not None else None
-        return (self._deploy == 'personal' and self._environment.type == 'machine'
+        return (self._environment.type == 'machine'
                 and getattr(self.agent, '_attachment_channels', {}).get(channel, True)
                 and getattr(self.agent, 'deploy', DEFAULT_DEPLOY) == self._deploy
                 and getattr(self.agent, 'environment', ExecutionEnvironment()) == self._environment

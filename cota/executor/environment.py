@@ -24,9 +24,6 @@ class ExecutionEnvironment:
     timeout_seconds: float = 60
     shell: str = 'auto'
 
-    def validate_deployment(self, deploy):
-        validate_deploy(deploy)
-
     @classmethod
     def for_deployment(cls, deploy, config, *, base_path):
         """Resolve trusted deployment defaults once, relative to the Bot directory."""

@@ -301,7 +301,7 @@ class Application:
             logging.getLogger(__name__).exception('Unstarted input recovery stopped')
 
     def _processor(self, inbound, on_input=None, on_reply=None):
-        processor = Processor(self.agent, self.store, self.runner.message_bus, service_mode=True)
+        processor = Processor(self.agent, self.store, self.runner.message_bus, sanitize_errors=True)
         channel = self.runner.get_channel(inbound.channel)
         if getattr(channel, 'supports_streaming', False):
             async def stream(frame):

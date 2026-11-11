@@ -61,13 +61,13 @@ class Processor:
         agent: "Agent",
         store: Store,
         message_bus: Optional[MessageBus] = None,
-        service_mode: bool = False,
+        sanitize_errors: bool = False,
     ):
         self.agent = agent
         self.store = store
         self.dst = None
         self.message_bus = message_bus
-        self.service_mode = service_mode
+        self.sanitize_errors = sanitize_errors
         self._channel_callback: Optional[Callable] = None
         self._input_callback: Optional[Callable] = None
         self._stream_callback: Optional[Callable] = None
@@ -187,7 +187,7 @@ class Processor:
 
         # Handle bot turn
         runtime = await self._create_runtime(
-            inbound.session_key, service_mode=self.service_mode or inbound.channel == "web")
+            inbound.session_key, sanitize_errors=self.sanitize_errors or inbound.channel == "web")
 
         # Always set a valid channel callback.
         # On the MessageBus path nobody calls set_channel_callback() externally,
@@ -229,7 +229,7 @@ class Processor:
         self.dst, cutoff, context_id = execution_view(canonical, input_event_id(inbound.message_id))
         self._detached_execution = True
         await self._load_user_context(inbound.sender_id)
-        runtime = await self._create_runtime(inbound.session_key, service_mode=True)
+        runtime = await self._create_runtime(inbound.session_key, sanitize_errors=True)
         # Trigger metadata also projects queued direct inputs after earlier replies.
         # No group mode/reason is set: personal context and plain text stay direct.
         runtime.group_trigger = {'context_through': cutoff, 'context_input_id': context_id,
@@ -267,7 +267,7 @@ class Processor:
         self.dst, cutoff, context_input_id = execution_view(canonical, input_event_id(inbound.message_id))
         self._detached_execution = True
         self.dst.update_user(None, {})
-        runtime = await self._create_runtime(inbound.session_key, service_mode=True)
+        runtime = await self._create_runtime(inbound.session_key, sanitize_errors=True)
         runtime.group_trigger = {'mode': 'group', 'reason': reason, 'context_through': cutoff,
                                  'input_event_id': input_event_id(inbound.message_id),
                                  'context_input_id': context_input_id}
@@ -305,7 +305,7 @@ class Processor:
         context = await memory.aget_all(user_id) if user_id and memory is not None else {}
         self.dst.update_user(user_id, context)
 
-    async def _create_runtime(self, session_id: str, *, service_mode=None):
+    async def _create_runtime(self, session_id: str, *, sanitize_errors=None):
         """Create the Pi-backed session coordinator."""
         from cota.runtime.pi_runtime import PiAgentRuntime, validate_runtime_selection
 
@@ -321,7 +321,7 @@ class Processor:
             max_iterations=dialogue.get("max_iterations", 30),
             checkpoint=self.save_tracker,
             store=self.store,
-            service_mode=self.service_mode if service_mode is None else service_mode,
+            sanitize_errors=self.sanitize_errors if sanitize_errors is None else sanitize_errors,
         )
 
         if self._stream_callback is not None:
@@ -374,7 +374,7 @@ class Processor:
             text = ('本轮处理超时，已停止。当前进度已记录，您可以在本会话中继续。'
                     if timed_out else
                     '抱歉，处理时遇到错误，请稍后重试。'
-                    if self.service_mode or getattr(runtime, '_service_mode', False)
+                    if self.sanitize_errors or getattr(runtime, '_sanitize_errors', False)
                     else f'抱歉，处理时遇到错误：{error}')
             self.dst.append_event(BotUtterEvent(text=text, metadata={
                 'source': 'runtime_timeout' if timed_out else 'runtime_error'}))
