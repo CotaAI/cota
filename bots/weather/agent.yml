@@ -26,7 +26,7 @@ dialogue:
     policy 是业务指导案例，案例中的数值和示例结果不是实时数据或已经发生的事实。
 
 tools:
-  allow: [http_request]
+  allow: [web_fetch]
 
 policy:
   max_policies: 16

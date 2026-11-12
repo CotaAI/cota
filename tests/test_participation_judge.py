@@ -69,15 +69,15 @@ async def test_judgement_is_tool_free_and_receives_role_capabilities_and_guidanc
 async def test_http_capability_follows_live_tool_policy(mock_agent, discovery):
     from cota.executor.tools.registry import ToolPolicy
     registry = mock_agent.get_tool_registry()
-    assert registry.get('http_request') is None
+    assert registry.get('web_fetch') is None
     instance = judge(mock_agent)
-    for policy, expected in [(ToolPolicy(), True), (ToolPolicy(deny=['http_request']), False),
+    for policy, expected in [(ToolPolicy(), True), (ToolPolicy(deny=['web_fetch']), False),
                              (ToolPolicy(allow=[]), False), (ToolPolicy(), True)]:
         registry.set_policy(policy)
         await instance.decide(tracker(mock_agent))
         system = mock_agent._llm_mock.generate_chat.call_args.kwargs['messages'][0]['content']
         catalog = json.loads(system.split('Capabilities (names and descriptions only):\n', 1)[1])
-        assert ('http_request' in {tool['name'] for tool in catalog['tools']}) is expected
+        assert ('web_fetch' in {tool['name'] for tool in catalog['tools']}) is expected
     discovery.assert_awaited_once()
 
 
@@ -208,7 +208,7 @@ async def test_large_capabilities_are_bounded_metadata_json_with_omission_counts
                'body': 'SECRET_SOP_BODY'} for i in range(300)]
     discovery.return_value = skills
     registry = mock_agent.get_tool_registry()
-    registry.set_policy(ToolPolicy(deny=[] if allow_http else ['http_request']))
+    registry.set_policy(ToolPolicy(deny=[] if allow_http else ['web_fetch']))
     for index in range(300):
         registry.register(FunctionTool(f'tool-{index}', '\\"\n中文' * 4000,
                                        create_tool_schema({}), AsyncMock()))
@@ -224,7 +224,7 @@ async def test_large_capabilities_are_bounded_metadata_json_with_omission_counts
     assert catalog['omitted']['skills'] == len(skills) - len(catalog['skills']) > 0
     allowed_names = {tool.name for tool in registry.get_allowed_tools()}
     if allow_http:
-        allowed_names.add('http_request')
+        allowed_names.add('web_fetch')
     assert catalog['omitted']['tools'] == len(allowed_names) - len(catalog['tools']) > 0
     assert 'may be truncated' in catalog['context_note']
     assert all(set(item) == {'name', 'description'}

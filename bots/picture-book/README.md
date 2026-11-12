@@ -4,7 +4,7 @@
 
 本示例使用 **machine** 执行环境：Pi 的文件和 Shell 工具操作运行机器，不是访问聊天用户的电脑，也不是供不可信用户共用的隔离服务。Pi 的 cwd 是 Bot 下的 workspace/，不是沙箱。Web 界面用于部署者自己的验证；正式托管多人前需要真正的隔离执行环境。
 
-文件处理和命令执行使用 Pi 原生工具，联网查询可通过 bash 调用 curl 或脚本；原生工具保留 Pi 的输出截断机制。此 Bot 禁用 `http_request`，`tools.allow` 仅保留附件交付用的 `send_files`；原生工具由 `environment` 启用，无需加入 allow 列表。
+文件处理和命令执行使用 Pi 原生工具，联网查询可通过 bash 调用 curl 或脚本；原生工具保留 Pi 的输出截断机制。此 Bot 禁用 `web_fetch`，`tools.allow` 仅保留附件交付用的 `send_files`；原生工具由 `environment` 启用，无需加入 allow 列表。
 
 ## 准备
 

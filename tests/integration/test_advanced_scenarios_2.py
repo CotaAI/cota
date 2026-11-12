@@ -235,12 +235,12 @@ class TestPiContextBudget:
         dst.append_event(UserUtterEvent('current'))
         dst.append_event(Event('run_started', {}, run_id='r'))
         dst.append_event(Event('tool_started', {
-            'tool_call_id': 'a', 'tool': 'http_request', 'arguments': {'url': 'https://example.com'},
+            'tool_call_id': 'a', 'tool': 'web_fetch', 'arguments': {'url': 'https://example.com'},
             'llm': {'request_id': 'q', 'request_sequence': 1, 'model': 'default', 'stop_reason': 'toolUse',
-                    'message': {'content': [{'type': 'toolCall', 'id': 'a', 'name': 'http_request',
+                    'message': {'content': [{'type': 'toolCall', 'id': 'a', 'name': 'web_fetch',
                                              'arguments': {'url': 'https://example.com'}}], 'stop_reason': 'toolUse'}},
         }, run_id='r'))
-        dst.append_event(Event('tool_result', {'tool_call_id': 'a', 'tool': 'http_request', 'result': 'example data', 'status': 'success'}))
+        dst.append_event(Event('tool_result', {'tool_call_id': 'a', 'tool': 'web_fetch', 'result': 'example data', 'status': 'success'}))
         runtime = PiAgentRuntime(agent, dst, 'compact')
         current = dst.context_messages[2:]
         messages = [{'role': 'system', 'content': 'current policy'}] + dst.context_messages

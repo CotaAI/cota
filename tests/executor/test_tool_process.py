@@ -235,7 +235,7 @@ async def test_pi_calls_registered_process_and_records_result(mock_agent, proces
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('name', ['read', 'http_request'])
+@pytest.mark.parametrize('name', ['read', 'web_fetch'])
 async def test_reserved_process_tool_rejection_is_atomic(process_client, name):
     registry = ToolRegistry()
     client = process_client(env={'TOOL_NAMES': 'report,' + name})

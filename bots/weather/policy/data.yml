@@ -11,7 +11,7 @@ policies:
       - bot:
           - thought: 用户已经提供城市，继续使用 weather，不重复询问。
           - skills: [weather]
-          - thought: 使用 http_request 查询并校验地点与目标日期。主来源失败时按 Skill 尝试备用来源；先回答天气问题，再简短注明来源与数据时间，不能照抄案例或猜测。
+          - thought: 使用 web_fetch 查询并校验地点与目标日期。主来源失败时按 Skill 尝试备用来源；先回答天气问题，再简短注明来源与数据时间，不能照抄案例或猜测。
 
   - name: weather-city
     steps:

@@ -3,7 +3,7 @@
 从 `cota init` 创建的 weather Bot 开始：
 
 1. `skills/weather/SKILL.md` 定义天气业务名称、操作流程、缺失信息和结果判断。
-2. `agent.yml` 通过 `tools.allow: [http_request]` 允许查询能力；部署层负责凭证、网络与授权。
+2. `agent.yml` 通过 `tools.allow: [web_fetch]` 允许查询能力；部署层负责凭证、网络与授权。
 3. `policy/*.yml` 保存运营编写或从真实对话修改的教学示例。
 
 ```yaml

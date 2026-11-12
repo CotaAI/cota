@@ -8,26 +8,26 @@ from cota.runtime.pi_runtime import PiAgentRuntime
 
 
 def test_agent_yml_tool_policy_is_loaded(tmp_path, monkeypatch):
-    (tmp_path / 'agent.yml').write_text('system:\n  name: test\ntools:\n  deny: [http_request]\n')
+    (tmp_path / 'agent.yml').write_text('system:\n  name: test\ntools:\n  deny: [web_fetch]\n')
     (tmp_path / 'endpoints.yml').write_text('{}')
     monkeypatch.setattr('cota.agent.create_user_memory', lambda _: None)
     agent = Agent.load_from_path(str(tmp_path))
     names = [t.name for t in agent.get_tool_registry().get_allowed_tools()]
-    assert 'http_request' not in names
+    assert 'web_fetch' not in names
 
 
 def test_empty_allow_list_does_not_grant_all_tools(mock_agent):
     policy = ToolPolicy(allow=[])
-    assert not policy.is_allowed('http_request')
+    assert not policy.is_allowed('web_fetch')
     assert not policy.is_allowed('lookup')
 
 
 def test_bot_tool_policy_is_independent_of_skill_trace(mock_agent):
-    mock_agent._tool_registry.set_policy(ToolPolicy(deny=['http_request']))
+    mock_agent._tool_registry.set_policy(ToolPolicy(deny=['web_fetch']))
     dst = DST('s', mock_agent)
     rt = PiAgentRuntime(agent=mock_agent, dst=dst, session_id='s')
     schemas = rt._get_tools_schema()
-    assert 'http_request' not in [s['function']['name'] for s in schemas]
+    assert 'web_fetch' not in [s['function']['name'] for s in schemas]
     for label in ('SearchWeb', 'unknown'):
         dst.append_event(Event('run_started', {}, run_id=f'read-{label}'))
         dst.append_event(skill_result(label))

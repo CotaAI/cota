@@ -17,7 +17,7 @@ cota shell --config cota_projects/weather
 - `agent.yml` 定义角色、规则、模型引用、Pi 参数和工具权限。
 - `endpoints.yml` 定义模型服务和 Store。模型 key/model/apibase 直接使用配置文件中的值。
 - `policy/*.yml` 定义 policies/name/steps 案例，Bot 内以有序列表表达 thought、skills、result、reply。每次模型请求提供预算内完整示例，模型结合真实上下文判断；默认 all 会优先考虑当前上下文保留的成功读取所关联案例；其它策略使用其各自的检索或判断方法。
-- `skills/<name>/SKILL.md` 定义可复用操作流程。Pi 只发现该 Bot 的 Skill，向模型展示目录，模型通过 `read(path)` 按需读取正文。weather 使用 Bot 允许的 `http_request`。
+- `skills/<name>/SKILL.md` 定义可复用操作流程。Pi 只发现该 Bot 的 Skill，向模型展示目录，模型通过 `read(path)` 按需读取正文。weather 使用 Bot 允许的 `web_fetch`。
 
 成功读取文档会保存带 resource 元数据的工具结果并更新最近读取标签。标签在追问和完成回复后保留，不改变权限或自动注入正文；完整工具事实位于 Store events；context_messages 是供 Pi 使用的投影，可能已经压缩。
 

@@ -20,14 +20,15 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 TOOL_GROUPS: Dict[str, List[str]] = {
-    "group:network": ["http_request"],
+    "group:network": ["web_fetch"],
+    "group:image": ["image_generate", "image_understand"],
     "group:all": [],
 }
 
 def _expand_groups(names: List[str]) -> Set[str]:
     """Expand group references in a list of names.
 
-    E.g., ["group:network", "lookup"] -> {"http_request", "lookup"}
+    E.g., ["group:network", "lookup"] -> {"web_fetch", "lookup"}
     """
     result = set()
     for name in names:
@@ -56,11 +57,11 @@ class ToolPolicy:
         # Allow only network tools
         policy = ToolPolicy(allow=["group:network"])
 
-        # Disable HTTP
-        policy = ToolPolicy(deny=["http_request"])
+        # Disable web fetch
+        policy = ToolPolicy(deny=["web_fetch"])
 
-        # Permit HTTP only
-        policy = ToolPolicy(allow=["http_request"])
+        # Permit web fetch only
+        policy = ToolPolicy(allow=["web_fetch"])
     """
 
     def __init__(
@@ -102,7 +103,7 @@ class ToolRegistry:
 
     Example:
         registry = ToolRegistry()
-        registry.set_policy(ToolPolicy(deny=["http_request"]))
+        registry.set_policy(ToolPolicy(deny=["web_fetch"]))
         tools = registry.get_allowed_tools()
     """
 
@@ -121,7 +122,7 @@ class ToolRegistry:
     def _check_registration(self, name, parameters):
         if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', name):
             raise ValueError('Invalid tool name')
-        if name in NATIVE_TOOLS | {'http_request', 'send_files'}:
+        if name in NATIVE_TOOLS | {'web_fetch', 'image_generate', 'image_understand', 'send_files'}:
             raise ValueError(f'Tool name {name} is reserved for Pi tools')
         if name in self._tools:
             raise ValueError(f'Tool {name} is already registered')
@@ -132,7 +133,7 @@ class ToolRegistry:
         """Check references after application setup, before starting a model run."""
         if self._policy is not None:
             referenced = (self._policy.allow or set()) | self._policy.deny
-            unknown = referenced - (self._tools.keys() | {'http_request', 'send_files'})
+            unknown = referenced - (self._tools.keys() | {'web_fetch', 'image_generate', 'image_understand', 'send_files'})
             if unknown:
                 raise ValueError(f'Unknown configured tools: {", ".join(sorted(unknown))}')
 

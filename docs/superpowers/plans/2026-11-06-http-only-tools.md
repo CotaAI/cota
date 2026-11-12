@@ -1,6 +1,6 @@
 # HTTP-only custom tool cleanup
 
-**Goal:** Keep http_request as the only shipped custom tool, defined by Pi AgentTool; preserve official machine tools and plain-text reply delivery.
+**Goal:** Keep web_fetch as the only shipped custom tool, defined by Pi AgentTool; preserve official machine tools and plain-text reply delivery.
 **Architecture:** Node owns HTTP tool schema/execution and uses the same authorization/checkpoint boundary as official Pi tools. Python retains only optional SDK/process adapters, Policy, resources and durable events. Remove eight builtin tools, old marker control-flow and default tool server. Keep memory, MCP and scheduler backends independently of model tools.
 
 - [x] Red tests: no removed tools advertised, plain question + reply + replay, HTTP authorization and standard results.

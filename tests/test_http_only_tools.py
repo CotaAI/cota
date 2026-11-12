@@ -23,13 +23,13 @@ async def test_service_offers_http_and_resource_read_only(mock_agent):
     dst.append_event(UserUtterEvent('hello'))
     await PiAgentRuntime(mock_agent, dst, 's').run()
     tools = mock_agent._llm_mock.generate_chat.call_args.kwargs['tools']
-    assert {t['function']['name'] for t in tools} == {'http_request', 'read'}
+    assert {t['function']['name'] for t in tools} == {'web_fetch', 'read'}
 
 
 @pytest.mark.asyncio
 async def test_http_pi_error_result_and_followup_are_durable(mock_agent):
     mock_agent._llm_mock.generate_chat.side_effect = [
-        {'tool_calls': [call('http_request', {'url': 'http://127.0.0.1/private'}, 'h')]},
+        {'tool_calls': [call('web_fetch', {'url': 'http://127.0.0.1/private'}, 'h')]},
         {'content': '无法访问该地址。'},
     ]
     store = MemoryStore()
@@ -45,19 +45,19 @@ async def test_http_pi_error_result_and_followup_are_durable(mock_agent):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('policy', [{'allow': []}, {'deny': ['http_request']}])
+@pytest.mark.parametrize('policy', [{'allow': []}, {'deny': ['web_fetch']}])
 async def test_http_configuration_disables_schema_and_hallucinated_call(mock_agent, policy):
     from cota.executor.tools import ToolPolicy
     mock_agent.get_tool_registry().set_policy(ToolPolicy(**policy))
     mock_agent._llm_mock.generate_chat.side_effect = [
-        {'tool_calls': [call('http_request', {'url': 'http://127.0.0.1/private'}, 'h')]},
+        {'tool_calls': [call('web_fetch', {'url': 'http://127.0.0.1/private'}, 'h')]},
         {'content': 'No network capability'},
     ]
     dst = DST('s', mock_agent)
     dst.append_event(UserUtterEvent('fetch'))
     await PiAgentRuntime(mock_agent, dst, 's').run()
     for request in mock_agent._llm_mock.generate_chat.call_args_list:
-        assert 'http_request' not in {t['function']['name'] for t in request.kwargs['tools']}
+        assert 'web_fetch' not in {t['function']['name'] for t in request.kwargs['tools']}
     assert next(e for e in dst.events if e.type == 'tool_result').payload['status'] == 'blocked'
 
 
@@ -66,9 +66,9 @@ async def test_http_permission_revocation_is_checked_after_model_call(mock_agent
     from cota.executor.tools import ToolPolicy
     async def model(**kwargs):
         if mock_agent._llm_mock.generate_chat.await_count == 1:
-            assert 'http_request' in {t['function']['name'] for t in kwargs['tools']}
-            mock_agent.get_tool_registry().set_policy(ToolPolicy(deny=['http_request']))
-            return {'tool_calls': [call('http_request', {'url': 'http://127.0.0.1/private'}, 'h')]}
+            assert 'web_fetch' in {t['function']['name'] for t in kwargs['tools']}
+            mock_agent.get_tool_registry().set_policy(ToolPolicy(deny=['web_fetch']))
+            return {'tool_calls': [call('web_fetch', {'url': 'http://127.0.0.1/private'}, 'h')]}
         return {'content': 'Revoked'}
     mock_agent._llm_mock.generate_chat.side_effect = model
     dst = DST('s', mock_agent)

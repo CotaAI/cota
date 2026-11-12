@@ -43,16 +43,16 @@ class TestExpandGroups:
 
     def test_expand_known_group(self):
         result = _expand_groups(["group:network"])
-        assert "http_request" in result
+        assert "web_fetch" in result
 
     def test_expand_plain_name(self):
-        result = _expand_groups(["exec", "http_request"])
-        assert result == {"exec", "http_request"}
+        result = _expand_groups(["exec", "web_fetch"])
+        assert result == {"exec", "web_fetch"}
 
     def test_expand_mixed(self):
         result = _expand_groups(["group:network", "lookup"])
         assert "lookup" in result
-        assert "http_request" in result
+        assert "web_fetch" in result
 
     def test_expand_unknown_group(self):
         with pytest.raises(ValueError, match="Unknown tool group"):
@@ -68,7 +68,7 @@ class TestToolPolicy:
 
     def test_empty_allow_disables_all(self):
         policy = ToolPolicy(allow=[])
-        assert policy.is_allowed("http_request") is False
+        assert policy.is_allowed("web_fetch") is False
         assert policy.is_allowed(_make_tool("custom")) is False
 
     def test_deny(self):
@@ -98,7 +98,7 @@ class TestToolPolicy:
 
     def test_group_deny(self):
         policy = ToolPolicy(deny=["group:network"])
-        assert policy.is_allowed(_make_tool("http_request")) is False
+        assert policy.is_allowed(_make_tool("web_fetch")) is False
         assert policy.is_allowed(_make_tool("exec")) is True
 
 
@@ -154,7 +154,7 @@ class TestToolRegistry:
         await reg.cleanup()  # should not raise
 
 
-@pytest.mark.parametrize('name', ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls', 'powershell', 'http_request'])
+@pytest.mark.parametrize('name', ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls', 'powershell', 'web_fetch'])
 def test_registration_rejects_reserved_names_immediately(name):
     registry = ToolRegistry()
     with pytest.raises(ValueError, match='reserved'):
@@ -180,7 +180,7 @@ def test_registration_rejects_invalid_names(name):
 @pytest.mark.parametrize('key', ['allow', 'deny'])
 def test_policy_references_are_validated_after_application_registration(key):
     registry = ToolRegistry()
-    registry.set_policy(ToolPolicy(**{key: ['lookup', 'http_request']}))
+    registry.set_policy(ToolPolicy(**{key: ['lookup', 'web_fetch']}))
     with pytest.raises(ValueError, match='Unknown configured tools.*lookup'):
         registry.validate()
     registry.register(_make_tool('lookup'))

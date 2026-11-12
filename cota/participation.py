@@ -130,8 +130,14 @@ class ParticipationJudge:
         # on each decision. Capability metadata never grants tool authorization.
         tools = [{'name': tool.name, 'description': tool.description}
                  for tool in self.agent.get_tool_registry().get_allowed_tools()]
-        if self.agent.get_tool_registry().is_allowed('http_request'):
-            tools.append({'name': 'http_request', 'description': 'Make HTTP requests to public external services.'})
+        if self.agent.get_tool_registry().is_allowed('web_fetch'):
+            tools.append({'name': 'web_fetch', 'description': 'Fetch public URLs and return content as readable Markdown, pretty-printed JSON, or plain text.'})
+        if (getattr(self.agent, '_image_endpoints', {}).get('image-generate')
+                and self.agent.get_tool_registry().is_allowed('image_generate')):
+            tools.append({'name': 'image_generate', 'description': 'Generate an image from a text description, optionally using reference images for style or content guidance.'})
+        if (getattr(self.agent, '_image_endpoints', {}).get('image-understanding')
+                and self.agent.get_tool_registry().is_allowed('image_understand')):
+            tools.append({'name': 'image_understand', 'description': 'Analyze an image using a vision model and return a textual description or answer.'})
         role = (self.agent.dialogue.get('prompt') or getattr(self.agent, 'description', None)
                 or 'A helpful group assistant.')
         prompt = (

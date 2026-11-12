@@ -3,7 +3,9 @@ import { createSkillResources } from './skills.mjs';
 import {nativeModel, nativeStream} from './model.mjs';
 import {hasToolProtocol} from './output.mjs';
 import {projectImageContext, hydrateImageRefs} from './image-context.mjs';
-import { createHttpTool } from './http.mjs';
+import { createWebFetchTool } from './web-fetch.mjs';
+import { createImageGenerateTool } from './image-generate.mjs';
+import { createImageUnderstandTool } from './image-understand.mjs';
 import { createNativeTools } from './tools.mjs';
 import { createSendFilesTool } from './files.mjs';
 import {resolveContextModel, compactionSettings, estimateRequest, compactContext, exceedsImageBudget} from './context.mjs';
@@ -95,18 +97,22 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
   // as run metadata for Policy validation and later annotation.
   await request('skills_loaded', {skills: resources.skills, diagnostics: resources.diagnostics,
     ...(options.environment?.type === 'machine' ? {nativeTools: native.inventory} : {})});
-  const http = createHttpTool();
+  const webFetch = createWebFetchTool();
+  const imageGen = options.imageGenerate ? createImageGenerateTool(options.imageGenerate) : null;
+  const imageUnd = options.imageUnderstanding ? createImageUnderstandTool(options.imageUnderstanding) : null;
   const files = createSendFilesTool(async (toolCallId, args) => {
     const result = await request('send_files', {toolCallId, args});
     await request('tool_result', {toolCallId, name: 'send_files', args, result});
     return result;
   }, options.fileLimits);
-  const localTools = [...native.tools, {...http, execute: async (toolCallId, args, signal, onUpdate) => {
-    const result = await http.execute(toolCallId, args, signal, onUpdate);
-    await request('tool_result', {toolCallId, name: http.name, args, result});
+  const wrapExtension = tool => ({...tool, execute: async (toolCallId, args, signal, onUpdate) => {
+    const result = await tool.execute(toolCallId, args, signal, onUpdate);
+    await request('tool_result', {toolCallId, name: tool.name, args, result});
     return result;
-  }}, files];
-  const extensionTools = [http, files].map(tool => ({type: 'function', function: {
+  }});
+  const imageExtensions = [imageGen, imageUnd].filter(Boolean);
+  const localTools = [...native.tools, wrapExtension(webFetch), ...imageExtensions.map(wrapExtension), files];
+  const extensionTools = [webFetch, ...imageExtensions, files].map(tool => ({type: 'function', function: {
     name: tool.name, description: tool.description, parameters: tool.parameters,
   }}));
   const toolsFor = definitions => definitions.map(({function: fn}) => localTools.find(tool => tool.name === fn.name) ?? ({

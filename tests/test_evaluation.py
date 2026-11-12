@@ -85,7 +85,7 @@ async def test_judge_uses_evidence_not_reference_answers():
 @pytest.mark.asyncio
 async def test_judge_receives_pi_tool_text_body_but_not_debug_or_images():
     from cota.events.tool import result_payload
-    payload = result_payload('http_request', 'call', {'status_code': 200}, content=[
+    payload = result_payload('web_fetch', 'call', {'status_code': 200}, content=[
         {'type': 'text', 'text': '{"body":"{\\"temperature_2m_max\\": [15.2]}"}'},
         {'type': 'image', 'data': 'BASE64_IMAGE', 'mimeType': 'image/png'}])
     payload['debug'] = {'request': 'PRIVATE_PROMPT'}

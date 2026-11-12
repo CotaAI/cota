@@ -81,7 +81,7 @@ machine 环境可启用 `send_files`。它以 Pi AgentTool 格式定义，由 Co
 
 ```yaml
 tools:
-  allow: [http_request, send_files]
+  allow: [web_fetch, send_files]
 ```
 
 参数为 `{"paths":["report.pdf"],"text":"报告已附上。"}`。路径相对 environment.workspace，也可使用其内部的绝对路径；拒绝越界、目录和符号链接。先复制文件，再持久化带附件的 bot_utter，随后进入正常投递。成功只表示已提交，不表示用户已经下载。

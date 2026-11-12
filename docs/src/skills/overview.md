@@ -32,7 +32,7 @@ description: 查询指定城市的天气，并解释查询结果。
 # 天气查询
 
 1. 如果用户没有给出城市，直接询问用户确认。
-2. 使用 Bot 已允许的 http_request 查询天气服务。
+2. 使用 Bot 已允许的 web_fetch 查询天气服务。
 3. 根据工具结果回复；失败时说明原因，不编造天气。
 4. 需要解析细节时，读取同目录 references/response-format.md。
 ```

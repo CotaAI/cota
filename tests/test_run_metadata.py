@@ -46,7 +46,7 @@ async def test_discovery_is_metadata_and_does_not_change_state(store, mock_agent
     if debug:
         assert {k: v for k, v in metadata['discovery'].items() if k != 'tools'} == payload
         tools = {item['name']: item for item in metadata['discovery']['tools']}
-        assert tools['http_request'] == {'name': 'http_request', 'source': 'cota', 'available': True}
+        assert tools['web_fetch'] == {'name': 'web_fetch', 'source': 'cota', 'available': True}
         assert tools['read']['available'] is True
         assert tools['bash']['available'] is False
         assert tools['bash']['reason'] == 'Execution environment: none'
@@ -129,7 +129,7 @@ async def test_tool_inventory_records_initial_policy_without_refreshing_history(
     store.enable_debug_log(tmp_path / 'execution.log')
     registry = mock_agent.get_tool_registry()
     registry.register(FunctionTool('lookup', 'lookup', {}, lambda: {}))
-    registry.set_policy(ToolPolicy(deny=['http_request', 'lookup']))
+    registry.set_policy(ToolPolicy(deny=['web_fetch', 'lookup']))
     mock_agent.deploy = 'personal'
     mock_agent.environment = ExecutionEnvironment('machine', str(tmp_path))
     dst = start()
@@ -141,6 +141,6 @@ async def test_tool_inventory_records_initial_policy_without_refreshing_history(
     tools = {item['name']: item for item in initial}
     assert tools['find'] == {'name': 'find', 'source': 'pi', 'available': False, 'reason': 'fd missing'}
     assert tools['lookup'] == {'name': 'lookup', 'source': 'application', 'available': False, 'reason': 'Disabled by tools policy'}
-    assert tools['http_request']['reason'] == 'Disabled by tools policy'
+    assert tools['web_fetch']['reason'] == 'Disabled by tools policy'
     registry.set_policy(ToolPolicy())
     assert (await store.run_metadata('s', 'r'))['discovery']['tools'] == initial

@@ -115,9 +115,14 @@ class Agent:
         if not store:
             store = Store.create(store_config)
 
-        # LLMs
+        # LLMs — image endpoints are stored separately; they are not chat completion models.
+        IMAGE_ENDPOINT_NAMES = {'image-generate', 'image-understanding'}
         llms = {}
+        image_endpoints = {}
         for llm_name, config in endpoints_config.get("llms", {}).items():
+            if llm_name in IMAGE_ENDPOINT_NAMES:
+                image_endpoints[llm_name] = config
+                continue
             logger.debug(f"Initializing LLM: {llm_name}")
             llms[llm_name] = LLM(config)
             llms[llm_name].name = llm_name
@@ -163,6 +168,7 @@ class Agent:
         skill_dir = os.path.abspath(os.path.join(path, 'skills'))
         agent.skill_paths = [skill_dir] if os.path.isdir(skill_dir) else []
         agent.user_memory = user_memory
+        agent._image_endpoints = image_endpoints
 
         return agent
 

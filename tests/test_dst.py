@@ -168,7 +168,7 @@ class TestSkillTrace:
     def test_read_and_tool_events_are_audit_only(self, dst):
         dst.append_event(UserUtterEvent("weather?"))
         dst.append_event(skill_result(skill="weather", text="Instructions"))
-        dst.append_event(ToolResultEvent(tool='http_request', result='raw data'))
+        dst.append_event(ToolResultEvent(tool='web_fetch', result='raw data'))
         dst.append_event(ToolResultEvent(tool='lookup', result='tool output'))
         dst.append_event(BotUtterEvent("sunny"))
         dst.append_event(Event(type="run_finished", payload={"status": "completed"}))
@@ -195,7 +195,7 @@ class TestSkillTrace:
         dst.append_event(ToolResultEvent(tool='lookup', result='city?'))
         dst.append_event(BotUtterEvent("city?"))
         dst.append_event(UserUtterEvent("Beijing"))
-        dst.append_event(ToolResultEvent(tool='http_request', result='raw weather'))
+        dst.append_event(ToolResultEvent(tool='web_fetch', result='raw weather'))
         dst.append_event(BotUtterEvent("Beijing is sunny"))
         dst.append_event(UserUtterEvent("another city?"))
         assert dst.build_history_messages() == [

@@ -12,7 +12,7 @@ from tests.test_pi_runtime import call
 
 @pytest.mark.parametrize('config', [
     {'actions': {}}, {'skills': {}}, {'policies': [{'type': 'match'}]},
-    {'dialogue': {'promt': 'typo'}}, {'tools': {'allow': 'http_request'}},
+    {'dialogue': {'promt': 'typo'}}, {'tools': {'allow': 'web_fetch'}},
     {'policy': {'type': 'trigger'}}, {'dialogue': {'prompt': '{{action_descriptions}}'}},
     {'dialogue': {'max_iterations': 0}}, {'unknown': True},
 ])
@@ -125,7 +125,7 @@ async def test_execution_policy_requires_exact_retained_read_result(mock_agent):
     assert retained[0]['cotaResultEventId'] == result_event.event_id
     assert (await runtime._policy_guidance(retained))[1] == ['SearchWeb']
     # Tool call IDs may repeat across runs; a different tool must not inherit the read.
-    unrelated = [{'role': 'toolResult', 'toolCallId': 'shared-id', 'toolName': 'http_request',
+    unrelated = [{'role': 'toolResult', 'toolCallId': 'shared-id', 'toolName': 'web_fetch',
                   'content': [{'type': 'text', 'text': 'not a read'}], 'isError': False}]
     assert (await runtime._policy_guidance(unrelated))[1] == []
     assert (await runtime._policy_guidance([]))[1] == []
@@ -158,7 +158,7 @@ async def test_compaction_recomputes_priority_without_claiming_business_completi
     native_tools = [tool for tool in mock_agent._llm_mock.generate_chat.call_args.kwargs['tools']
                     if tool['function']['name'] == 'read']
     extensions = [tool for tool in mock_agent._llm_mock.generate_chat.call_args.kwargs['tools']
-                  if tool['function']['name'] == 'http_request']
+                  if tool['function']['name'] == 'web_fetch']
     # Pi chooses the boundary; Cota validates and commits the prefix, then
     # recomputes Policy against the restored projection.
     ids = [m['cotaEventId'] for m in messages[:-1]]

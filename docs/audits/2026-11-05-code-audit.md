@@ -132,7 +132,7 @@
 | [cota/executor/tools/ask_user.py](../../cota/executor/tools/ask_user.py) | 工具、MCP、Scheduler | 保留/必要修正；实现审阅；语法/静态；相关回归 |
 | [cota/executor/tools/async_task.py](../../cota/executor/tools/async_task.py) | 工具、MCP、Scheduler | 保留/必要修正；实现审阅；语法/静态；相关回归 |
 | [cota/executor/tools/base.py](../../cota/executor/tools/base.py) | 工具、MCP、Scheduler | 保留/必要修正；实现审阅；语法/静态；相关回归 |
-| [cota/executor/tools/http_request.py](../../cota/executor/tools/http_request.py) | 工具、MCP、Scheduler | 保留/必要修正；实现审阅；语法/静态；相关回归 |
+| [cota/executor/tools/http_request.py](../../cota/executor/tools/http_request.py) | 工具、MCP、Scheduler | 已移除；web_fetch 由 Pi 工具 `web-fetch.mjs` 实现 |
 | [cota/executor/tools/mcp_client.py](../../cota/executor/tools/mcp_client.py) | 工具、MCP、Scheduler | 保留/必要修正；实现审阅；语法/静态；相关回归 |
 | [cota/executor/tools/notify.py](../../cota/executor/tools/notify.py) | 工具、MCP、Scheduler | 保留/必要修正；实现审阅；语法/静态；相关回归 |
 | [cota/executor/tools/proxy.py](../../cota/executor/tools/proxy.py) | 工具、MCP、Scheduler | 保留/必要修正；实现审阅；语法/静态；相关回归 |

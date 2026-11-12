@@ -13,7 +13,7 @@ description: 查询城市当前天气与未来16天内的逐日预报，提供�
 
 ## 查询
 
-使用 `http_request` 的 GET 请求，读取返回的 `body` JSON。每次请求设置 `timeout_seconds: 15`；非成功状态、错误字段、缺失目标数据不能当作有效天气。无需 Shell 或新工具。
+使用 `web_fetch` 的 GET 请求，读取返回的 JSON。每次请求设置 `timeout_seconds: 15`；非成功状态、错误字段、缺失目标数据不能当作有效天气。无需 Shell 或新工具。
 
 1. 查地点：
    `https://geocoding-api.open-meteo.com/v1/search?name={city}&count=5&language=zh&format=json`

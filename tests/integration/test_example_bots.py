@@ -104,7 +104,7 @@ def fake_weather_api(agent, responses):
         parameters={'type': 'object', 'properties': {'url': {'type': 'string'}},
                     'required': ['url']}, handler=weather_lookup,
     ))
-    agent.get_tool_registry().set_policy(ToolPolicy(allow=['http_request', 'weather_lookup']))
+    agent.get_tool_registry().set_policy(ToolPolicy(allow=['web_fetch', 'weather_lookup']))
     return requests, pending
 
 
@@ -138,7 +138,7 @@ async def test_weather_skill_question_restart_api_and_history(load_bot):
     assert question['active_skill'] == 'weather'
     assert 'weather-city' in first.requests[0]['messages'][0]['content']
     assert 'weather-city' in first.requests[1]['messages'][0]['content']
-    assert 'http_request' in first.requests[1]['messages'][-1]['content']
+    assert 'web_fetch' in first.requests[1]['messages'][-1]['content']
     await agent.cleanup()
     agent.store.engine.dispose()
     restored, second = await load_bot('weather', [
@@ -207,20 +207,20 @@ async def test_weather_failure_and_fallback_results_reach_model(load_bot):
 @pytest.mark.asyncio
 async def test_hello_cannot_execute_network_tool_even_if_model_requests_it(load_bot):
     agent, model = await load_bot('hello', [
-        {'tool_calls': [call('http_request', {'url': 'http://127.0.0.1:1'}, 'forbidden')]},
+        {'tool_calls': [call('web_fetch', {'url': 'http://127.0.0.1:1'}, 'forbidden')]},
         {'content': '没有配置网络查询能力。'},
     ])
     state = await send(agent, '访问网页')
     assert state['execution']['status'] == 'completed'
     tool_results = [m['content'] for m in model.requests[-1]['messages'] if m['role'] == 'tool']
-    assert tool_results and any('http_request' in r for r in tool_results)
+    assert tool_results and any('web_fetch' in r for r in tool_results)
     assert not model.responses
 
 
 @pytest.mark.asyncio
 async def test_weather_service_rejects_private_http_target(load_bot):
     agent, model = await load_bot('weather', [
-        {'tool_calls': [call('http_request', {'url': 'http://127.0.0.1:1'}, 'private')]},
+        {'tool_calls': [call('web_fetch', {'url': 'http://127.0.0.1:1'}, 'private')]},
         {'content': '无法访问该地址。'},
     ])
     state = await send(agent, '访问本机地址')
@@ -330,7 +330,7 @@ async def test_weather_outing_resources_policy_and_replay(load_bot, weather_stat
     assert 'hz-science' in str(last['messages'])
     assert 'outing-weather-unavailable' in last['messages'][0]['content']
     assert 'outing-budget' in last['messages'][0]['content']
-    assert {t['function']['name'] for t in last['tools']} == {'read', 'http_request', 'weather_lookup'}
+    assert {t['function']['name'] for t in last['tools']} == {'read', 'web_fetch', 'weather_lookup'}
     assert requests and not pending and not model.responses
     restored = await agent.store.load('room', agent=agent)
     assert restored.context_messages == saved['context_messages']
@@ -363,7 +363,7 @@ async def test_outing_city_budget_updates_survive_reload_and_do_not_leak(load_bo
     assert any('hz-science' in str(m.get('content')) for m in model.requests[1]['messages'] if m['role'] == 'tool')
     assert not any(m['role'] == 'tool' for m in model.requests[2]['messages'])
     assert [m['content'] for m in model.requests[2]['messages'] if m['role'] == 'user'] == ['推荐个活动吧。']
-    assert not any(e['type'] == 'tool_started' and e['payload']['tool'] == 'http_request'
+    assert not any(e['type'] == 'tool_started' and e['payload']['tool'] == 'web_fetch'
                    for e in await restored.store.events('alice'))
     assert not first.responses and not model.responses
 

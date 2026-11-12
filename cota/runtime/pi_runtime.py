@@ -136,9 +136,32 @@ class PiAgentRuntime:
         live_names = {tool.name for tool in self.agent.get_tool_registry().get_allowed_tools()}
         return [tool for tool in self._tool_registry.get_allowed_tools() if tool.name in live_names]
 
-    def _http_allowed(self):
-        return (self._tool_registry.is_allowed('http_request')
-                and self.agent.get_tool_registry().is_allowed('http_request'))
+    def _web_fetch_allowed(self):
+        return (self._tool_registry.is_allowed('web_fetch')
+                and self.agent.get_tool_registry().is_allowed('web_fetch'))
+
+    def _image_generate_allowed(self):
+        return (self._image_endpoint_config('image-generate') is not None
+                and self._tool_registry.is_allowed('image_generate')
+                and self.agent.get_tool_registry().is_allowed('image_generate'))
+
+    def _image_understand_allowed(self):
+        return (self._image_endpoint_config('image-understanding') is not None
+                and self._tool_registry.is_allowed('image_understand')
+                and self.agent.get_tool_registry().is_allowed('image_understand'))
+
+    def _image_endpoint_config(self, name):
+        endpoints = getattr(self.agent, '_image_endpoints', {})
+        config = endpoints.get(name)
+        if not config or not isinstance(config, dict):
+            return None
+        for field in ('key', 'apibase', 'model'):
+            value = config.get(field)
+            if not isinstance(value, str) or not value.strip():
+                return None
+        return {'apiKey': config['key'], 'baseUrl': config['apibase'], 'model': config['model'],
+                'type': config.get('type', 'openai'),
+                **{k: config[k] for k in ('size', 'quality', 'response_format') if k in config}}
 
     def _files_allowed(self):
         event = self.dst.latest_user_event
@@ -169,7 +192,9 @@ class PiAgentRuntime:
                 'Execution environment: none' if self._environment.type == 'none'
                 else 'Not selected by environment.shell')
             add(name, 'pi', name in self._native_tools, reason)
-        add('http_request', 'cota', self._http_allowed(), 'Disabled by tools policy')
+        add('web_fetch', 'cota', self._web_fetch_allowed(), 'Disabled by tools policy')
+        add('image_generate', 'cota', self._image_generate_allowed(), 'Requires image-generate endpoint in llms and tool permission')
+        add('image_understand', 'cota', self._image_understand_allowed(), 'Requires image-understanding endpoint in llms and tool permission')
         add('send_files', 'cota', bool(self._files_allowed()), 'Requires machine execution, tool permission and a file-capable channel')
         allowed = {tool.name for tool in self._allowed_tools()}
         for tool in sorted(self._tool_registry.list_tools(), key=lambda tool: tool.name):
@@ -276,10 +301,12 @@ class PiAgentRuntime:
             raise ValueError('Pi native tools do not match the bound execution environment')
         extension_tools = payload.get('extensionTools', [])
         names = [item['function']['name'] for item in extension_tools]
-        if len(names) != len(set(names)) or set(names) - {'http_request', 'send_files'}:
+        if len(names) != len(set(names)) or set(names) - {'web_fetch', 'image_generate', 'image_understand', 'send_files'}:
             raise ValueError('Unexpected Pi extension tool definitions')
         tools += [tool for tool in extension_tools if
-                  tool['function']['name'] == 'http_request' and self._http_allowed()
+                  tool['function']['name'] == 'web_fetch' and self._web_fetch_allowed()
+                  or tool['function']['name'] == 'image_generate' and self._image_generate_allowed()
+                  or tool['function']['name'] == 'image_understand' and self._image_understand_allowed()
                   or tool['function']['name'] == 'send_files' and self._files_allowed()]
         tools += native_tools
         from cota.policy.base import digest
@@ -355,7 +382,9 @@ class PiAgentRuntime:
             allowed = (getattr(self.agent, 'deploy', DEFAULT_DEPLOY) == self._deploy
                        and current == self._environment
                        and (payload['name'] in self._native_tools
-                            or payload['name'] == 'http_request' and self._http_allowed()
+                            or payload['name'] == 'web_fetch' and self._web_fetch_allowed()
+                            or payload['name'] == 'image_generate' and self._image_generate_allowed()
+                            or payload['name'] == 'image_understand' and self._image_understand_allowed()
                             or payload['name'] == 'send_files' and self._files_allowed()))
             return {'allowed': allowed, 'reason': 'Tool permission or execution binding is unavailable or changed'}
         if method == 'tool_result':
@@ -455,9 +484,7 @@ class PiAgentRuntime:
         if name == 'edit' and result.get('details', {}).get('diff'):
             details = result['details']
             return {'diff': details['diff'], 'first_changed_line': details.get('firstChangedLine')}
-        if name in {'grep', 'find', 'ls', 'http_request'} and result.get('details'):
-            # Native truncation/limit facts; the model-facing output is retained
-            # separately by result_payload, without another full text copy.
+        if name in {'grep', 'find', 'ls', 'web_fetch', 'image_generate', 'image_understand'} and result.get('details'):
             return result['details']
         return text_result(result['content'])
 
@@ -541,6 +568,10 @@ class PiAgentRuntime:
                                                'maxIterations': self.max_iterations,
                                                'fileLimits': (getattr(self.agent, 'files', None) or FileStorage).capabilities(),
                                                **({'provider': provider} if provider else {}),
+                                               **({'imageGenerate': self._image_endpoint_config('image-generate')}
+                                                  if self._image_generate_allowed() else {}),
+                                               **({'imageUnderstanding': self._image_endpoint_config('image-understanding')}
+                                                  if self._image_understand_allowed() else {}),
                                                'model': model, 'compaction': self.agent.dialogue.get('compaction', {}),
                                                'cwd': self.agent.config_path or '.',
                                                'pythonExecutable': sys.executable,

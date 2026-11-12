@@ -1,6 +1,6 @@
 # Tool 适配与能力边界
 
-Skill 描述业务做法，Tool 执行具体操作。Pi 提供 read、write、edit、bash、grep、find、ls、powershell 八个底层工具，Cota 为它们绑定执行环境；`http_request` 和附件交付原语 `send_files` 使用 Pi 标准工具定义。send_files 由 Cota 校验 personal 工作区并提交当前会话附件，不承担普通文字回复或业务执行。应用仍可通过 Python 注册自定义扩展。Pi 选择和校验调用，Cota 在执行前检查许可并保存开始事件。详见 [会话附件](attachments.md)。
+Skill 描述业务做法，Tool 执行具体操作。Pi 提供 read、write、edit、bash、grep、find、ls、powershell 八个底层工具，Cota 为它们绑定执行环境；`web_fetch` 和附件交付原语 `send_files` 使用 Pi 标准工具定义。send_files 由 Cota 校验 personal 工作区并提交当前会话附件，不承担普通文字回复或业务执行。应用仍可通过 Python 注册自定义扩展。Pi 选择和校验调用，Cota 在执行前检查许可并保存开始事件。详见 [会话附件](attachments.md)。
 
 ## Pi 原生工具与执行环境
 
@@ -63,13 +63,13 @@ machine 的运行环境说明提供真实的 Bot 根目录、工具工作目录�
 
 Shell 命令超时取模型请求和 `timeout_seconds` 上限的较小值；省略时使用环境上限。grep/find/ls 不新增自定义超时机制，取消信号直接交给 Pi；`dialogue.run_timeout_seconds` 仍限制整轮执行。取消通过 AbortSignal 交给 Pi 终止命令进程树，不回滚已经完成的文件写入，不自动重试。
 
-## HTTP 工具
+## Web Fetch 工具
 
-`http_request` 定义位于 `cota/runtime/pi/http.mjs`，直接符合 Pi `AgentTool` 契约。参数由 TypeBox 声明并由 Pi 校验，Node 执行 HTTP/HTTPS 请求，返回 `content` / `details` / `isError`，不再经过 Python HTTP 工具类。附件原语 `send_files` 在 `files.mjs` 使用同一 Pi 契约，由 Cota 绑定会话与文件持久化。
+`web_fetch` 定义位于 `cota/runtime/pi/web-fetch.mjs`，直接符合 Pi `AgentTool` 契约。参数由 TypeBox 声明并由 Pi 校验，Node 执行 HTTP/HTTPS 请求并智能处理响应内容：HTML 页面通过 Readability 提取正文并转换为 Markdown，JSON 响应自动格式化，其他文本原样返回。返回 `content` / `details` / `isError`，不再经过 Python HTTP 工具类。附件原语 `send_files` 在 `files.mjs` 使用同一 Pi 契约，由 Cota 绑定会话与文件持久化。
 
-personal 与 service 均可使用；可用 `tools.allow: [http_request]` 仅开放 HTTP，或 `tools.deny: [http_request]` 关闭它。`tools.allow: []` 关闭自定义工具，但不改变环境决定的 Pi 机器工具与 Skill 读取能力。
+personal 与 service 均可使用；可用 `tools.allow: [web_fetch]` 仅开放 web fetch，或 `tools.deny: [web_fetch]` 关闭它。`tools.allow: []` 关闭自定义工具，但不改变环境决定的 Pi 机器工具与 Skill 读取能力。
 
-HTTP 默认超时 30 秒、上限 60 秒，独立于 Shell 超时配置；响应体超过 256 KiB 会中止并返回错误。只接受公开 HTTP/HTTPS 地址，拒绝 URL 内嵌凭据、私有和保留地址，检查实际连接使用的 DNS 地址，不跟随重定向、不使用环境代理。取消信号直接终止请求。HTTP 非 2xx 与网络错误均以 `isError` 表示，响应正文仅保留在模型可见内容中，details 保存简短状态。响应提供时，额外返回 `headers.content-type` 和 `headers.retry-after`；不返回 Cookie 或其余响应头，也不据此自动重试。
+GET 请求自动跟随重定向（最多5次），每次跳转均验证目标地址。默认超时 30 秒、上限 60 秒，独立于 Shell 超时配置；原始响应体超过 1 MiB 会中止并返回错误，处理后输出超过 200K 字符会截断。只接受公开 HTTP/HTTPS 地址，拒绝 URL 内嵌凭据、私有和保留地址，检查实际连接使用的 DNS 地址，不使用环境代理。取消信号直接终止请求。HTTP 非 2xx 与网络错误均以 `isError` 表示。
 
 执行前检查权限并保存 `tool_started`，结果保存为 `tool_result` 后才继续模型循环；HTTP 工具不直接依赖 DST 或 Store。
 
@@ -77,7 +77,7 @@ HTTP 默认超时 30 秒、上限 60 秒，独立于 Shell 超时配置；响应
 
 Cota 不管理业务 API 密钥、租户权限、业务幂等或服务专属重试。需要认证的接口由外围应用的适配器或独立工具服务接入，使用现有注册接口即可：从可信会话绑定取得调用者，检查业务权限，在真正发请求时注入凭据，只返回必要业务结果。无需把密钥交给模型，也无需为每项业务在 Cota 核心中新增工具。
 
-内置 `http_request.headers` 是模型参数，不是保密配置：参数会进入正常执行记录，Debug 也可能保存完整模型请求。不要把长期密钥放在 Skill、Policy、prompt 或模型填写的 headers 中。HTTP 工具不会自动附加 Cota 的用户身份；单纯代理一个 URL 也不会建立认证。受保护的调用应由外围可信代码完成，不能把模型传入的 user_id 当作调用者身份。
+内置 `web_fetch.headers` 是模型参数，不是保密配置：参数会进入正常执行记录，Debug 也可能保存完整模型请求。不要把长期密钥放在 Skill、Policy、prompt 或模型填写的 headers 中。web_fetch 工具不会自动附加 Cota 的用户身份；单纯代理一个 URL 也不会建立认证。受保护的调用应由外围可信代码完成，不能把模型传入的 user_id 当作调用者身份。
 
 超时、取消、连接中断或响应过大，只表示本次调用未取得完整结果，不保证远端操作未发生。创建订单等写入操作应由业务服务提供幂等键和结果查询；Skill/Policy 可以指导先查结果再决定下一步。Cota 不自动重放工具调用，外围也不应因回复投递失败而重跑整个 Agent。
 
@@ -109,7 +109,7 @@ agent.get_tool_registry().register(FunctionTool(
 
 ## 权限与可用性
 
-`ToolRegistry.get_allowed_tools()` 同时检查 `enabled` 与 `ToolPolicy`。普通工具的 deny 优先于 allow；省略 allow 表示不额外收窄。内置 `http_request` 与应用注册的自定义工具均受 allow/deny 控制。Pi 八个基础工具由 `environment` 决定，不受扩展工具的 allow/deny 控制；在这两个列表中填写基础工具名称会报配置错误。
+`ToolRegistry.get_allowed_tools()` 同时检查 `enabled` 与 `ToolPolicy`。普通工具的 deny 优先于 allow；省略 allow 表示不额外收窄。内置 `web_fetch` 与应用注册的自定义工具均受 allow/deny 控制。Pi 八个基础工具由 `environment` 决定，不受扩展工具的 allow/deny 控制；在这两个列表中填写基础工具名称会报配置错误。
 
 未知分组在配置读取时立即报错。应用工具可以在 Agent 加载后注册，因此具体工具名称在每轮创建 runtime 前校验；拼写错误和未注册的名称会明确报错，尚未调用模型。应用也可以在完成注册后主动调用 `agent.get_tool_registry().validate()` 做启动检查。注册名称只接受字母、数字、下划线、连字符，同名覆盖和占用 Pi/HTTP 保留名称立即拒绝；独立工具进程批量注册失败时不会留下部分工具。
 
@@ -133,7 +133,7 @@ client = SubprocessToolClient(
 await agent.get_tool_registry().connect_process(client)
 ```
 
-工具进程使用 Cota 的 `initialize` / `execute` / `shutdown` JSON-lines 协议，不是 MCP。依赖环境和启动命令由部署方准备；Cota 不因阅读 Skill 自动安装依赖或启动脚本。注册时不允许覆盖已有工具；`read`、`write`、`edit`、`bash`、`grep`、`find`、`ls`、`powershell` 和 `http_request` 是保留名称，不论是否加载 Skill，业务扩展都不能占用它们。远程 schema 仍受正常工具权限控制。
+工具进程使用 Cota 的 `initialize` / `execute` / `shutdown` JSON-lines 协议，不是 MCP。依赖环境和启动命令由部署方准备；Cota 不因阅读 Skill 自动安装依赖或启动脚本。注册时不允许覆盖已有工具；`read`、`write`、`edit`、`bash`、`grep`、`find`、`ls`、`powershell` 和 `web_fetch` 是保留名称，不论是否加载 Skill，业务扩展都不能占用它们。远程 schema 仍受正常工具权限控制。
 
 同一进程的 RPC 顺序执行。超时、取消或协议故障后关闭进程，不自动重放可能已有副作用的调用；重新连接需显式创建客户端。Registry 清理会关闭它拥有的进程。工具进程本身不等于沙箱或用户权限边界。
 

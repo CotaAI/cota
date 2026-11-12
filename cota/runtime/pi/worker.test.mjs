@@ -108,7 +108,7 @@ function httpHarness({advertise = true, allowed = true, recordFailure = false, a
   const records = [], authorizations = [], contexts = [], preparations = [], events = [], order = [];
   const history = [user];
   const responses = [{tool_calls: [{id: 'http-1', type: 'function', function: {
-    name: 'http_request', arguments: JSON.stringify(args),
+    name: 'web_fetch', arguments: JSON.stringify(args),
   }}]}, {content: 'The HTTP request could not be completed.'}];
   return {records, authorizations, contexts, preparations, events, order, rpc: async (method, payload) => {
     order.push(method);
@@ -140,19 +140,19 @@ test('native HTTP tool is validated, authorized, recorded and returned to the ne
   const h = httpHarness();
   const result = await runAgent({messages: [user], maxIterations: 3}, h.rpc);
   assert.equal(result.status, 'completed');
-  assert.deepEqual(h.preparations[0].extensionTools.map(schema => schema.function.name), ['http_request', 'send_files']);
+  assert.deepEqual(h.preparations[0].extensionTools.map(schema => schema.function.name), ['web_fetch', 'send_files']);
   assert.equal(h.contexts[0].tools[0].function.parameters.properties.timeout_seconds.maximum, 60);
   assert.equal(h.authorizations.length, 1);
-  assert.deepEqual(h.authorizations[0], {toolCallId: 'http-1', name: 'http_request', args: {url: 'http://127.0.0.1'}});
+  assert.deepEqual(h.authorizations[0], {toolCallId: 'http-1', name: 'web_fetch', args: {url: 'http://127.0.0.1'}});
   assert.equal(h.records.length, 1);
   const recorded = h.records[0];
-  assert.equal(recorded.name, 'http_request');
+  assert.equal(recorded.name, 'web_fetch');
   assert.equal(recorded.result.isError, true);
   assert.match(recorded.result.content[0].text, /Blocked URL/);
   assert.deepEqual(recorded.result.details, {error: 'Blocked URL (private/reserved IP)'});
   assert.equal(h.contexts.length, 2);
   const nextResult = h.contexts[1].messages.find(message => message.role === 'toolResult');
-  assert.equal(nextResult.toolName, 'http_request');
+  assert.equal(nextResult.toolName, 'web_fetch');
   assert.equal(nextResult.toolCallId, 'http-1');
   assert.equal(nextResult.isError, true);
   assert.deepEqual(nextResult.content, recorded.result.content);
