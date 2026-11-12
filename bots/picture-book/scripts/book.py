@@ -21,7 +21,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from bookbot.common import model_config, project_path, read_json  # noqa: E402
+from bookbot.common import model_config, project_path, read_json, sha256  # noqa: E402
 
 SKILL = ROOT / 'skills/creating-childrens-picture-books'
 
@@ -46,6 +46,33 @@ def doctor():
             'models': models, 'ready': all(modules.values()) and poppler and bool(font)
             and all(model['configured'] for model in models.values()),
             'note': 'Configuration check only; reference-image/sample-page verification still required'}
+
+
+def compact_result(command, result, project, args):
+    """Keep command stdout complete and small; retain full evidence on disk."""
+    if command == 'review':
+        from bookbot.review_checks import assess
+        assessment = result.get('assessment') or assess(result['content'], result['prompt'])
+        report = project_path(ROOT, args.project) / args.output
+        verdict = assessment['verdict']
+        return {'asset': result['asset'], 'verdict': verdict, 'reused': result.get('reused', False),
+                'checks_passed': sum(c['status'] == 'pass' for c in assessment['checks']),
+                'issues': [c for c in assessment['checks'] if c['status'] != 'pass'],
+                'image_inputs': result['image_inputs'],
+                **({'current_image_inputs': result['current_image_inputs']} if result.get('current_image_inputs') else {}),
+                'evidence': {'path': args.output, 'sha256': sha256(report.read_bytes())},
+                'next': ('Preserve this version and continue independent work' if verdict == 'pass' else
+                         'Address only required failures within the remaining page revision budget' if verdict == 'revise' else
+                         'Preserve this version and report uncertainty; do not request another verdict for the same bytes')}
+    if command == 'generate':
+        fields = ('asset', 'attempt', 'status', 'output', 'input_hash', 'sha256', 'reused', 'reused_from')
+        journal = Path(result['output']).with_suffix('.request.json')
+        return {**{key: result[key] for key in fields if key in result},
+                'evidence': {'path': str(journal), 'sha256': sha256((project / journal).read_bytes())}}
+    if command == 'status':
+        return {**{key: value for key, value in result.items() if key not in ('images', 'requests')},
+                'image_count': len(result['images']), 'request_count': len(result['requests'])}
+    return result
 
 
 def main(argv=None):
@@ -77,6 +104,9 @@ comes first; completed generation journals allow reuse without another paid call
 Always keep --asset stable across revision filenames. Each asset allows one initial
 image and two revisions; renamed files/session restarts do not reset that budget.
 retryable=false means stop retrying that asset and continue independent work.
+Rendered PDF faces also have one baseline plus two visual revisions, including
+local image edits. Read status.rendering; accepted versions stay frozen.
+Normal stdout is complete compact JSON; use --full only for detailed saved fields.
 Do not change asset/project/criteria to bypass limits; report unresolved work.''')
     parser.add_argument('--project', help='Name inside workspace/books, or an absolute path inside it; required except for doctor/init')
     commands = parser.add_subparsers(dest='command', required=True)
@@ -131,12 +161,19 @@ manual observations are uncertain, not permission to keep rerolling the image.
 Changed pixels need a new review output filename; changed criteria require a
 separate user-requested production task rather than silently resetting this one.
 The report is evidence, not automatic QA approval. Correct issues and record the
-actual language/content/visual review before updating book.json qa flags.''')
+actual language/content/visual review before updating book.json qa flags.
+Write numbered criteria (1. ... / 2. ...); all are required unless prefixed
+[advice] or [optional]. The model returns one evidence-backed check per criterion.
+Verdicts: pass, revise (required failure), uncertain (missing/unclear evidence).
+Advice never blocks acceptance. Invalid/unstructured replies remain uncertain;
+do not repeatedly ask the same image for a different verdict.
+Use pdf-face-01 etc. for final rendered faces. A canonical required-check pass
+freezes that exact page version; it does not automatically approve the whole book.''')
     review.add_argument('--asset', required=True, help='Stable review target; e.g. page-04 or pdf-face-05. Criteria are fixed on its first review')
     review.add_argument('--prompt', required=True, help='UTF-8 review instructions file, relative to project')
     review.add_argument('--image', action='append', required=True, help='Actual image file; repeat for up to eight images')
     review.add_argument('--output', required=True, help='Review JSON path, relative to project')
-    commands.add_parser('build', help='Lay out Chinese text and render every PDF page',
+    build = commands.add_parser('build', help='Lay out Chinese text and render every PDF page',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''Fill book.json using the generic Skill project manifest. pages must contain every
 PDF face in consecutive 1-based order, including structural blank faces; page_count
@@ -147,6 +184,7 @@ This renderer uses explicit page layout (millimetres from the top-left; fonts in
   "page": 5, "role": "story", "layout": "integrated-single-page",
   "asset": "illustrations/finals/page-01.png",
   "image_box": [10, 10, 190, 90],
+  "image_fit": "contain",
   "text_elements": [
     {"text": "小兔抬头，云朵轻轻飘过。", "box": [10, 110, 190, 25], "font_size": 18,
      "align": "left", "fill": "#1f1f29"}
@@ -158,13 +196,16 @@ the project. Place all visible text in text_elements, not the legacy page text f
 Text supports only text, box, font_size (8-72 pt), align (left/center/right) and
 fill (#RRGGBB). Defaults: 18 pt, left, #1f1f29. Bold/weight, custom line spacing,
 background panels and image_path are unsupported and rejected, not ignored.
-Page fields: page, role, title, text, blank, blank_reason, layout, asset, image_box,
+Page fields: page, role, title, text, blank, blank_reason, layout, asset, image_box, image_fit,
 text_elements, context_asset, detail_asset, arrow_count, notes. title/role/layout/
 notes and context/detail fields are metadata/evidence, not extra drawing commands.
 page text must be absent/empty; only text_elements are drawn. page is the 1-based
 PDF face number including blanks; do not confuse it with a Python list index or
 the artwork filename. Unknown page/text fields fail before outputs are replaced.
 Choose positions for each illustration; do not force one layout on the whole book.
+image_fit=contain (default) preserves the whole image and may leave margins;
+cover fills the box with a deterministic central crop. Use these instead of
+ad-hoc Pillow background extension or repeated colour-band editing.
 Wordless pages can omit text_elements; blank pages must have no artwork or text.
 Keep the Skill's required context_asset/detail_asset/arrow_count evidence for any
 context-to-detail scene. The composed illustration remains the page asset.
@@ -172,13 +213,23 @@ context-to-detail scene. The composed illustration remains the page asset.
 Output: book.pdf, previews/pages/*.png (including blanks), previews/overview.jpg,
 previews/covers.png, 打印说明.md, deliverables and sheet_map in book.json.
 Chinese fonts are embedded; missing glyphs and overflowing boxes are errors.
-Changes to text, artwork, layout or font clear prior QA flags. Review actual rendered
+Changed pages invalidate affected QA domains (see invalidated_checks); metadata-only
+notes/printing corrections do not reset visual reviews or rerender pages. Review actual rendered
 pages, complete language/content checks, then update QA and run validate. build does
 not approve a book. Physical proof remains print_tested=false until really tested.
 Successful build returns input_hash and manifest. Unchanged inputs with intact PDF,
 previews and instructions return reused=true without rendering again; damaged or
-missing outputs are rebuilt and QA is cleared. Inspect the changed page rather than
-repeatedly rebuilding unchanged sources. Never set QA merely to make validate pass.''')
+missing outputs are repaired without charging a visual revision; affected PDF QA is cleared.
+Each PDF face allows one baseline plus two visual revisions, including local image,
+text and layout edits; accepted current versions are frozen. Check changed_pages,
+pending_pages and status.rendering. Metadata edits do not spend this budget.
+Print images use <=240dpi JPEG derivatives; original art and vector text remain intact.
+Use --max-file-bytes with the receiving send_files limit. All delivery files are
+preflighted before replacing the prior package. Printing instructions/sheet count
+are generated from book.json; edit the manifest, not generated output files.
+Never set QA merely to make validate pass.''')
+    build.add_argument('--max-file-bytes', type=int, default=20 * 1024 * 1024,
+                       help='Actual per-file delivery limit; default 20 MiB, checked before replacing outputs')
     commands.add_parser('validate', help='Require the current render and run the original Skill package validator',
         description='Reject stale source/PDF/deliverable hashes before checking the generic Skill contract. '
                     'Validation checks structure and declared evidence, not actual visual quality.')
@@ -187,7 +238,12 @@ repeatedly rebuilding unchanged sources. Never set QA merely to make validate pa
                     'Only use --draft for an explicitly unapproved review copy. Caption drafts honestly; '
                     'successful send_files means committed, not confirmed receipt. Never attach credentials or databases.')
     deliverables.add_argument('--draft', action='store_true', help='List files for an explicitly unapproved review copy')
+    deliverables.add_argument('--max-file-bytes', type=int, default=20 * 1024 * 1024,
+                              help='Per-file limit advertised by send_files; draft files are checked too')
+    for command_parser in commands.choices.values():
+        command_parser.add_argument('--full', action='store_true', help='Show full saved fields instead of compact command JSON')
     args = parser.parse_args(argv)
+    project = None
     if args.command == 'doctor':
         result = doctor()
     else:
@@ -199,9 +255,10 @@ repeatedly rebuilding unchanged sources. Never set QA merely to make validate pa
             result = {'project': str(project), 'manifest': str(project / 'book.json')}
         elif args.command == 'status':
             from bookbot.production import production_status
+            from bookbot.render_state import render_status
             data = read_json(project / 'book.json')
             result = {'project': str(project), 'title': data.get('title'), 'qa': data.get('qa'),
-                      'production': production_status(project),
+                      'production': production_status(project), 'rendering': render_status(project),
                       'render_input_hash': data.get('render_input_hash'),
                       'pages': [{key: page.get(key) for key in ('page', 'role', 'blank', 'asset')}
                                 for page in data.get('pages', [])],
@@ -211,16 +268,16 @@ repeatedly rebuilding unchanged sources. Never set QA merely to make validate pa
         elif args.command == 'generate':
             from bookbot.models import generate
             result = generate(ROOT, project, args.prompt, args.output, asset=args.asset, references=args.reference)
-            # Prompt is saved in the project, not repeated in a long tool result.
-            result.pop('prompt', None)
         elif args.command == 'review':
             from bookbot.models import review
             result = review(ROOT, project, args.prompt, args.image, args.output, asset=args.asset)
-            result.pop('prompt', None)
         elif args.command == 'build':
             from bookbot.layout import build
-            result = build(ROOT, project)
+            result = build(ROOT, project, max_file_bytes=args.max_file_bytes)
         else:
+            if args.command == 'deliverables':
+                from bookbot.layout import delivery_status
+                delivery = delivery_status(project, max_file_bytes=args.max_file_bytes)
             if args.command == 'validate' or not args.draft:
                 from bookbot.layout import require_current_render
                 require_current_render(ROOT, project)
@@ -228,7 +285,7 @@ repeatedly rebuilding unchanged sources. Never set QA merely to make validate pa
                                          capture_output=True, text=True, timeout=60)
                 result = {'valid': checked.returncode == 0, 'details': checked.stdout.strip()}
                 if args.command == 'validate' or checked.returncode:
-                    print(json.dumps(result, ensure_ascii=False))
+                    print(json.dumps(result, ensure_ascii=False, separators=(',', ':')))
                     return 0 if result['valid'] else 1
             from bookbot.layout import DELIVERABLES
             from bookbot.common import confined
@@ -236,8 +293,10 @@ repeatedly rebuilding unchanged sources. Never set QA merely to make validate pa
             if any(not path.is_file() for path in paths):
                 raise ValueError('Build the complete digital package before listing deliverables')
             result = {'status': 'draft' if args.draft else 'validated-digital-package',
-                      'paths': [str(path) for path in paths], 'next': 'Use send_files to attach these files to the current conversation'}
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+                      'delivery': delivery, 'paths': [str(path) for path in paths], 'next': 'Use send_files to attach these files to the current conversation'}
+    if not args.full:
+        result = compact_result(args.command, result, project, args)
+    print(json.dumps(result, ensure_ascii=False, separators=(',', ':')))
     return 0
 
 

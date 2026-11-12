@@ -10,7 +10,8 @@ async function execute(options, rpc, signal, notify) {
       .map(({name, description}) => ({name, description}));
   }
   const result = await runAgent(options, rpc, signal, notify);
-  return {status: result.status};
+  return {status: result.status, ...(result.hasFinalReply ? {hasFinalReply: true} : {}),
+    ...(result.outputError ? {outputError: result.outputError} : {})};
 }
 
 const pending = new Map();

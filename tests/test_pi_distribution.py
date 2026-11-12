@@ -24,6 +24,7 @@ def bundle(tmp_path):
     (vendor / 'context.mjs').write_text('context')
     (vendor / 'image-context.mjs').write_text('images')
     (vendor / 'model.mjs').write_text('model')
+    (vendor / 'output.mjs').write_text('output')
     coding = vendor / 'node_modules/@earendil-works/pi-coding-agent'
     coding.mkdir(parents=True)
     (coding / 'package.json').write_text(json.dumps({'version': '1.4.0'}))

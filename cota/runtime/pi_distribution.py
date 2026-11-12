@@ -37,7 +37,7 @@ def resolve_runtime(node=None, *, base_dir=None):
             manifest = json.loads((vendor / 'runtime.json').read_text())
             if manifest['format'] != 1 or manifest['platform'] != host_platform():
                 raise ValueError('runtime format/platform mismatch')
-            for name in ('node', 'worker.mjs', 'engine.mjs', 'skills.mjs', 'tools.mjs', 'http.mjs', 'files.mjs', 'context.mjs', 'image-context.mjs', 'model.mjs'):
+            for name in ('node', 'worker.mjs', 'engine.mjs', 'skills.mjs', 'tools.mjs', 'http.mjs', 'files.mjs', 'context.mjs', 'image-context.mjs', 'model.mjs', 'output.mjs'):
                 if not (vendor / name).is_file():
                     raise ValueError(f'missing {name}')
             if not os.access(vendor / 'node', os.X_OK):

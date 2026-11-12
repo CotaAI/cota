@@ -14,6 +14,7 @@ import httpx
 
 from .common import confined, model_config, read_json, sha256, write_json, atomic_bytes
 from .production import Production, ProductionBlocked
+from .review_checks import assess
 
 MAX_IMAGE_BYTES = 32 * 1024 * 1024
 
@@ -262,6 +263,11 @@ def review(root, project, prompt_file, images, output, *, asset, client=None):
             'Report specific visible issues, uncertain items and whether the requested correction is visible. '
             'Separate definite criteria violations from optional aesthetic preferences. '
             'Use the fixed criteria only; do not invent new requirements or turn uncertainty into a failure. '
+            'Return JSON only: {"verdict":"pass|revise|uncertain","checks":[{"id":"1",'
+            '"status":"pass|fail|uncertain","severity":"required|advice","evidence":"specific visible evidence"}]}. '
+            'Include every numbered criterion exactly once using its number as id; for unnumbered criteria use one id overall. '
+            'Only criteria explicitly prefixed [advice], [optional], 【建议】, 【可选】, 建议: or 可选: are advisory. '
+            'Do not downgrade other criteria. Unclear evidence must be uncertain; optional taste must not block acceptance. '
             'Do not treat a reference as the target, invent unobserved details or approve the whole book.'}]
         for item, (_, data, mime) in zip(evidence, inputs):
             content.extend([
@@ -279,6 +285,7 @@ def review(root, project, prompt_file, images, output, *, asset, client=None):
         except (KeyError, IndexError, TypeError, ValueError):
             raise ValueError('Vision model did not return review text') from None
         record = {'asset': asset, 'model': config['model'], 'input_hash': identity, 'content': text, 'prompt': prompt,
+                  'assessment': assess(text, prompt),
                   'images': [item['path'] for item in evidence], 'image_inputs': evidence, 'created_at': time.time()}
         write_json(canonical, record)
         write_json(journal, {'kind': 'review', 'asset': asset, 'status': 'completed', 'input_hash': identity,

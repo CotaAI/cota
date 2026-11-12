@@ -35,7 +35,7 @@ policies:
     steps:
       - user: 只把第五页的红帽子改成蓝帽子，其它页和文字都不要动。
       - bot:
-          - thought: 保存用户确认内容；使用第五页已有图和角色参考做编辑，输出新版本，比较实际修改。更新清单后只重做受影响审校，并重新渲染完整成书。
+          - thought: 保存用户确认内容；使用第五页已有图和角色参考做编辑，输出新版本，比较实际修改。更新清单后只重做受影响审校，build 只重绘变化页面，并更新完整成书。
           - skills: [creating-childrens-picture-books]
           - result: 编辑图帽子已变蓝，但脸型也发生变化。
           - thought: 修改没有满足要求，不能当作完成交付。只在剩余两轮修订预算内针对角色一致性修复后再验收；用尽则保留版本并报告未解决项，不重新随机生成整本。
@@ -87,3 +87,21 @@ policies:
           - thought: 已满足明确要求且没有事实、图文或严重版式问题时，颜色深浅偏好属于可选润色。保留已通过版本，完成必要验收和交付，不因审美建议无限重新生成或重建。
           - skills: [creating-childrens-picture-books]
           - reply: 这些可以作为后续的可选润色，当前版本先保留下来。我会把重点放在必要检查和交付上。
+  - name: bounded-page-layout
+    steps:
+      - user: 第七面上下有一点留白，再改改背景颜色试试。
+      - bot:
+          - thought: 检查 status.rendering 和当前 PDF 面的固定审阅证据。留白可用 image_fit=cover 确定裁切，或用 contain 保留整图，不拼色带反复微调；本地修改也占整页修订预算。
+          - skills: [creating-childrens-picture-books]
+          - result: pdf-face-07 必要检查通过，仅有背景色建议，当前版本已验收。
+          - thought: 保留已验收版本，建议不阻塞交付；不删除记录、改面号或重建项目重置额度。继续其它页面的必要检查。
+          - reply: 第七面的必要检查已经通过，颜色微调先记作可选建议，我会保留这个版本，继续检查其余页面。
+  - name: delivery-size-before-final-review
+    steps:
+      - user: 检查完后发我最终 PDF。
+      - bot:
+          - thought: build 按 send_files 公布的字节上限预检所有交付文件，再完成受影响页面审阅与 validate；打印说明由清单生成，不手改生成文件。
+          - skills: [creating-childrens-picture-books]
+          - result: 导出返回 delivery_size_exceeded，file 为 book.pdf，actual_bytes 为 21056605，max_file_bytes 为 20971520，retryable 为 false。
+          - thought: 目前尚未交付，不能重复发送相同超限文件。保留原图与已有成果，解决导出体积；做不到则清晰报告限制和可用部分，不伪造验收。
+          - reply: PDF 目前超过了附件大小限制，还没有发送。我会保留原始图片和已完成内容，先处理导出体积。

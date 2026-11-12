@@ -87,6 +87,10 @@ tools:
 
 参数为 `{"paths":["report.pdf"],"text":"报告已附上。"}`。路径相对 environment.workspace，也可使用其内部的绝对路径；拒绝越界、目录和符号链接。先复制文件，再持久化带附件的 bot_utter，随后进入正常投递。成功只表示已提交，不表示用户已经下载。
 
+`FileStorage.capabilities()` 返回实际 `max_file_bytes` 和 `max_attachments`，由 Runtime 传入 Pi 的 `send_files` 工具说明及数量约束。Bot 配套程序应在最终审校前按该上限检查导出文件，不能假定“PDF已生成”就能发送。默认仍为20 MiB与8个文件。
+
+整批路径先预检，任意文件无效时不部分交付。失败返回简洁的结构化信息，例如 `reason: file_too_large`、`file`、`actual_bytes`、`max_file_bytes`、`retryable: false` 与下一步建议；具体 reason 以实际返回为准。超限应调整导出或报告限制，不能原样重复调用。附件错误属于工具结果，不新增 Event。
+
 service 环境不开放部署机器文件。受信任 SDK/工具可将自己生成的文件写入 FileStorage，并将引用放进 bot_utter；不能让模型随意选择宿主机路径。
 
 Web 支持附件；shell 输出副本位置。Channel 插件声明 `supports_attachments = True` 后负责平台文件上传及发送，通过绑定的 `channel.files.resolve(message.session_id, ref['id'])` 读取会话副本。未声明支持的 Channel 明确失败，可靠投递不会反复重试这种错误。飞书第一版仍只有文本，没有文件收发适配。

@@ -1,6 +1,7 @@
 /** Pi owns the loop; Cota owns context policy, tools, models and durable state. */
 import { createSkillResources } from './skills.mjs';
 import {nativeModel, nativeStream} from './model.mjs';
+import {hasToolProtocol} from './output.mjs';
 import {projectImageContext, hydrateImageRefs} from './image-context.mjs';
 import { createHttpTool } from './http.mjs';
 import { createNativeTools } from './tools.mjs';
@@ -40,7 +41,26 @@ export function assistantMessage(response, model) {
 export async function runAgent(options, rpc, signal, notify = async () => {}) {
   if (!Number.isInteger(options.maxIterations) || options.maxIterations < 1)
     throw new Error('maxIterations must be a positive integer');
-  let turns = 0, limited = false, fatal;
+  const reserved = options.wrapUpIterations === undefined
+    ? options.maxIterations >= 10 ? Math.min(2, options.maxIterations - 1) : 0
+    : options.wrapUpIterations;
+  if (!Number.isInteger(reserved) || reserved < 0 || reserved >= options.maxIterations)
+    throw new Error('wrapUpIterations must be an integer from 0 to maxIterations - 1');
+  let turns = 0, limited = false, wrappingUp = false, hasFinalReply = false, fatal;
+  let repairRequested = false, outputRejected = false;
+  const executionBudget = () => {
+    const remaining = options.maxIterations - turns;
+    return {total: options.maxIterations, used: turns, remaining, reserved,
+      phase: reserved > 0 && remaining <= reserved ? 'wrap_up'
+        : remaining <= Math.max(reserved + 2, Math.ceil(options.maxIterations / 5)) ? 'warning' : 'working'};
+  };
+  const budgetGuidance = budget => {
+    if (options.maxIterations < 10 && !reserved) return '';
+    const guidance = [`Execution decisions: ${budget.used}/${budget.total} used; ${budget.remaining} remaining; ${budget.reserved} reserved for final text.`];
+    if (budget.phase === 'warning') guidance.push('Finish necessary verification and delivery of existing work. Stop optional polishing and new branches; preserve completed work and unresolved issues.');
+    if (budget.phase === 'wrap_up') guidance.push('No tool calls are available. Reply now using committed evidence: state completed work, remaining or blocked items, and whether files were actually sent. Say clearly if unfinished. Do not claim success or background work that did not happen. Describe task progress rather than internal decision accounting.');
+    return `\n\n<execution_budget phase="${budget.phase}">\n${guidance.join('\n')}\n</execution_budget>`;
+  };
   let schemas = [], latestAssistant;
   const pendingStarts = new Map();
   const model = options.provider ? nativeModel(resolveContextModel(options.model), options.provider) : resolveContextModel(options.model);
@@ -59,6 +79,16 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
         .filter(([key]) => ['cotaEventId', 'timestamp', 'cotaRunId'].includes(key))) : recorded.assistantMessage);
     return recorded;
   };
+  const acceptAssistant = async message => {
+    if (hasToolProtocol(message)) {
+      await request('reject_output', {error_type: 'ToolProtocolText'});
+      // The raw response has been retained in diagnostics. Pi must see no
+      // proposed calls from this invalid batch, including structured ones.
+      message = {...message, content: [], stopReason: 'stop', cotaOutputError: true};
+    }
+    latestAssistant = message;
+    return message;
+  };
   const resources = await createSkillResources(options);
   const native = await createNativeTools(options, resources, request, signal);
   // Discovery notification, not a conversation event. Cota retains the catalog
@@ -70,7 +100,7 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
     const result = await request('send_files', {toolCallId, args});
     await request('tool_result', {toolCallId, name: 'send_files', args, result});
     return result;
-  });
+  }, options.fileLimits);
   const localTools = [...native.tools, {...http, execute: async (toolCallId, args, signal, onUpdate) => {
     const result = await http.execute(toolCallId, args, signal, onUpdate);
     await request('tool_result', {toolCallId, name: http.name, args, result});
@@ -91,20 +121,33 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
     toolExecution: 'sequential',
     prepareRequest: async ({context}) => {
       const prepare = async messages => {
+        const budget = executionBudget();
         const prepared = await request('prepare', {native: !!options.provider, skillPrompt: resources.prompt,
-          toolPrompt: native.prompt, nativeTools: native.schemas, extensionTools});
+          toolPrompt: native.prompt, nativeTools: native.schemas, extensionTools, executionBudget: budget});
         native.imageResources.register(prepared.imageResources);
-        if (!options.provider) return {...prepared, messages: prepared.messages.filter(message => !message.cotaDeferred)};
-        return {...prepared, messages: [...(prepared.systemPrompt ? [{role: 'system', content: prepared.systemPrompt, timestamp: 0}] : []),
-          ...messages.filter(message => message.role !== 'system' && !message.cotaDeferred)]};
+        if (budget.phase === 'wrap_up') {wrappingUp = true; limited = true; prepared.tools = [];}
+        let history = options.provider
+          ? [...(prepared.systemPrompt ? [{role: 'system', content: prepared.systemPrompt, timestamp: 0}] : []),
+            ...messages.filter(message => message.role !== 'system')]
+          : prepared.messages;
+        history = history.filter(message => !message.cotaDeferred && !message.cotaOutputError
+          && !(message.role === 'assistant' && !message.content.some(block => block.type === 'toolCall')
+            && hasToolProtocol(message)));
+        const guidance = budgetGuidance(budget) + (repairRequested
+          ? '\nThe previous response was invalid tool protocol text and was not delivered or executed. Give a normal text-only final summary of committed results and unresolved work; do not emit protocol markup or propose another tool call.' : '');
+        if (guidance) history = [{role: 'system', content: getCurrentSystemPrompt(history) + guidance, timestamp: 0},
+          ...history.filter(message => message.role !== 'system')];
+        return {...prepared, messages: history};
       };
       let prepared = await prepare(context.messages);
       for (let attempt = 0; ; attempt++) {
-        requestMessages = projectImageContext(await hydrateImageRefs(prepared.messages, native.imageResources, settings), native.imageResources);
+        requestMessages = wrappingUp
+          ? projectImageContext(prepared.messages, native.imageResources, {textOnly: true})
+          : projectImageContext(await hydrateImageRefs(prepared.messages, native.imageResources, settings), native.imageResources);
         contextBudget = {...estimateRequest(requestMessages, prepared.tools, model), context_window: model.contextWindow,
           capacity_source: model.capacitySource, reserve_tokens: settings.reserveTokens,
           max_request_bytes: settings.maxRequestBytes, max_images: settings.maxImages,
-          max_image_bytes: settings.maxImageBytes};
+          max_image_bytes: settings.maxImageBytes, execution: executionBudget()};
         const fixed = estimateRequest(prepared.messages.filter(m => m.role === 'system'), prepared.tools, model);
         if (fixed.budget_tokens >= model.contextWindow - settings.reserveTokens)
           throw new Error('System prompt and tool definitions exceed the model budget; reduce guidance or increase context_window');
@@ -167,6 +210,7 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
       // validated arguments before allowing any tool side effect.
       await record({...start, args, requestedArgs: start.args});
       pendingStarts.delete(toolCall.id);
+      if (wrappingUp) return {block: true, reason: 'Execution budget is reserved for the final text reply; no tool side effects are allowed'};
       if (localTools.some(tool => tool.name === toolCall.name)) {
         const permission = await request('authorize_tool', {toolCallId: toolCall.id, name: toolCall.name, args});
         if (!permission.allowed) return {block: true, reason: permission.reason};
@@ -174,27 +218,37 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
     },
     streamFn: async (_, context, streamOptions) => {
       if (options.provider) return nativeStream({model, provider: options.provider, context, contextBudget,
-        rpc: request, signal: streamOptions?.signal ?? signal, notify, onComplete: message => {latestAssistant = message;}});
+        ...(wrappingUp ? {toolChoice: 'none'} : {}),
+        rpc: request, signal: streamOptions?.signal ?? signal, notify, onComplete: acceptAssistant});
       const response = await request('model', {
         messages: context.messages, systemPrompt: getCurrentSystemPrompt(context.messages), tools: schemas, contextBudget,
+        ...(wrappingUp ? {toolChoice: 'none'} : {}),
       });
-      const message = response._cota_message ?? assistantMessage(response, model);
-      latestAssistant = message;
+      const message = await acceptAssistant(response._cota_message ?? assistantMessage(response, model));
       const stream = createAssistantMessageEventStream();
       stream.push({type: 'done', reason: message.stopReason, message});
       return stream;
     },
-    finishTurn: () => {
+    finishTurn: ({message}) => {
       turns++;
       if (fatal) throw fatal;
+      if (message.cotaOutputError) {
+        if (wrappingUp && !repairRequested && turns < options.maxIterations) {
+          repairRequested = true;
+          return {action: 'continue'};
+        }
+        outputRejected = true;
+        return {action: 'end'};
+      }
       if (turns >= options.maxIterations) {
         // A final text response at the limit is still a completed run.
-        limited = agent.state.messages.at(-1)?.role === 'toolResult';
+        limited ||= agent.state.messages.at(-1)?.role === 'toolResult';
         return {action: 'end'};
       }
     },
   });
   agent.subscribe(async event => {
+    if (event.type === 'message_end' && event.message.cotaOutputError) return;
     if (event.type === 'message_end' && event.message.role === 'assistant'
         && ['error', 'aborted'].includes(event.message.stopReason)) {
       fatal ??= Object.assign(new Error(event.message.errorMessage || 'Pi model request interrupted'),
@@ -214,6 +268,11 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
         pendingStarts.delete(event.toolCallId);
       }
       const recorded = await record(event);
+      if (wrappingUp && event.type === 'message_end' && event.message.role === 'assistant'
+          && event.message.stopReason === 'stop'
+          && !event.message.content.some(block => block.type === 'toolCall')
+          && event.message.content.some(block => block.type === 'text' && block.text.trim()))
+        hasFinalReply = true; // Only after the durable reply acknowledgment.
       // Durable Cota identity survives repeated call IDs across runs. It is
       // context metadata, never a model/tool argument or inferred Skill owner.
       if (event.type === 'message_end' && event.message.role === 'toolResult' && recorded?.messageId) {
@@ -230,7 +289,8 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
     await agent.continue();
     if (fatal) throw fatal;
     if (agent.state.errorMessage) throw new Error(agent.state.errorMessage);
-    return {messages: agent.state.messages, status: limited ? 'limited' : 'completed'};
+    return {messages: agent.state.messages, status: limited ? 'limited' : outputRejected ? 'failed' : 'completed', hasFinalReply,
+      ...(outputRejected ? {outputError: 'invalid_model_output'} : {})};
   } finally {
     signal?.removeEventListener('abort', abort);
   }

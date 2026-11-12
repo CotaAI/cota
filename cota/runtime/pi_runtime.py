@@ -14,6 +14,7 @@ import time
 from uuid import uuid4
 
 from cota.events import EventType, BotUtterEvent
+from cota.files import FileStorage
 from cota.events.tool import result_content, text_result
 from cota.executor.tools.base import ToolWrapper
 from cota.executor.environment import DEFAULT_DEPLOY, ExecutionEnvironment, NATIVE_TOOLS
@@ -117,11 +118,12 @@ class PiAgentRuntime:
         prompt = self.prompt.replace('{{latest_user_query}}', self._get_user_query()) if self.group_trigger else self.prompt
         return self.dst.format_prompt(prompt, append=append)
 
-    async def _call_llm(self, messages, tools):
+    async def _call_llm(self, messages, tools, *, tool_choice=None):
         return await observe_model_call(self.agent.llm_instance(self.llm).generate_chat, {
             'messages': messages,
             'max_tokens': self.agent.dialogue.get('max_tokens', DEFAULT_DIALOGUE_MAX_TOKENS),
-            'tools': tools, 'tool_choice': 'auto',
+            **({'tools': tools, 'tool_choice': 'auto'} if tools else {}),
+            **({'tool_choice': tool_choice} if tool_choice is not None else {}),
         }, llm=self.llm)
 
     def _finish_at_limit(self):
@@ -292,6 +294,8 @@ class PiAgentRuntime:
         if self._trace.debug_enabled:
             self._trace.preparation = {key: guidance[key] for key in
                 ('method', 'decisions', 'diagnostics', 'cache_hit', 'duration_ms', 'thoughts', 'omitted_policies')}
+            if payload.get('executionBudget'):
+                self._trace.preparation['execution_budget'] = payload['executionBudget']
         await self._checkpoint()
         resources = self._images.catalog()
         if native:
@@ -323,6 +327,11 @@ class PiAgentRuntime:
             return await self._models.complete(payload)
         if method == 'model_failed':
             return await self._models.fail(payload)
+        if method == 'reject_output':
+            if payload.get('error_type') != 'ToolProtocolText':
+                raise ValueError('Unknown rejected output type')
+            await self._trace.reject_output()
+            return {}
         if method == 'skills_loaded':
             self._available_skills = [skill['name'] for skill in payload['skills']]
             inventory = payload.get('nativeTools')
@@ -388,7 +397,9 @@ class PiAgentRuntime:
                 references = await asyncio.to_thread(self.agent.files.import_paths, self.session_id,
                     self.dst.user_id, self._environment.workspace, payload['args']['paths'])
             except (OSError, ValueError) as error:
-                return {'content': [{'type': 'text', 'text': str(error)}], 'details': {}, 'isError': True}
+                details = getattr(error, 'details', {})
+                text = json.dumps({'error': str(error), **details}, ensure_ascii=False) if details else str(error)
+                return {'content': [{'type': 'text', 'text': text}], 'details': details, 'isError': True}
             self.dst.append_event(BotUtterEvent(payload['args'].get('text', ''), attachments=references,
                 metadata={'source': 'tool'}, tool_event_id=self._trace.tool_source(payload['toolCallId']),
                 run_id=self.dst.execution['run_id']))
@@ -399,7 +410,8 @@ class PiAgentRuntime:
             try:
                 if self._trace.debug_enabled:
                     self._trace.preparation['context_budget'] = payload.get('contextBudget', {})
-                response = await self._call_llm(to_openai(payload['messages'], payload['systemPrompt']), payload['tools'])
+                response = await self._call_llm(to_openai(payload['messages'], payload['systemPrompt']), payload['tools'],
+                                                tool_choice=payload.get('toolChoice'))
             except Exception as error:
                 if self._checkpoint_failed:
                     raise
@@ -527,6 +539,7 @@ class PiAgentRuntime:
                 model['contextWindow'] = capacity
             outcome = await self._bridge.run({'messages': messages, 'imageResources': self._images.catalog(),
                                                'maxIterations': self.max_iterations,
+                                               'fileLimits': (getattr(self.agent, 'files', None) or FileStorage).capabilities(),
                                                **({'provider': provider} if provider else {}),
                                                'model': model, 'compaction': self.agent.dialogue.get('compaction', {}),
                                                'cwd': self.agent.config_path or '.',
@@ -535,9 +548,14 @@ class PiAgentRuntime:
                                                'deploy': self._deploy,
                                                'environment': self._environment.to_dict(),
                                                'skillPaths': self.agent.skill_paths}, self._handle_request)
-            if outcome['status'] == 'limited':
+            if outcome.get('outputError') == 'invalid_model_output':
+                self.dst.append_event(BotUtterEvent(
+                    '模型未能生成有效的回复，本轮已停止。已保存的工作会保留；这不代表任务已完成或附件已交付。',
+                    metadata={'source': 'runtime'}))
+            elif outcome['status'] == 'limited' and not outcome.get('hasFinalReply'):
                 self._finish_at_limit()
-            self._trace.record('run_finished', {'status': outcome['status']})
+            self._trace.record('run_finished', {'status': outcome['status'],
+                **({'error_type': 'ToolProtocolText'} if outcome.get('outputError') else {})})
             await self._checkpoint()
         except BaseException as error:
             if self._stream_request_id and self._stream_callback is not None:

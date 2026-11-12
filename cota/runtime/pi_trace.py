@@ -1,11 +1,14 @@
 """Translate Pi observations into Cota events without driving execution."""
 from copy import deepcopy
 import hashlib
+import logging
 from time import perf_counter
 
 from cota.events import Event, BotUtterEvent
 from cota.events.tool import result_payload, text_result
 from cota.events.assistant import _same, canonical_json
+
+logger = logging.getLogger(__name__)
 
 
 def reply_digest(value):
@@ -36,6 +39,20 @@ class PiTraceRecorder:
     def stage_model(self, message, metadata, diagnostic):
         self._pending_model = {'message': deepcopy(message), 'metadata': deepcopy(metadata),
                                'diagnostic': diagnostic, 'owner_id': None}
+
+    async def reject_output(self):
+        """Keep malformed provider evidence diagnostic-only, never as dialogue."""
+        pending = self._pending_model
+        if pending is None or pending['owner_id'] is not None:
+            raise ValueError('Only an uncommitted assistant decision can be rejected')
+        diagnostic = pending['diagnostic']
+        diagnostic.update(status='rejected', error_type='ToolProtocolText',
+                          error='Model emitted tool protocol as public text; no reply or tool batch was accepted')
+        request_id = pending['metadata']['request_id']
+        await self.save_debug(request_id, diagnostic)
+        logger.warning('Rejected model protocol output request=%s run=%s', request_id,
+                       self.dst.execution.get('run_id'))
+        self._pending_model = None
 
     def _model_origin(self):
         pending = self._pending_model

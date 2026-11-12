@@ -13,7 +13,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'cota/runtime/pi'
-INPUTS = ('package.json', 'package-lock.json', 'worker.mjs', 'engine.mjs', 'skills.mjs', 'tools.mjs', 'http.mjs', 'files.mjs', 'context.mjs', 'image-context.mjs', 'model.mjs')
+INPUTS = ('package.json', 'package-lock.json', 'worker.mjs', 'engine.mjs', 'skills.mjs', 'tools.mjs', 'http.mjs', 'files.mjs', 'context.mjs', 'image-context.mjs', 'model.mjs', 'output.mjs')
 
 
 def load_config():

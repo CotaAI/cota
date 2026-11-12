@@ -75,3 +75,7 @@ Pages 工作流使用固定 mdBook 版本构建，再把 docs/landing.html 作�
 - `tests/test_execution_progress.py`、`tests/debug/viewer.test.mjs`：阶段查询只读且有界，上限和超时提示准确，旧 run 的迟到结果不覆盖当前阶段。
 - `cota/runtime/pi/image-context.test.mjs`、`model.test.mjs`、`tests/test_context_optimization.py`：当前图片批次、重复内容、同路径不同版本、恢复和实际供应商请求；保留原始证据并通过 Pi 原生压缩处理文本压力。
 - `tests/test_pi_bridge.py`：本地 SSE 请求超时时，即使诊断回调尚未确认，终止消息仍保留错误类型；测试不调用真实收费接口。
+- `tests/test_runtime_wrapup_delivery.py`、`cota/runtime/pi/budget.test.mjs`：真实 Pi 循环中的预算提示、工具撤下、无图片加载的收尾、桥接确认与恢复，不重复追加上限提示。
+- `tests/test_protocol_output.py`、`cota/runtime/pi/output.test.mjs`、`model.test.mjs`：DSML分片流式拦截、代码示例保留、预算内最多一次收尾纠正、异常批次无工具副作用、Debug原文与拒绝状态、历史协议回复不再进入模型上下文。
+- `tests/test_attachment_limits.py`、`cota/runtime/pi/files.test.mjs`：实际能力上限、整批原子拒绝、超出20 MiB仅85,085字节的错误定位与工具说明。
+- `tests/test_picture_book_rendering.py`、`test_picture_book_review_checks.py`、`test_picture_book_cli_delivery.py`：整页修订预算、确定裁切、元数据复用、分域QA失效、必要/建议/不确定检查、精简证据输出及交付前大小检查。模型边界使用固定响应，不消费真实服务额度。

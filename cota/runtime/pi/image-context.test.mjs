@@ -167,3 +167,17 @@ test('older local tool images prefer registered immutable version paths over ove
   assert.equal(reference.includes('/book/page.png'), false);
   assert(reference.includes('r-old-0'));
 });
+
+test('text-only wrap-up keeps image provenance without pixels or fabricated review', () => {
+  const resource = descriptor('current');
+  const resources = createImageResources([resource], async () => {throw new Error('Wrap-up must not fetch pixels');});
+  const raw = [user('u', [image('user image')]), ...batch('now', ['/book/page.png'], ['current']),
+    referenced('referenced-current', resource, 'toolResult')];
+  const before = structuredClone(raw);
+  const projected = projectImageContext(raw, resources, {textOnly: true});
+  assert.equal(pixels(projected).length, 0);
+  assert.match(JSON.stringify(projected), /no new visual review|not reviewed/i);
+  assert.match(JSON.stringify(projected), /\/book\/page.png|context-images/);
+  assert(projected.filter((_message, index) => index !== 1).every(message => message.cotaImagePixelsOmitted));
+  assert.deepEqual(raw, before);
+});

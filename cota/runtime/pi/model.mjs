@@ -1,6 +1,7 @@
 /** Official Pi provider stream; Cota retains observations and durable acknowledgments. */
 import {stream as streamCompletions} from '@earendil-works/pi-ai/api/openai-completions';
 import {createAssistantMessageEventStream} from '@earendil-works/pi-ai';
+import {PublicTextGuard} from './output.mjs';
 
 export function nativeModel(model, provider) {
   return {...model, id: provider.model || model.id, name: provider.model || model.id,
@@ -19,7 +20,7 @@ function safeError(error, provider) {
 }
 
 export async function nativeStream({model, provider, context, purpose = 'dialogue',
-  contextBudget, maxTokens = model.maxTokens, rpc, signal, notify = async () => {}, onComplete = () => {}}) {
+  contextBudget, maxTokens = model.maxTokens, toolChoice, rpc, signal, notify = async () => {}, onComplete = () => {}}) {
   const {request_id, debug} = await rpc('model_begin', {purpose, model: model.id,
     ...(contextBudget ? {contextBudget} : {})});
   const output = createAssistantMessageEventStream();
@@ -42,6 +43,7 @@ export async function nativeStream({model, provider, context, purpose = 'dialogu
       controller.signal.removeEventListener('abort', interrupted));
   });
   const visible = purpose === 'dialogue';
+  const publicText = new PublicTextGuard();
   const notification = phase => visible ? notify('stream', {request_id, phase}) : Promise.resolve();
   void (async () => {
     let partial;
@@ -52,7 +54,7 @@ export async function nativeStream({model, provider, context, purpose = 'dialogu
       controller.signal.throwIfAborted();
       const stream = streamCompletions(model, {messages, tools: context.tools}, {
         apiKey: provider.apiKey, signal: controller.signal, timeoutMs, maxRetries: provider.maxRetries ?? 0,
-        maxTokens,
+        maxTokens, ...(toolChoice ? {toolChoice} : {}),
         fetch: async (url, init) => {
           const previous = transport.attempts.at(-1);
           if (previous) previous.status = 'retried';
@@ -88,7 +90,8 @@ export async function nativeStream({model, provider, context, purpose = 'dialogu
         partial = event.partial ?? partial;
         if (event.type === 'text_delta') {
           transport.first_text_ms ??= Math.round(performance.now() - began);
-          if (visible) await bounded(notify('stream', {request_id, phase: 'delta', text: event.delta}));
+          const text = publicText.push(event.delta);
+          if (visible && text) await bounded(notify('stream', {request_id, phase: 'delta', text}));
         }
         if (event.type === 'error') throw new Error(event.error.errorMessage || 'Model request failed');
         if (event.type === 'done') {
@@ -97,9 +100,11 @@ export async function nativeStream({model, provider, context, purpose = 'dialogu
           transport.response_ready_ms = Math.round(performance.now() - began);
           if (transport.attempts.length) transport.attempts.at(-1).status = 'completed';
           await bounded(rpc('model_complete', {request_id, message, duration_ms: Math.round(performance.now() - began), transport}));
-          onComplete(message);
-          await bounded(notification('end'));
-          output.push(event);
+          const accepted = await bounded(onComplete(message)) ?? message;
+          const tail = publicText.finish();
+          if (visible && tail) await bounded(notify('stream', {request_id, phase: 'delta', text: tail}));
+          await bounded(notification(accepted.cotaOutputError ? 'error' : 'end'));
+          output.push({...event, message: accepted, reason: accepted.stopReason});
         } else output.push(event);
       }
     } catch (error) {

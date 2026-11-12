@@ -121,7 +121,7 @@ function contentHash(block) {
   return hash;
 }
 
-export function projectImageContext(messages, resources) {
+export function projectImageContext(messages, resources, {textOnly = false} = {}) {
   // A batch is current until the next assistant response or user input. Keep
   // all images returned by its tool calls, including side-by-side comparisons.
   const current = currentImageMessages(messages);
@@ -130,9 +130,16 @@ export function projectImageContext(messages, resources) {
     if (!Array.isArray(message.content)) return message;
     if (message.role === 'assistant') for (const block of message.content)
       if (block.type === 'toolCall') calls.set(block.id, block);
-    if (!message.content.some(block => block.type === 'image')) return message;
+    if (!message.content.some(block => block.type === 'image')) {
+      if (!textOnly || !message.cotaImageRefs?.length) return message;
+      const indexes = new Set(message.cotaImageRefs.map(ref => ref.index));
+      return {...message, cotaImagePixelsOmitted: true, content: [
+        {type: 'text', text: 'Image pixels omitted for text-only wrap-up; no new visual review was performed.'},
+        ...message.cotaImageRefs.map(ref => message.content[ref.index]),
+        ...message.content.filter((_block, blockIndex) => !indexes.has(blockIndex))]};
+    }
     const call = message.role === 'toolResult' ? calls.get(message.toolCallId) : undefined;
-    const active = current(message, index);
+    const active = !textOnly && current(message, index);
     const references = [];
     const content = message.content.flatMap((block, imageIndex) => {
       if (block.type !== 'image') return [block];
@@ -147,7 +154,8 @@ export function projectImageContext(messages, resources) {
         return [block];
       }
       references.push({type: 'text', text: `Image pixels omitted ${label}${duplicate ? `; duplicate of ${duplicate}` : ''}. `
-        + 'Not review/approval; re-read source to inspect (files may change).'});
+        + (textOnly ? 'No new visual review was performed during text-only wrap-up.'
+          : 'Not review/approval; re-read source to inspect (files may change).')});
       return [];
     });
     // Pi truncates tool-result text during summarization. Put short provenance

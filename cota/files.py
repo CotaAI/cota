@@ -20,6 +20,27 @@ MAX_ATTACHMENTS = 8
 FILE_ID = re.compile(r'f_[0-9a-f]{32}')
 
 
+class FileExportError(ValueError):
+    """A failed export preflight with actionable, model-facing limits."""
+
+    def __init__(self, reason, message, **details):
+        super().__init__(message)
+        self.details = {'reason': reason, 'retryable': False,
+                        'max_file_bytes': MAX_FILE_BYTES,
+                        'next': 'Correct the listed file or export a smaller artifact before sending again',
+                        **details}
+
+
+def _export_size(name, size):
+    if size == 0:
+        raise FileExportError('file_empty', f'File {name} is empty', file=name, actual_bytes=0)
+    if size > MAX_FILE_BYTES:
+        raise FileExportError('file_too_large',
+            f'File {name} is {size} bytes; maximum per file is {MAX_FILE_BYTES} bytes',
+            file=name, actual_bytes=size,
+            next='Export or compress this artifact within max_file_bytes, then revalidate before sending')
+
+
 class UnsupportedAttachments(ValueError):
     """A channel cannot deliver files; retrying the same message cannot fix it."""
 
@@ -41,6 +62,14 @@ def validate_attachments(value):
     return deepcopy(value)
 
 
+def _filename(name):
+    name = name.replace('\\', '/').rsplit('/', 1)[-1]
+    name = ''.join(c for c in name if not unicodedata.category(c).startswith('C')).strip(' .')[:180]
+    if not name:
+        raise ValueError('File name is empty')
+    return name
+
+
 def _mime(name, data):
     if data.startswith(b'%PDF-'):
         return 'application/pdf'
@@ -60,14 +89,15 @@ class FileStorage:
     def __init__(self, root):
         self.root = Path(root).resolve()
 
+    @staticmethod
+    def capabilities():
+        return {'max_file_bytes': MAX_FILE_BYTES, 'max_attachments': MAX_ATTACHMENTS}
+
     def put(self, session_id, user_id, name, data):
         if (not isinstance(session_id, str) or not session_id or not isinstance(name, str)
                 or not isinstance(data, bytes) or not 1 <= len(data) <= MAX_FILE_BYTES):
-            raise ValueError('A file requires a session, name and 1–20 MiB of bytes')
-        name = name.replace('\\', '/').rsplit('/', 1)[-1]
-        name = ''.join(c for c in name if not unicodedata.category(c).startswith('C')).strip(' .')[:180]
-        if not name:
-            raise ValueError('File name is empty')
+            raise ValueError(f'A file requires a session, name and 1–{MAX_FILE_BYTES} bytes')
+        name = _filename(name)
         item = {'id': 'f_' + uuid4().hex, 'name': name, 'mime_type': _mime(name, data), 'size': len(data)}
         validate_attachments([item])
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -164,24 +194,50 @@ class FileStorage:
 
     def import_paths(self, session_id, user_id, workspace, paths):
         if not isinstance(paths, list) or not 1 <= len(paths) <= MAX_ATTACHMENTS:
-            raise ValueError('Provide one to eight workspace file paths')
+            raise FileExportError('attachment_count_invalid',
+                f'Provide one to {MAX_ATTACHMENTS} workspace file paths',
+                max_attachments=MAX_ATTACHMENTS, actual_count=len(paths) if isinstance(paths, list) else None)
         root = Path(workspace).resolve()
         prepared = []
         for value in paths:
-            if not isinstance(value, str) or not value:
-                raise ValueError('File path must be nonempty text')
+            if not isinstance(value, str) or not value or '\0' in value:
+                raise FileExportError('file_path_invalid', 'File path must be nonempty text')
             path = Path(os.path.abspath(root / value))
             if (not path.is_relative_to(root) or path == root
                     or any(p.is_symlink() for p in (path, *path.parents) if p == root or root in p.parents)):
-                raise ValueError('Files must be inside the workspace without symlinks')
+                raise FileExportError('outside_workspace', 'Files must be inside the workspace without symlinks',
+                                      file=path.name, next='Choose an existing file inside the authorized workspace')
+            name = path.relative_to(root).as_posix()
             try:
-                if not stat.S_ISREG(path.stat().st_mode) or not 1 <= path.stat().st_size <= MAX_FILE_BYTES:
-                    raise ValueError('Export requires a regular file of 1–20 MiB')
-                with path.open('rb') as stream:
+                export_name = _filename(path.name)
+            except ValueError:
+                raise FileExportError('file_name_invalid', f'File {name} has no usable export filename', file=name) from None
+            try:
+                info = path.stat()
+                if not stat.S_ISREG(info.st_mode):
+                    raise FileExportError('not_regular_file', f'File {name} is not a regular file', file=name)
+                _export_size(name, info.st_size)
+                flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+                with os.fdopen(os.open(path, flags), 'rb') as stream:
+                    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                        raise FileExportError('not_regular_file', f'File {name} is not a regular file', file=name)
                     data = stream.read(MAX_FILE_BYTES + 1)
-                if len(data) > MAX_FILE_BYTES:
-                    raise ValueError('File exceeds 20 MiB')
+                    _export_size(name, max(len(data), os.fstat(stream.fileno()).st_size))
+                _export_size(name, len(data))
+            except FileNotFoundError:
+                raise FileExportError('file_missing', f'File {name} does not exist', file=name,
+                                      next='Check the artifact path and create the file before sending') from None
             except OSError:
-                raise ValueError('Workspace file is unavailable') from None
-            prepared.append((path.name, data))
-        return [self.put(session_id, user_id, name, data) for name, data in prepared]
+                raise FileExportError('file_unavailable', f'File {name} could not be read', file=name,
+                                      next='Inspect the file and its permissions before sending') from None
+            prepared.append((export_name, data))
+        imported = []
+        try:
+            for name, data in prepared:
+                imported.append(self.put(session_id, user_id, name, data))
+        except BaseException:
+            # Only this batch's fresh IDs are removed; older attachments remain.
+            for item in imported:
+                shutil.rmtree(self.root / item['id'], ignore_errors=True)
+            raise
+        return imported

@@ -18,6 +18,7 @@ async function fixture(t,handler, extra={}) {
     if(method==='prepare')return {systemPrompt:`policy-${rpcCalls.filter(c=>c.method==='prepare').length}`,tools:[schema],attachments:[]};
     if(method==='model_begin')return {request_id:`req-${rpcCalls.filter(c=>c.method==='model_begin').length}`,debug:false};
     if(method==='model_complete'||method==='model_failed'||method==='model_observation')return {};
+    if(method==='reject_output')return {};
     if(method==='event')return {};
     if(method==='tool'){toolCalls.push(payload);return {content:[{type:'text',text:'acted'}]};}
     throw new Error(`Unexpected RPC ${method}`);
@@ -26,6 +27,36 @@ async function fixture(t,handler, extra={}) {
 }
 function sse(res){res.writeHead(200,{'content-type':'text/event-stream'});}
 function done(res,text='done'){sse(res);res.write(chunk({content:text}));res.write(chunk({},'stop'));res.end('data: [DONE]\n\n');}
+
+test('split DSML never leaks through native streaming or becomes a committed reply', async t => {
+  const raw = 'Saved progress.\n<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="act">\n</｜｜DSML｜｜ calls>';
+  const f = await fixture(t, async (_req,res) => {
+    sse(res);
+    for (const part of raw) res.write(chunk({content:part}));
+    res.write(chunk({},'stop'));res.end('data: [DONE]\n\n');
+  });
+  const result = await runAgent(f.options,f.rpc,undefined,f.notify);
+  assert.equal(result.status,'failed');
+  assert.equal(result.outputError,'invalid_model_output');
+  const preview=f.notifications.filter(n=>n.phase==='delta').map(n=>n.text).join('');
+  assert(!preview.includes('<｜') && !preview.includes('DSML'));
+  assert.equal(f.notifications.at(-1).phase,'error');
+  assert(!f.rpcCalls.some(c=>c.method==='event' && c.payload.event.message?.role==='assistant'));
+  assert.equal(f.rpcCalls.find(c=>c.method==='model_complete').payload.message.content[0].text,raw);
+  assert(f.rpcCalls.some(c=>c.method==='reject_output'));
+  assert.equal(f.toolCalls.length,0);
+});
+
+test('restored protocol-only replies stay in evidence but are omitted from the next request', async t => {
+  const f = await fixture(t, async (_req,res) => done(res));
+  const invalid = {role:'assistant',content:[{type:'text',text:'<｜｜DSML｜｜ calls>broken</｜｜DSML｜｜ calls>'}],
+    stopReason:'stop',timestamp:2};
+  f.options.messages = [user,invalid,{...user,content:'Continue saved work.',timestamp:3}];
+  const original=structuredClone(f.options.messages);
+  await runAgent(f.options,f.rpc);
+  assert(!JSON.stringify(f.requests[0].body.messages).includes('DSML'));
+  assert.deepEqual(f.options.messages,original);
+});
 
 test('native text deltas arrive before completion and persistence gates end',async t=>{
   let released;const gate=new Promise(resolve=>released=resolve);

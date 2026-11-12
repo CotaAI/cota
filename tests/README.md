@@ -65,7 +65,7 @@ node --test tests/web/*.test.mjs tests/debug/*.test.mjs
 测试应断言用户可见行为和持久化合同，而不是复制实现计算同一个结果。
 不要通过删断言、扩大 mock 范围或跳过集成用例来消除回归。
 
-官方仅分发 `bots/weather`；`tests/fixtures/bots` 中的 hello/pet 仅服务于聊天隔离、禁止工具、业务追问与取消的集成测试，不进入发行包或 `cota init`。
+官方分发 `bots/weather` 与 `bots/picture-book`；`tests/fixtures/bots` 中的 hello/pet 仅服务于聊天隔离、禁止工具、业务追问与取消的集成测试，不进入发行包或 `cota init`。
 
 共享 `mock_agent` fixture 提供临时 Skill 目录、独立 workspace、实际 ToolRegistry 和模拟模型。
 状态/协议测试应尽量保留真实 Pi、Store 和队列，只替换外部模型/网络边界；
@@ -95,3 +95,12 @@ python -m pytest tests/test_evaluation.py tests/integration/test_example_bots.py
 `test_init_weather_thirty_cases_run_through_eval_cli` 从 init 生成模板，经实际 CLI、Pi 和 SQLite 执行全部43轮，并核验结构化结果及86份逐轮 Trace 文件。模型与评委响应受控，仅验证流水线与产物，不能将测试通过率当作真实模型准确率。
 
 评测进度测试覆盖无参数且未开启 debug 的 CLI 输出、阶段顺序、等待提示及取消后停止提示；工具证据测试构造 Pi 的 result/content 分离形式，确认 HTTP 正文进入评委输入，同时排除 debug 与图片数据。真实模型的失败记录可用 `cota eval judge` 重评，Bot 回答质量和评委判定质量需分别检查。
+
+## 长链路创作与交付
+
+```bash
+python -m pytest -q tests/test_picture_book_rendering.py tests/test_picture_book_review_checks.py tests/test_picture_book_cli_delivery.py tests/test_runtime_wrapup_delivery.py tests/test_attachment_limits.py
+npm --prefix cota/runtime/pi test
+```
+
+覆盖本地编辑也消耗整页修订预算、已验收版本冻结、元数据复用、cover/contain、分域 QA 失效、必要/建议/不确定审阅、完整证据与精简 stdout、超出20 MiB仅85,085字节的交付错误，以及真实 Pi 循环的无工具收尾与持久化确认。测试使用本地模拟服务或固定响应，不调用付费图像或对话模型。渲染测试需要 Poppler、可嵌入字体及绘本依赖，缺失时明确跳过，不能视作视觉质量验收。
