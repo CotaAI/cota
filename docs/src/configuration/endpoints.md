@@ -92,6 +92,33 @@ llms:
 
 `vision: true` 是可选的 Cota 模型能力声明，默认 false。启用后，上传的小图片可作为真实视觉输入传给该对话模型；该字段不作为供应商请求参数发送。纯文本主模型可保持 false，使用 Skill 的专门视觉服务，详见 [附件与模型理解](../concepts/attachments.md)。
 
+### 图片端点
+
+`llms` 下可配置 `image-generate` 和 `image-understanding` 两个特殊端点，为对应的 Pi 扩展工具提供 API 凭证。它们不创建 LLM 对象，不参与对话模型选择，配置格式与普通模型一致：
+
+```yaml
+llms:
+  default:
+    type: openai
+    key: your-model-key
+    apibase: https://api.example.com/v1
+    model: your-model
+  image-generate:
+    type: qwen
+    key: your-image-key
+    apibase: https://dashscope.aliyuncs.com/compatible-mode/v1
+    model: wanx2.1-t2i-turbo
+  image-understanding:
+    type: openai
+    key: your-vision-key
+    apibase: https://api.example.com/v1
+    model: your-vision-model
+```
+
+`type` 用于区分图片生成 API 协议：`openai`（默认）使用标准 OpenAI 图片接口，`qwen` 适用于通义万相、字节 Seed 等在 `/images/generations` 中通过 `image` 字段传递参考图的供应商。图片理解统一使用 chat completions 格式，`type` 不影响其行为。`key`、`apibase`、`model` 均为必填非空文本，缺失时工具不加载。
+
+可选字段 `size`、`quality`、`response_format` 作为图片生成的默认参数传入 API 请求。主模型已具备生图或视觉理解能力时无需配置对应端点。工具可用性同时受 `tools.allow/deny` 控制，详见 [图片工具](../concepts/tool-adapters.md#图片生成与图片理解工具)。
+
 ### 评测模型
 
 `cota eval` 和 `cota eval judge` 自动优先选择 `llms.evaluator`；未定义 evaluator 时使用 `llms.default`。不需要命令行指定评委。被测 Bot 仍使用 agent.yml 中的 `dialogue.llm`，评委配置不会替换 Bot 的对话模型。

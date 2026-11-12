@@ -1,6 +1,6 @@
 # Tool 适配与能力边界
 
-Skill 描述业务做法，Tool 执行具体操作。Pi 提供 read、write、edit、bash、grep、find、ls、powershell 八个底层工具，Cota 为它们绑定执行环境；`web_fetch` 和附件交付原语 `send_files` 使用 Pi 标准工具定义。send_files 由 Cota 校验 personal 工作区并提交当前会话附件，不承担普通文字回复或业务执行。应用仍可通过 Python 注册自定义扩展。Pi 选择和校验调用，Cota 在执行前检查许可并保存开始事件。详见 [会话附件](attachments.md)。
+Skill 描述业务做法，Tool 执行具体操作。Pi 提供 read、write、edit、bash、grep、find、ls、powershell 八个底层工具，Cota 为它们绑定执行环境；`web_fetch`、`image_generate`、`image_understand` 和附件交付原语 `send_files` 使用 Pi 标准工具定义。send_files 由 Cota 校验 personal 工作区并提交当前会话附件，不承担普通文字回复或业务执行。应用仍可通过 Python 注册自定义扩展。Pi 选择和校验调用，Cota 在执行前检查许可并保存开始事件。详见 [会话附件](attachments.md)。
 
 ## Pi 原生工具与执行环境
 
@@ -81,6 +81,54 @@ Cota 不管理业务 API 密钥、租户权限、业务幂等或服务专属重�
 
 超时、取消、连接中断或响应过大，只表示本次调用未取得完整结果，不保证远端操作未发生。创建订单等写入操作应由业务服务提供幂等键和结果查询；Skill/Policy 可以指导先查结果再决定下一步。Cota 不自动重放工具调用，外围也不应因回复投递失败而重跑整个 Agent。
 
+## 图片生成与图片理解工具
+
+`image_generate` 和 `image_understand` 是端点驱动的扩展工具，定义位于 `cota/runtime/pi/image-generate.mjs` 和 `cota/runtime/pi/image-understand.mjs`。是否加载取决于 `endpoints.yml` 的 `llms` 中是否配置了 `image-generate` 和 `image-understanding` 端点；如果主对话模型天然支持多模态（如生图、视觉理解），无需配置这些端点，也不会加载对应工具。
+
+### image_generate
+
+根据文字描述生成图片，可选提供参考图片进行风格迁移或图片编辑。支持两种 API 协议：
+
+| `type` | 适用供应商 | 文本生图 | 参考图编辑 |
+| --- | --- | --- | --- |
+| `openai`（默认） | OpenAI、兼容 OpenAI 的服务 | JSON `/images/generations` | multipart `/images/edits` |
+| `qwen` | 通义万相、字节 Seed 等 | JSON `/images/generations` | JSON `/images/generations`，`image` 字段携带 base64 data URI |
+
+参数：`prompt`（必填）、`output_path`（必填，支持 .png/.jpg/.jpeg/.webp）、`reference_images`（可选，最多 8 张参考图路径）、`size`（可选，如 "1024x1024"）。生成结果保存到指定路径，返回文件路径、大小和模型名称。超时 240 秒。
+
+### image_understand
+
+使用视觉模型分析图片并返回文本描述或回答。所有供应商均使用标准 OpenAI chat completions 格式，将图片编码为 base64 `image_url` content block 发送。
+
+参数：`image_path`（必填）、`prompt`（可选，默认"Describe this image in detail."）。支持 PNG、JPEG、WebP、GIF、BMP 格式，最大 32 MiB。超时 120 秒。
+
+### 端点配置
+
+在 `endpoints.yml` 的 `llms` 下配置，格式与普通模型一致（`key`、`apibase`、`model`、`type`）：
+
+```yaml
+llms:
+  default:
+    type: openai
+    key: your-key
+    apibase: https://api.example.com/v1
+    model: your-model
+  image-generate:
+    type: qwen
+    key: your-image-key
+    apibase: https://dashscope.aliyuncs.com/compatible-mode/v1
+    model: wanx2.1-t2i-turbo
+  image-understanding:
+    type: openai
+    key: your-vision-key
+    apibase: https://api.example.com/v1
+    model: your-vision-model
+```
+
+只配置需要的端点。主对话模型已具备视觉理解能力时不需要 `image-understanding`；主模型已支持生图时不需要 `image-generate`。端点的 `key`、`apibase`、`model` 必须为非空文本，否则该工具不会加载。
+
+这些端点不创建 LLM 对象，不参与对话模型选择，也不受 `dialogue.llm` 引用。它们只为对应工具提供 API 凭证和模型标识。工具可用性同时受 `tools.allow/deny` 控制：`tools.deny: [image_generate]` 可关闭图片生成，`group:image` 同时包含两个图片工具。
+
 ## Python 工具
 
 实现 `Tool.name`、`description`、`parameters` 和异步 `execute()`，或用 `FunctionTool` 包装已有函数：
@@ -109,7 +157,7 @@ agent.get_tool_registry().register(FunctionTool(
 
 ## 权限与可用性
 
-`ToolRegistry.get_allowed_tools()` 同时检查 `enabled` 与 `ToolPolicy`。普通工具的 deny 优先于 allow；省略 allow 表示不额外收窄。内置 `web_fetch` 与应用注册的自定义工具均受 allow/deny 控制。Pi 八个基础工具由 `environment` 决定，不受扩展工具的 allow/deny 控制；在这两个列表中填写基础工具名称会报配置错误。
+`ToolRegistry.get_allowed_tools()` 同时检查 `enabled` 与 `ToolPolicy`。普通工具的 deny 优先于 allow；省略 allow 表示不额外收窄。内置 `web_fetch`、`image_generate`、`image_understand` 与应用注册的自定义工具均受 allow/deny 控制。Pi 八个基础工具由 `environment` 决定，不受扩展工具的 allow/deny 控制；在这两个列表中填写基础工具名称会报配置错误。
 
 未知分组在配置读取时立即报错。应用工具可以在 Agent 加载后注册，因此具体工具名称在每轮创建 runtime 前校验；拼写错误和未注册的名称会明确报错，尚未调用模型。应用也可以在完成注册后主动调用 `agent.get_tool_registry().validate()` 做启动检查。注册名称只接受字母、数字、下划线、连字符，同名覆盖和占用 Pi/HTTP 保留名称立即拒绝；独立工具进程批量注册失败时不会留下部分工具。
 
@@ -133,7 +181,7 @@ client = SubprocessToolClient(
 await agent.get_tool_registry().connect_process(client)
 ```
 
-工具进程使用 Cota 的 `initialize` / `execute` / `shutdown` JSON-lines 协议，不是 MCP。依赖环境和启动命令由部署方准备；Cota 不因阅读 Skill 自动安装依赖或启动脚本。注册时不允许覆盖已有工具；`read`、`write`、`edit`、`bash`、`grep`、`find`、`ls`、`powershell` 和 `web_fetch` 是保留名称，不论是否加载 Skill，业务扩展都不能占用它们。远程 schema 仍受正常工具权限控制。
+工具进程使用 Cota 的 `initialize` / `execute` / `shutdown` JSON-lines 协议，不是 MCP。依赖环境和启动命令由部署方准备；Cota 不因阅读 Skill 自动安装依赖或启动脚本。注册时不允许覆盖已有工具；`read`、`write`、`edit`、`bash`、`grep`、`find`、`ls`、`powershell`、`web_fetch`、`image_generate`、`image_understand` 和 `send_files` 是保留名称，不论是否加载 Skill，业务扩展都不能占用它们。远程 schema 仍受正常工具权限控制。
 
 同一进程的 RPC 顺序执行。超时、取消或协议故障后关闭进程，不自动重放可能已有副作用的调用；重新连接需显式创建客户端。Registry 清理会关闭它拥有的进程。工具进程本身不等于沙箱或用户权限边界。
 

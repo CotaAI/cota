@@ -85,7 +85,7 @@ environment:
 
 ## tools、policy 与 knowledge
 
-`tools.allow` / `deny` 是工具名称或分组名称列表。内置 `web_fetch` 使用 Pi 标准工具定义；machine 环境还可配置 `send_files`，用于交付工作区文件到当前会话，见 [附件](../concepts/attachments.md)。`group:network` 只包含 web_fetch，`group:all` 可用于所有当前可用工具。省略 allow 表示允许当前启用的自定义工具，空 allow 不提供自定义工具；deny 优先。Pi 原生工具与 Skill 资源读取由 environment 决定。
+`tools.allow` / `deny` 是工具名称或分组名称列表。内置 `web_fetch` 使用 Pi 标准工具定义；machine 环境还可配置 `send_files`，用于交付工作区文件到当前会话，见 [附件](../concepts/attachments.md)。`image_generate` 和 `image_understand` 在 endpoints 中配置了对应端点时自动可用，见 [图片工具](../concepts/tool-adapters.md#图片生成与图片理解工具)。`group:network` 只包含 web_fetch，`group:image` 包含 image_generate 和 image_understand，`group:all` 可用于所有当前可用工具。省略 allow 表示允许当前启用的自定义工具，空 allow 不提供自定义工具；deny 优先。Pi 原生工具与 Skill 资源读取由 environment 决定。
 
 未知分组在加载配置时拒绝；具体名称在应用完成工具注册后的运行入口校验，未注册或拼错的工具会在调用模型前报错。应用可在注册结束后调用 `agent.get_tool_registry().validate()` 提前检查。业务 API 凭据、身份鉴权与幂等由外围适配器或工具服务负责，Cota 不新增凭据管理配置，见 [Tool 适配](../concepts/tool-adapters.md)。
 
