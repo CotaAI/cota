@@ -11,11 +11,11 @@ from cota.events.resources import skill_read_name
 _CALL_TYPES = {EventType.TOOL_STARTED, EventType.TOOL_RESULT}
 
 
-def validate_event_references(event, events):
+def validate_event_references(event, events, *, event_map=None):
     """Validate append order and references without inferring missing facts."""
     payload = event.payload
     from cota.events.assistant import validate_carrier_references
-    validate_carrier_references(event, events)
+    validate_carrier_references(event, events, event_map=event_map)
     if event.type in _CALL_TYPES:
         phases = [e for e in events if e.type in _CALL_TYPES and e.run_id == event.run_id
                   and e.payload['tool_call_id'] == payload['tool_call_id']]
@@ -25,11 +25,21 @@ def validate_event_references(event, events):
             raise ValueError(f'Duplicate tool call: duplicate {event.type} for {payload["tool_call_id"]}')
     if event.type == EventType.RUN_STARTED:
         input_id = payload.get('input_event_id')
-        if input_id is not None and not any(e.event_id == input_id and e.type == EventType.USER_UTTER for e in events):
-            raise ValueError('run_started input_event_id must reference an existing user event')
+        if input_id is not None:
+            ref = event_map.get(input_id) if event_map is not None else None
+            if ref is not None:
+                if ref.type != EventType.USER_UTTER:
+                    raise ValueError('run_started input_event_id must reference an existing user event')
+            elif not any(e.event_id == input_id and e.type == EventType.USER_UTTER for e in events):
+                raise ValueError('run_started input_event_id must reference an existing user event')
         context_id = payload.get('context_input_id')
-        if context_id is not None and not any(e.event_id == context_id and e.type == EventType.USER_UTTER for e in events):
-            raise ValueError('run_started context_input_id must reference an existing user event')
+        if context_id is not None:
+            ref = event_map.get(context_id) if event_map is not None else None
+            if ref is not None:
+                if ref.type != EventType.USER_UTTER:
+                    raise ValueError('run_started context_input_id must reference an existing user event')
+            elif not any(e.event_id == context_id and e.type == EventType.USER_UTTER for e in events):
+                raise ValueError('run_started context_input_id must reference an existing user event')
         previous_run = payload.get('previous_run_id')
         if previous_run is not None and (previous_run == event.run_id or
                 not any(e.run_id == previous_run for e in events)):

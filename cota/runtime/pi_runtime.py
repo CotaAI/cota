@@ -54,7 +54,7 @@ class PiAgentRuntime:
     """Cota's per-turn coordinator. Pi Core owns the only model/tool loop."""
 
     def __init__(self, agent, dst, session_id, prompt=None, llm=None,
-                 max_iterations=15, *, checkpoint=None, store=None, service_mode=False):
+                 max_iterations=15, *, checkpoint=None, store=None, sanitize_errors=False):
         validate_runtime_selection(agent.dialogue)
         self.agent = agent
         self.dst = dst
@@ -64,13 +64,12 @@ class PiAgentRuntime:
         self.max_iterations = max_iterations
         # Transport-managed error presentation and optional Python adapter
         # bindings are separate from the deployment's tool environment.
-        self._service_mode = bool(service_mode)
+        self._sanitize_errors = bool(sanitize_errors)
         self._group = agent.dialogue.get('mode', 'direct') == 'group'
         self._environment = getattr(agent, 'environment', ExecutionEnvironment())
         self._deploy = getattr(agent, 'deploy', DEFAULT_DEPLOY)
         if not isinstance(self._environment, ExecutionEnvironment):
             raise TypeError('Agent environment must be an ExecutionEnvironment')
-        self._environment.validate_deployment(self._deploy)
         self._native_tools = set()
         self.group_trigger = None
         self._store = store
@@ -81,7 +80,7 @@ class PiAgentRuntime:
         registry.validate()
         self._tool_registry = copy(registry)
         self._tool_registry._tools = {
-            tool.name: tool.for_execution(dst.user_id, service_mode)
+            tool.name: tool.for_execution(dst.user_id)
             for tool in registry.list_tools()
         }
         self._publication_cursor = len(dst.events)
@@ -144,7 +143,7 @@ class PiAgentRuntime:
     def _files_allowed(self):
         event = self.dst.latest_user_event
         channel = event.metadata.get('channel') if event is not None else None
-        return (self._deploy == 'personal' and self._environment.type == 'machine'
+        return (self._environment.type == 'machine'
                 and getattr(self.agent, '_attachment_channels', {}).get(channel, True)
                 and getattr(self.agent, 'deploy', DEFAULT_DEPLOY) == self._deploy
                 and getattr(self.agent, 'environment', ExecutionEnvironment()) == self._environment
@@ -171,7 +170,7 @@ class PiAgentRuntime:
                 else 'Not selected by environment.shell')
             add(name, 'pi', name in self._native_tools, reason)
         add('http_request', 'cota', self._http_allowed(), 'Disabled by tools policy')
-        add('send_files', 'cota', bool(self._files_allowed()), 'Requires personal machine execution, tool permission and a file-capable channel')
+        add('send_files', 'cota', bool(self._files_allowed()), 'Requires machine execution, tool permission and a file-capable channel')
         allowed = {tool.name for tool in self._allowed_tools()}
         for tool in sorted(self._tool_registry.list_tools(), key=lambda tool: tool.name):
             add(tool.name, 'application', tool.name in allowed,
@@ -234,8 +233,9 @@ class PiAgentRuntime:
                     if m.get('role') == 'toolResult' and m.get('toolName') == 'read'
                     and not m.get('isError') and m.get('cotaResultEventId')}
         from cota.events.resources import skill_read_name
+        events = list(self.dst.events)
         read_skills = []
-        for result in self.dst.events:
+        for result in events:
             skill = skill_read_name(result)
             if not skill:
                 continue
@@ -246,7 +246,7 @@ class PiAgentRuntime:
                     and skill not in read_skills):
                 read_skills.append(skill)
         context = PolicyContext.from_runtime(messages, self.dst, self._available_skills, read_skills,
-                                             max_chars=self.agent.policy.context_chars)
+                                             max_chars=self.agent.policy.context_chars, events=events)
         services = getattr(self.agent, 'policy_services', None) or PolicyServices(model=self.agent.llm_instance)
         with model_purpose('policy'):
             guidance = await self.agent.policy.guidance(context, services)

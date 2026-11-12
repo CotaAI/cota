@@ -58,7 +58,6 @@ class Agent:
             deploy, {}, base_path=os.getcwd())
         if not isinstance(self.environment, ExecutionEnvironment):
             raise TypeError('environment must be an ExecutionEnvironment')
-        self.environment.validate_deployment(deploy)
         self.processor = Processor(agent=self, store=self.store)
 
         self.config_path: Optional[Text] = None

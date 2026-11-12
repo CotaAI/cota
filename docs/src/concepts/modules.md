@@ -19,7 +19,7 @@
 | Policy | `cota/policy/` | 标注解析、train/load/guidance、策略扩展、预算和实际注入记录 |
 | Evaluation | `cota/evaluation/` | 独立执行对话验证、LLM Judge、进度、证据与报告、重评和版本对比；不向 Bot 注入评测要求，不自动优化 Bot |
 | 标注文件接口 | `cota/annotation_files.py`、`annotation_cli.py` | 对话导出为编辑草稿，导入校验成 Policy；不写人工标注 Event |
-| ExecutionEnvironment | `cota/executor/environment.py` | personal/service 模式及可信 none/machine 环境绑定；不把 cwd 当作沙箱 |
+| ExecutionEnvironment | `cota/executor/environment.py` | 可信 none/machine 环境绑定；不把 cwd 当作沙箱 |
 | Tool / ToolRegistry | `cota/executor/tools/` | 工具 schema、权限、执行期身份视图与结果；Skill 文本不授予权限 |
 | MCP / 工具进程 | `cota/executor/mcp*.py`、`tool_process.py`、`tool_servers/` | 真实工具能力和独立依赖进程；负责连接与进程生命周期 |
 | UserMemory | `cota/executor/user_memory.py` | 按 user_id 的跨会话偏好；不同于 Store 的会话事件 |

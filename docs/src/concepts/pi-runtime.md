@@ -73,7 +73,7 @@ Cota 负责证据、资源作用域和传输投影；Pi 继续负责模型—工
 
 发现范围来自 `Agent.skill_paths`，默认仅为该 Bot 的 `skills/`。调用 Pi 的加载器时关闭默认全局目录，检查真实路径，拒绝越过资源根目录的符号链接。
 
-`environment.type: none` 下，read 仅能读取已发现 Skill 目录的普通文件，以及本轮注册的会话图片资源；machine 下，同一个 read 还可读取宿主机业务文件，与其他可用原生工具使用同一个工作目录。machine 工作目录不构成沙箱。八个名称始终保留给 Pi；personal 的 machine 环境即使没有 Skill，也会按依赖可用性提供工具。配置与边界见 [工具与执行环境](tool-adapters.md)。
+`environment.type: none` 下，read 仅能读取已发现 Skill 目录的普通文件，以及本轮注册的会话图片资源；machine 下，同一个 read 还可读取宿主机业务文件，与其他可用原生工具使用同一个工作目录。machine 工作目录不构成沙箱。八个名称始终保留给 Pi；machine 环境即使没有 Skill，也会按依赖可用性提供工具。配置与边界见 [工具与执行环境](tool-adapters.md)。
 
 `skills.mjs` 只负责发现与格式化目录；`tools.mjs` 使用官方 ToolDefinition 工厂构造工具，保留参数转换及 prompt guidelines。Cota 将这些 guidelines 与执行环境说明加入每次 prepare 的 system prompt，不引入完整 coding-agent system prompt。
 

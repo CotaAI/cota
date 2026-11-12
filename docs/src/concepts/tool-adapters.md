@@ -4,17 +4,16 @@ Skill 描述业务做法，Tool 执行具体操作。Pi 提供 read、write、ed
 
 ## Pi 原生工具与执行环境
 
-`deploy` 表达使用模式，与运行机器的位置无关：
+`deploy` 表达使用模式，与运行机器的位置无关。省略时为 `personal`，默认使用 `machine` 环境。不需要原生工具的 Bot 显式设 `environment: {type: none}`。
 
 | 模式 | 面向谁 | 默认原生工具环境 |
 | --- | --- | --- |
-| `personal` | 部署者自己，本机和个人云服务器均适用 | `machine`：部署机器，Bot 目录下的 `files/` 为 cwd |
-| `service`（省略时的默认值） | 提供给他人、客服或群组 | `none`：只读已发现的 Skill 资源 |
+| `personal`（省略时的默认值） | 部署者自己，本机和个人云服务器均适用 | `machine`：部署机器，Bot 目录下的 `files/` 为 cwd |
+| `service` | 提供给他人、客服或群组 | `machine`（与 personal 相同；不需要原生工具时显式设 `environment.type: none`） |
 
-最简单的个人配置是 `deploy: personal`。需要调整工作目录等选项时：
+省略 deploy 即使用默认配置。需要调整工作目录等选项时：
 
 ```yaml
-deploy: personal
 environment:
   type: machine
   workspace: ./files
@@ -48,11 +47,11 @@ Cota 在每轮开始用 Pi 官方 grep/find 工具检查空临时目录；这不
 
 实现使用 Pi 公开的 `createReadToolDefinition` / `createWriteToolDefinition` / `createEditToolDefinition` / `createBashToolDefinition`，以及 `createGrepToolDefinition` / `createFindToolDefinition` / `createLsToolDefinition` / `createPowerShellToolDefinition`。这些定义的 execute 接口可以直接供 Agent Core 调用，不需要 AgentSession。Cota 不复制匹配算法、分页逻辑或 Shell 执行器，也不修改 Pi 源码。后续远端执行需要逐项确认官方接口支持，不能把本地搜索误当成远端搜索。
 
-**machine 是可信部署机器执行，不是沙箱，仅允许用于 personal。** 工作目录只是 cwd，绝对路径、`..`、Shell、环境变量和网络均受部署进程的操作系统权限约束。个人本地和个人云主机使用相同模式。个人使用若不需要机器工具，可显式设 `environment.type: none`。只读环境不能仅靠隐藏 write/edit 实现，因为 bash 同样能修改文件。
+**machine 是可信部署机器执行，不是沙箱。** 工作目录只是 cwd，绝对路径、`..`、Shell、环境变量和网络均受部署进程的操作系统权限约束。个人本地和个人云主机使用相同模式。不需要机器工具时，可显式设 `environment.type: none`。只读环境不能仅靠隐藏 write/edit 实现，因为 bash 同样能修改文件。
 
-`service` 当前拒绝绑定 machine，仍可使用配置允许的业务扩展工具和 Skill 资源读取。工具需自行校验业务权限；deploy 不替代 Application 的身份与会话归属校验。个人 Bot 即使使用 Web/飞书入口，也仍是 personal；对外分享时应改为 service。选择 personal 不会阻止你错误地公开个人执行权限，因此不要把它当成登录控制。
+对外提供服务时，通过 sandbox（`cota/platform/sandbox.py`）隔离每个会话的执行环境，而不是在框架层面限制工具能力。deploy 不替代 Application 的身份与会话归属校验。
 
-后续 service 可接用户专属环境、群组共享环境或已授权 Client；部署在用户电脑的 Client 不会使托管 Bot 变为 personal。当前尚未提供这些执行端，也不会用每用户子目录冒充隔离。
+后续可接用户专属环境、群组共享环境或已授权 Client；部署在用户电脑的 Client 不会使托管 Bot 变为 personal。
 
 当前只实现 none 和 machine。旧 `environment.type: host` 和 `deploy: local/host/remote` 不再接受。device、container、readonly 等配置明确报错，不会回退到宿主机。远端设备须有经过认证的执行端，容器须真正约束文件、网络、凭证和进程；这些后端尚未实现。WebSocket 接入本身不会授予浏览器用户本机文件访问权。
 
@@ -106,7 +105,7 @@ agent.get_tool_registry().register(FunctionTool(
 
 此例只返回固定测试数据。真实工具应自行校验业务身份和对象权限。工具可以返回普通业务数据，或使用 Pi 原生 `content` / `details` / `isError` 结果；runtime 保存执行结果并转换为模型内容。`ToolWrapper` 把普通执行异常变成失败结果，取消不会被吞掉。
 
-每轮执行通过 `for_execution(user_id, service_mode)` 创建独立工具视图，避免并发会话互相覆盖用户绑定。需要额外共享状态的自定义工具应明确其并发与清理行为。
+每轮执行通过 `for_execution(user_id)` 创建独立工具视图，避免并发会话互相覆盖用户绑定。需要额外共享状态的自定义工具应明确其并发与清理行为。
 
 ## 权限与可用性
 

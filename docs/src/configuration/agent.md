@@ -5,7 +5,6 @@
 ## 最小示例
 
 ```yaml
-deploy: service
 system:
   name: Support Bot
   description: 你是客服助手，依据已有资料回答，不编造查询结果。
@@ -62,15 +61,9 @@ Token、整体序列化字节、图片数量和图片字节预算分别检查。
 
 ## deploy 与 environment
 
-`deploy` 使用 `personal` 或 `service`，省略时为 `service`。这是服务对象的区别，不是本机与云端的区别；不会依据 Channel 或网络监听地址自动切换。
+`deploy` 使用 `personal` 或 `service`，省略时为 `personal`。两者行为相同，均默认 machine 环境。不需要原生工具的 Bot 显式设 `environment: {type: none}`。对外提供服务时通过 sandbox 隔离执行。
 
-个人电脑和个人云服务器均可只配置：
-
-```yaml
-deploy: personal
-```
-
-默认绑定部署机器，等价于：
+省略 deploy 即使用默认配置，等价于：
 
 ```yaml
 deploy: personal
@@ -80,15 +73,9 @@ environment:
   timeout_seconds: 60
 ```
 
-`workspace` 相对 Bot 目录解析，默认 `files`，首次执行才创建；SDK 直接 `Agent(deploy='personal')` 时相对创建 Agent 时的 cwd。`timeout_seconds` 默认 60，为正有限数值，限制单次 bash/powershell。工作目录是起始位置，不是沙箱。machine 使用部署账号的文件、进程与网络权限。个人部署可显式使用 `environment: {type: none}` 关闭业务文件与 Shell。
+`workspace` 相对 Bot 目录解析，默认 `files`，首次执行才创建；SDK 直接 `Agent(deploy='personal')` 时相对创建 Agent 时的 cwd。`timeout_seconds` 默认 60，为正有限数值，限制单次 bash/powershell。工作目录是起始位置，不是沙箱。machine 使用部署账号的文件、进程与网络权限。不需要机器工具时可显式使用 `environment: {type: none}`。
 
-对外提供服务配置：
-
-```yaml
-deploy: service
-```
-
-service 默认 none，只允许通过 read 阅读已发现 Skill 资源，业务扩展工具仍由 tools 配置决定。当前拒绝 machine，避免多人请求使用共享服务器权限。用户隔离环境、群组共享环境和已授权 Client 均属于后续 service 执行后端，尚未实现；device/container 等未知后端直接报错，不回退。
+对外提供服务时，通过 `cota/platform/sandbox.py` 的 Sandbox（DockerSandbox / GVisorSandbox）隔离每个会话的执行环境，而不是依赖框架层面的能力限制。
 
 旧 `environment.type: host`、`deploy: local/host/remote` 不再支持。`deploy` 和实际执行环境记录到 run metadata，不增加对话 Event。详见 [工具与执行环境](../concepts/tool-adapters.md)。
 
@@ -98,7 +85,7 @@ service 默认 none，只允许通过 read 阅读已发现 Skill 资源，业务
 
 ## tools、policy 与 knowledge
 
-`tools.allow` / `deny` 是工具名称或分组名称列表。内置 `http_request` 使用 Pi 标准工具定义；personal 的 machine 环境还可配置 `send_files`，用于交付工作区文件到当前会话，见 [附件](../concepts/attachments.md)。`group:network` 只包含 HTTP，`group:all` 可用于所有当前可用工具。省略 allow 表示允许当前启用的自定义工具，空 allow 不提供自定义工具；deny 优先。Pi 原生工具与 Skill 资源读取由 environment 决定。
+`tools.allow` / `deny` 是工具名称或分组名称列表。内置 `http_request` 使用 Pi 标准工具定义；machine 环境还可配置 `send_files`，用于交付工作区文件到当前会话，见 [附件](../concepts/attachments.md)。`group:network` 只包含 HTTP，`group:all` 可用于所有当前可用工具。省略 allow 表示允许当前启用的自定义工具，空 allow 不提供自定义工具；deny 优先。Pi 原生工具与 Skill 资源读取由 environment 决定。
 
 未知分组在加载配置时拒绝；具体名称在应用完成工具注册后的运行入口校验，未注册或拼错的工具会在调用模型前报错。应用可在注册结束后调用 `agent.get_tool_registry().validate()` 提前检查。业务 API 凭据、身份鉴权与幂等由外围适配器或工具服务负责，Cota 不新增凭据管理配置，见 [Tool 适配](../concepts/tool-adapters.md)。
 

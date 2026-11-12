@@ -95,6 +95,18 @@ class Event:
             self._sealed = True
         return self
 
+    def _frozen_copy(self):
+        """Detached frozen fact. Caller must have validated the source event."""
+        from .immutable import freeze_json
+        copy = object.__new__(type(self))
+        memo = {id(self): copy}
+        for key, value in vars(self).items():
+            if key != '_sealed':
+                object.__setattr__(copy, key, deepcopy(value, memo))
+        object.__setattr__(copy, 'payload', freeze_json(copy.payload))
+        object.__setattr__(copy, '_sealed', True)
+        return copy
+
     def __post_init__(self):
         self.payload = deepcopy(self.payload)
         self.validate()

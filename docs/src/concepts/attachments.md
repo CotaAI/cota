@@ -77,10 +77,9 @@ Bot 发送的附件在 Shell 中显示编号、文件名、大小和存储路径
 
 ## Bot 交付
 
-personal 的 machine 环境可启用 `send_files`。它以 Pi AgentTool 格式定义，由 Cota 绑定当前会话，不接受模型提供的 user_id/session_id：
+machine 环境可启用 `send_files`。它以 Pi AgentTool 格式定义，由 Cota 绑定当前会话，不接受模型提供的 user_id/session_id：
 
 ```yaml
-deploy: personal
 tools:
   allow: [http_request, send_files]
 ```
@@ -91,7 +90,7 @@ tools:
 
 整批路径先预检，任意文件无效时不部分交付。失败返回简洁的结构化信息，例如 `reason: file_too_large`、`file`、`actual_bytes`、`max_file_bytes`、`retryable: false` 与下一步建议；具体 reason 以实际返回为准。超限应调整导出或报告限制，不能原样重复调用。附件错误属于工具结果，不新增 Event。
 
-service 环境不开放部署机器文件。受信任 SDK/工具可将自己生成的文件写入 FileStorage，并将引用放进 bot_utter；不能让模型随意选择宿主机路径。
+`environment.type: none` 不开放部署机器文件。受信任 SDK/工具可将自己生成的文件写入 FileStorage，并将引用放进 bot_utter；不能让模型随意选择宿主机路径。
 
 Web 支持附件；shell 输出副本位置。Channel 插件声明 `supports_attachments = True` 后负责平台文件上传及发送，通过绑定的 `channel.files.resolve(message.session_id, ref['id'])` 读取会话副本。未声明支持的 Channel 明确失败，可靠投递不会反复重试这种错误。飞书第一版仍只有文本，没有文件收发适配。
 

@@ -28,7 +28,7 @@ asyncio.run(main())
 
 `Agent.load_from_path(path, store=None)` 依次读取 `agent.yml` 和 `endpoints.yml`，校验 Bot 配置并合并默认值，加载 Policy、Store、模型和用户记忆，建立工具注册表。它创建 Bot 的 `workspace/`，并把存在的 `skills/` 目录交给 Pi 发现。SQLite 相对路径以 Bot 目录解析。
 
-`Agent.deploy` 表达 personal（自己使用，包括个人云服务器）或 service（提供给他人），默认 service。`Agent.environment` 是解析后的执行绑定：personal 默认 machine，工作目录为 Bot 下的 `files/`；service 当前只支持 none，不会退回部署机器。环境绑定不替代应用身份认证，详见 [Agent 配置](../configuration/agent.md)。
+`Agent.deploy` 表达 personal（自己使用，包括个人云服务器）或 service（提供给他人），默认 personal。`Agent.environment` 是解析后的执行绑定：默认 machine，工作目录为 Bot 下的 `files/`；不需要原生工具时显式设 `environment.type: none`。环境绑定不替代应用身份认证，详见 [Agent 配置](../configuration/agent.md)。
 
 ## 职责分工
 
@@ -41,7 +41,7 @@ asyncio.run(main())
 | DST / Store | 推导会话状态、持久化事实、恢复上下文 |
 | Application / Channel | 管理并发、身份、会话访问和消息收发 |
 
-Skill 是模型按需阅读的业务资源。读取 Skill 不会创建另一个 Agent，也不会自动执行其中步骤。Tool 是可执行能力；`tools.allow/deny` 控制业务扩展，`deploy` 与执行环境控制 Pi 原生工具范围；Policy 提供业务指导，不能绕过工具权限。
+Skill 是模型按需阅读的业务资源。读取 Skill 不会创建另一个 Agent，也不会自动执行其中步骤。Tool 是可执行能力；`tools.allow/deny` 控制业务扩展，执行环境控制 Pi 原生工具范围；Policy 提供业务指导，不能绕过工具权限。
 
 ## 生命周期
 

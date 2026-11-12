@@ -3,7 +3,7 @@
 <h1>Cota</h1>
 
 <p><strong>Bot 开发与部署平台</strong></p>
-<p>把业务经验做成机器人，验证它的表现，再交付给自己或别人使用。</p>
+<p>面向开发者和 Bot 创作者的开发与部署平台，让不具备深厚 Agent 工程经验的人，也能将模型、Skill 和业务规则组合成可靠、可维护、可持续优化的 Bot，并通过服务入口或机器人包交付给自己或他人使用。</p>
 
 <p>
   <a href="#快速开始">开始第一个 Bot</a> ·
@@ -109,9 +109,9 @@ cota eval
 
 weather 自带 **30 个对话评测案例**，覆盖多轮条件变更、预算约束、业务回复和异常处理。天气查询使用外部接口，活动查询使用随示例提供的活动目录，便于复现验证。详见 [weather 示例](bots/weather/README.md)。
 
-想验证更长的制作流程，可以使用 [绘本工坊](bots/picture-book/README.md)：组合故事与分镜、图像生成/编辑、视觉审校和中文 PDF，并通过配套 Web 应用下载成品。它是 personal 示例，需要自行配置图像/视觉服务及可选排版依赖。
+想验证更长的制作流程，可以使用 [绘本工坊](bots/picture-book/README.md)：组合故事与分镜、图像生成/编辑、视觉审校和中文 PDF，并通过配套 Web 应用下载成品。它使用默认 machine 环境，需要自行配置图像/视觉服务及可选排版依赖。
 
-对话支持[文件附件](docs/src/concepts/attachments.md)：Shell 用 `/file "路径"` 添加文件，Web 支持上传和授权下载；两者沿用统一的会话与历史链路。personal Bot 可交付工作区中的报告、图片或 PDF，文件内容独立于事件数据库保存。
+对话支持[文件附件](docs/src/concepts/attachments.md)：Shell 用 `/file "路径"` 添加文件，Web 支持上传和授权下载；两者沿用统一的会话与历史链路。machine 环境的 Bot 可交付工作区中的报告、图片或 PDF，文件内容独立于事件数据库保存。
 
 需要浏览器聊天入口时，在 Bot 目录启动：
 
@@ -212,7 +212,7 @@ policies:
 <details>
 <summary><strong>自用助手和多人服务的工具权限怎么区分？</strong></summary>
 
-`deploy: personal` 用于自己的电脑或自用云主机；`deploy: service` 用于对外提供服务，默认不开放部署机器的原生文件与 Shell。工作目录不构成安全沙箱。权限与执行环境见 [工具接入](docs/src/concepts/tool-adapters.md)。
+默认使用全部能力（`environment.type: machine`）。不需要原生文件与 Shell 的 Bot 显式设 `environment: {type: none}`。对外提供服务时，通过 sandbox 隔离执行环境。工作目录不构成安全沙箱。权限与执行环境见 [工具接入](docs/src/concepts/tool-adapters.md)。
 
 </details>
 

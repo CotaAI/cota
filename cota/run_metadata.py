@@ -36,8 +36,6 @@ def validate_run_metadata(metadata, events):
             environment = ExecutionEnvironment(**value)
             if environment.to_dict() != data['environment']:
                 raise ValueError('Run environment must contain the canonical execution binding')
-            if 'deploy' in data:
-                environment.validate_deployment(data['deploy'])
         if 'native_tools' in data:
             if 'environment' not in data:
                 raise ValueError('Native tool inventory requires environment provenance')

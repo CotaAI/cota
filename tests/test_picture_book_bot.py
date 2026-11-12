@@ -47,7 +47,7 @@ def test_picture_book_is_portable_and_has_policy_eval():
     assert (BOT / 'agent.yml').is_file(), 'Picture-book Bot is missing'
     config = yaml.safe_load((BOT / 'agent.yml').read_text())
     validate_bot_config(config)
-    assert config['deploy'] == 'personal'
+    assert 'deploy' not in config
     assert 'send_files' in config['tools']['allow']
     assert not (BOT / 'serve.py').exists()
     assert config['dialogue']['run_timeout_seconds'] >= 1800

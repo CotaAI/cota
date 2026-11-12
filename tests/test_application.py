@@ -154,11 +154,11 @@ async def test_plain_question_completes_and_followup_has_its_own_receipt(mock_ag
         assert await submission.wait() == result
 
 
-async def test_platform_intake_uses_application_service_mode(mock_agent, monkeypatch):
+async def test_platform_intake_sanitizes_errors(mock_agent, monkeypatch):
     modes, finished = [], asyncio.Event()
     from cota.processor import Processor
     async def handle(self, inbound):
-        modes.append(self.service_mode)
+        modes.append(self.sanitize_errors)
         finished.set()
     monkeypatch.setattr(Processor, 'handle_recorded_message', handle)
     async with application(mock_agent) as app:

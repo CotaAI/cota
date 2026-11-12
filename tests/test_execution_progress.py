@@ -75,7 +75,7 @@ async def test_total_timeout_is_visible_without_turning_failure_into_completion(
     processor.dst.append_event(Event('run_finished', {'status': 'failed', 'error_type': 'TimeoutError'}, run_id='r'))
     error = ModelCallError('provider private details', error_type='TimeoutError') if native else TimeoutError('provider private details')
     runtime = SimpleNamespace(run=AsyncMock(side_effect=error),
-                              publish_committed=AsyncMock(), _service_mode=True)
+                              publish_committed=AsyncMock(), _sanitize_errors=True)
     await processor._run_runtime(runtime)
     assert processor.dst.execution['status'] == 'failed'
     assert '超时' in processor.dst.latest_bot_text()

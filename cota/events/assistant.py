@@ -118,7 +118,7 @@ def _matches_call(event, owner):
                for b in owner.payload['llm']['message']['content'])
 
 
-def validate_carrier_references(event, events):
+def validate_carrier_references(event, events, *, event_map=None):
     p = event.payload
     llm = p.get('llm')
     if llm:
@@ -133,15 +133,16 @@ def validate_carrier_references(event, events):
                          and any(block.get('id') == p['tool_call_id'] for block in previous.payload['llm']['message']['content']
                                  if block['type'] == 'toolCall')), None)
         if proposal is not None and p.get('llm_event_id') != proposal.event_id:
-            # A repeated started call is rejected by ordinary phase validation;
-            # an unstarted batch member must not lose its original provenance.
             if not any(e.type == 'tool_started' and e.run_id == event.run_id
                        and e.payload['tool_call_id'] == p['tool_call_id'] for e in events):
                 raise ValueError('A proposed tool call must reference its original assistant carrier')
     for key in ('llm_event_id', 'tool_event_id'):
         if key not in p:
             continue
-        owner = next((e for e in events if e.event_id == p[key]), None)
+        if event_map is not None:
+            owner = event_map.get(p[key])
+        else:
+            owner = next((e for e in events if e.event_id == p[key]), None)
         if owner is None or owner.type != 'tool_started' or owner.run_id != event.run_id:
             raise ValueError(f'{key} must reference an earlier tool_started in its own run')
         if key == 'llm_event_id':

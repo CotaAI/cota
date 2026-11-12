@@ -64,7 +64,7 @@ async def test_two_skills_can_be_read_and_recovered_without_activation(mock_agen
     assert not any(e.type in ('skill_activate', 'skill_paused', 'skill_complete') for e in dst.events)
     restored = (await store.load('compose', agent=mock_agent))
     assert not any(e.type == 'skills_loaded' for e in restored.events)
-    assert restored.run_metadata[restored.execution['run_id']] == {'available_skills': ['travel', 'weather'], 'deploy': 'service', 'environment': {'type': 'none'}}
+    assert restored.run_metadata[restored.execution['run_id']] == {'available_skills': ['travel', 'weather'], 'deploy': 'personal', 'environment': {'type': 'none'}}
     restored.append_event(UserUtterEvent('Beijing'))
     await PiAgentRuntime(mock_agent, restored, 'compose', checkpoint=store.save).run()
     messages = mock_agent._llm_mock.generate_chat.call_args.kwargs['messages']

@@ -8,7 +8,7 @@
 | activity-search | 按城市、人数、门票预算、亲子和室内外条件筛选 | 同目录 activities.json，全部为虚构测试数据 |
 | outing-plan | 组合天气与活动，处理约束变化和部分失败 | 前两者的实际读取结果与用户约束 |
 
-保持 `deploy: service`，工具仍只有内置 `http_request` 和受限的 Pi `read`。无需 Shell、活动 API、额外进程或新 Tool。Skill 附带 JSON 已在资源读取范围内；活动查询可以不联网，但模型服务仍需可用。
+使用 `environment.type: none`，工具仍只有内置 `http_request` 和受限的 Pi `read`。无需 Shell、活动 API、额外进程或新 Tool。Skill 附带 JSON 已在资源读取范围内；活动查询可以不联网，但模型服务仍需可用。
 
 按 [示例说明](../README.md) 填写当前 Bot 的 endpoints.yml 后，在仓库根目录运行：
 
