@@ -194,3 +194,37 @@ test('returns error when output_path is missing', async () => {
   const result = await tool.execute('gen-13', {prompt: 'test', output_path: ''});
   assert.equal(result.isError, true);
 });
+
+test('supportsReferences defaults to true — schema includes reference_images', () => {
+  const tool = createImageGenerateTool(config());
+  assert.ok(tool.description.includes('reference'));
+  const props = tool.parameters.properties;
+  assert.ok('reference_images' in props);
+});
+
+test('supportsReferences false — schema omits reference_images and description omits references', () => {
+  const tool = createImageGenerateTool(config({supportsReferences: false}));
+  assert.ok(!tool.description.includes('reference'));
+  const props = tool.parameters.properties;
+  assert.ok(!('reference_images' in props));
+  assert.ok('prompt' in props);
+  assert.ok('output_path' in props);
+  assert.ok('size' in props);
+});
+
+test('supportsReferences false — rejects reference_images in validation', () => {
+  const tool = createImageGenerateTool(config({supportsReferences: false}));
+  assert.throws(() => validateToolArguments(tool, {type: 'toolCall', id: 'x', name: tool.name,
+    arguments: {prompt: 'a cat', output_path: '/tmp/cat.png', reference_images: ['/tmp/ref.png']}}));
+});
+
+test('supportsReferences false — text-to-image still works', async t => {
+  const dir = await tempDir(t);
+  const outputPath = join(dir, 'norefs.png');
+  const tool = createImageGenerateTool(config({
+    supportsReferences: false,
+    request: (path, body) => b64Response(),
+  }));
+  const result = await tool.execute('gen-norefs', {prompt: 'a sunset', output_path: outputPath});
+  assert.equal(result.isError, false);
+});

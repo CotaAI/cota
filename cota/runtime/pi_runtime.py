@@ -159,9 +159,12 @@ class PiAgentRuntime:
             value = config.get(field)
             if not isinstance(value, str) or not value.strip():
                 return None
-        return {'apiKey': config['key'], 'baseUrl': config['apibase'], 'model': config['model'],
-                'type': config.get('type', 'openai'),
-                **{k: config[k] for k in ('size', 'quality', 'response_format') if k in config}}
+        result = {'apiKey': config['key'], 'baseUrl': config['apibase'], 'model': config['model'],
+                  'type': config.get('type', 'openai'),
+                  **{k: config[k] for k in ('size', 'quality', 'response_format') if k in config}}
+        if config.get('supports_references') is False:
+            result['supportsReferences'] = False
+        return result
 
     def _files_allowed(self):
         event = self.dst.latest_user_event

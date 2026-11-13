@@ -14,14 +14,20 @@ const MAX_IMAGE_INPUT_BYTES = 32 * 1024 * 1024;
 const TIMEOUT_MS = 240_000;
 const IMAGE_EXTENSIONS = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp'};
 
-const parameters = Type.Object({
+const baseProperties = {
   prompt: Type.String({description: 'Text description of the image to generate'}),
   output_path: Type.String({description: 'Absolute path to save the generated image (PNG/JPEG/WebP)'}),
+};
+const refProperty = {
   reference_images: Type.Optional(Type.Array(
     Type.String({description: 'Absolute path of a reference image'}),
     {maxItems: 8, description: 'Reference images for guided generation or editing'})),
+};
+const sizeProperty = {
   size: Type.Optional(Type.String({description: 'Override default dimensions, e.g. "1024x1024"'})),
-}, {additionalProperties: false});
+};
+const parameters = Type.Object({...baseProperties, ...refProperty, ...sizeProperty}, {additionalProperties: false});
+const parametersNoRefs = Type.Object({...baseProperties, ...sizeProperty}, {additionalProperties: false});
 
 function fail(message) {
   return {content: [{type: 'text', text: JSON.stringify({error: message})}],
@@ -155,6 +161,7 @@ async function extractImageData(result, signal) {
  */
 export function createImageGenerateTool(config) {
   const apiType = config.type || 'openai';
+  const supportsRefs = config.supportsReferences !== false;
   const post = config.request
     ? (path, body, signal) => config.request(path, body, signal)
     : (path, body, signal) => jsonPost(config.baseUrl, path, config.apiKey, body, signal);
@@ -164,8 +171,10 @@ export function createImageGenerateTool(config) {
 
   return {
     name: 'image_generate', label: 'Image generate',
-    description: 'Generate an image from a text description. Optionally accepts reference images for guided generation or editing. Saves the result to the specified path.',
-    parameters,
+    description: supportsRefs
+      ? 'Generate an image from a text description. Optionally accepts reference images for guided generation or editing. Saves the result to the specified path.'
+      : 'Generate an image from a text description. Saves the result to the specified path.',
+    parameters: supportsRefs ? parameters : parametersNoRefs,
     async execute(toolCallId, args, signal) {
       if (signal?.aborted) throw new DOMException('Image generate cancelled', 'AbortError');
       const controller = new AbortController();
