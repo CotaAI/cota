@@ -1,5 +1,7 @@
 """Observe Node provider calls without owning their transport or execution loop."""
 from copy import deepcopy
+import hashlib
+import json
 import logging
 import time
 from uuid import uuid4
@@ -37,6 +39,7 @@ class PiModelObserver:
         self.recorder, self.checkpoint = recorder, checkpoint
         self.active = {}
         self.last_error_type = None
+        self._prefix = None
 
     async def begin(self, payload):
         self.last_error_type = None
@@ -70,6 +73,18 @@ class PiModelObserver:
         if self.recorder.debug_enabled and payload['kind'] == 'request':
             diagnostic.update(request=deepcopy(payload['request']), request_stage='provider',
                               request_size=request_metrics(payload['request']))
+            if diagnostic['purpose'] == 'dialogue':
+                request = payload['request']
+                head = next(iter(request.get('messages', [])), {})
+                values = {'model': request.get('model', diagnostic['model']),
+                          'system': head.get('content', '') if head.get('role') in ('system', 'developer') else '',
+                          'tools': request.get('tools', [])}
+                # Hash only small static inputs, never rescan the full history.
+                prefix = {key: hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                    separators=(',', ':')).encode()).hexdigest() for key, value in values.items()}
+                diagnostic['cache'] = {**{key + '_hash': value for key, value in prefix.items()},
+                    'changes': [key for key in prefix if self._prefix is not None and prefix[key] != self._prefix[key]]}
+                self._prefix = prefix
         elif payload['kind'] == 'transport':
             diagnostic['transport'] = deepcopy(payload['transport'])
             attempt = next(iter(reversed(payload['transport'].get('attempts', []))), {})
@@ -93,7 +108,11 @@ class PiModelObserver:
             usage = message.get('usage', {})
             diagnostic['usage'] = {'prompt_tokens': sum(usage.get(k, 0) for k in ('input', 'cacheRead', 'cacheWrite')),
                                    'completion_tokens': usage.get('output', 0),
-                                   'total_tokens': usage.get('totalTokens', 0)}
+                                   'total_tokens': usage.get('totalTokens', 0),
+                                   'cached_tokens': usage.get('cacheRead', 0),
+                                   'uncached_tokens': usage.get('input', 0)}
+            total = diagnostic['usage']['prompt_tokens']
+            diagnostic['usage']['cache_hit_ratio'] = usage.get('cacheRead', 0) / total if total else None
         await self.recorder.save_debug(metadata['request_id'], diagnostic)
         if metadata['purpose'] == 'dialogue':
             self.recorder.stage_model(message, {**metadata, 'duration_ms': payload['duration_ms']}, diagnostic)

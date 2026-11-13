@@ -60,7 +60,8 @@ test('production protocol retains committed wrap-up acknowledgment without retur
   assert.equal(frame.type,'done');
   assert.deepEqual(frame.result,{status:'limited',hasFinalReply:true});
   assert.equal(requests.length,2);
-  assert.equal(requests[1].tools?.length??0,0);
+  assert.deepEqual(requests[1].tools,requests[0].tools);
+  assert.equal(requests[1].tool_choice,'none');
   assert.equal(frames.filter(f=>f.type==='request'&&f.method==='tool').length,1);
   assert(frames.some(f=>f.type==='request'&&f.method==='event'
     &&f.payload.event.type==='message_end'&&f.payload.event.message.role==='assistant'

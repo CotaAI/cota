@@ -51,17 +51,18 @@ async def test_ordered_thoughts_reach_before_read_after_result_and_resume(mock_a
     await PiAgentRuntime(mock_agent, dst, 's', checkpoint=store.save).run()
     requests = mock_agent._llm_mock.generate_chat.call_args_list
     for request in requests:
-        system = request.kwargs['messages'][0]['content']
+        assert 'SELECT_THOUGHT' not in request.kwargs['messages'][0]['content']
+        system = str(request.kwargs['messages'][-1]['content'])
         assert system.index('SELECT_THOUGHT') < system.index('Skills: SearchWeb') < system.index('EXAMPLE_ONLY_RESULT') < system.index('REPLY_THOUGHT')
         assert 'Result（示例结果条件）: EXAMPLE_ONLY_RESULT' in system
-        assert 'EXAMPLE_ONLY_RESULT' not in str(request.kwargs['messages'][1:])
+        assert 'EXAMPLE_ONLY_RESULT' not in str(request.kwargs['messages'][1:-1])
         assert not any(m.get('content') in ('EXAMPLE_ONLY_USER', 'EXAMPLE_ONLY_REPLY', 'FUTURE_EXAMPLE_USER')
                        for m in request.kwargs['messages'][1:])
     assert any('lookup timeout' in str(m.get('content')) for m in requests[2].kwargs['messages'] if m['role'] == 'tool')
     restored = (await store.load('s', agent=mock_agent))
     restored.append_event(UserUtterEvent('No'))
     await PiAgentRuntime(mock_agent, restored, 's', checkpoint=store.save).run()
-    assert 'REPLY_THOUGHT' in mock_agent._llm_mock.generate_chat.call_args.kwargs['messages'][0]['content']
+    assert 'REPLY_THOUGHT' in str(mock_agent._llm_mock.generate_chat.call_args.kwargs['messages'][-1]['content'])
     contexts = [e.payload['llm']['policy'] for e in restored.events if e.payload.get('llm')]
     assert len(contexts) == 4
     assert contexts[0]['policies'][0]['name'] == value['name']
@@ -146,7 +147,7 @@ async def test_compaction_recomputes_priority_without_claiming_business_completi
     ]
     runtime = PiAgentRuntime(mock_agent, dst, 's')
     await runtime.run()
-    assert 'READ_PRIORITY_RULE' in mock_agent._llm_mock.generate_chat.call_args.kwargs['messages'][0]['content']
+    assert 'READ_PRIORITY_RULE' in str(mock_agent._llm_mock.generate_chat.call_args.kwargs['messages'][-1]['content'])
     runtime._system_prompt = 'base'
     mock_agent._llm_mock.generate_chat.side_effect = [{'content': 'summary'}]
     dst.append_event(UserUtterEvent('x' * 3000))
@@ -167,6 +168,7 @@ async def test_compaction_recomputes_priority_without_claiming_business_completi
     })
     prepared = await runtime._prepare({'messages': restored['messages'], 'nativeTools': native_tools, 'extensionTools': extensions})
     assert any(e.type == 'context_compaction' for e in dst.events)
-    assert 'READ_PRIORITY_RULE' not in prepared['messages'][0]['content']
-    assert 'GENERAL_RULE' in prepared['messages'][0]['content']
+    assert 'READ_PRIORITY_RULE' not in prepared['runtimeContext']
+    assert 'GENERAL_RULE' in prepared['runtimeContext']
+    assert prepared['messages'][0]['content'] == 'base'
     assert runtime._trace.policy['read_skills'] == []

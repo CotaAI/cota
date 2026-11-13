@@ -176,7 +176,7 @@ test('text-only wrap-up keeps image provenance without pixels or fabricated revi
   const before = structuredClone(raw);
   const projected = projectImageContext(raw, resources, {textOnly: true});
   assert.equal(pixels(projected).length, 0);
-  assert.match(JSON.stringify(projected), /no new visual review|not reviewed/i);
+  assert.match(JSON.stringify(projected), /not review(?:ed| or approval)/i);
   assert.match(JSON.stringify(projected), /\/book\/page.png|context-images/);
   assert(projected.filter((_message, index) => index !== 1).every(message => message.cotaImagePixelsOmitted));
   assert.deepEqual(raw, before);

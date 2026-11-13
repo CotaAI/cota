@@ -25,6 +25,14 @@ BOTS = Path(__file__).resolve().parents[2] / 'bots'
 FIXTURE_BOTS = Path(__file__).resolve().parents[1] / 'fixtures' / 'bots'
 
 
+def request_guidance(request):
+    tail = request['messages'][-1]
+    assert tail['role'] == 'user'
+    text = str(tail['content'])
+    assert '<runtime_context>' in text
+    return text
+
+
 class ModelHTTP:
     def __init__(self, responses):
         self.responses = deque(responses)
@@ -121,7 +129,7 @@ async def test_hello_restart_and_session_isolation(load_bot):
     saved = await send(restored, '我叫什么', 'a', 'alice')
     assert saved['execution']['engine'] == 'pi'
     assert saved['execution']['status'] == 'completed'
-    assert [m['content'] for m in second.requests[0]['messages'] if m['role'] == 'user'] == ['我叫小明', '我叫什么']
+    assert [m['content'] for m in second.requests[0]['messages'] if m['role'] == 'user' and isinstance(m['content'], str)] == ['我叫小明', '我叫什么']
     assert [e['payload']['text'] for e in await restored.store.history('a')] == ['我叫小明', '你好，小明。', '我叫什么', '你叫小明。']
     assert [e['payload']['text'] for e in await restored.store.history('b')] == ['你好', '你好，新朋友。']
     assert not first.responses and not second.responses
@@ -136,9 +144,9 @@ async def test_weather_skill_question_restart_api_and_history(load_bot):
     question = await send(agent, '帮我查下天气')
     assert question['execution']['status'] == 'completed'
     assert question['active_skill'] == 'weather'
-    assert 'weather-city' in first.requests[0]['messages'][0]['content']
-    assert 'weather-city' in first.requests[1]['messages'][0]['content']
-    assert 'web_fetch' in first.requests[1]['messages'][-1]['content']
+    assert 'weather-city' in request_guidance(first.requests[0])
+    assert 'weather-city' in request_guidance(first.requests[1])
+    assert any('web_fetch' in m['content'] for m in first.requests[1]['messages'] if m['role'] == 'tool')
     await agent.cleanup()
     agent.store.engine.dispose()
     restored, second = await load_bot('weather', [
@@ -151,10 +159,10 @@ async def test_weather_skill_question_restart_api_and_history(load_bot):
     })])
     done = await send(restored, '北京')
     assert done['execution']['status'] == 'completed'
-    assert '不能照抄案例或猜测' in second.requests[0]['messages'][0]['content']
+    assert '不能照抄案例或猜测' in request_guidance(second.requests[0])
     assert 'paused_state' not in done and done.get('active_skill') == 'weather'
     assert len(requests) == 1 and not pending
-    assert [m['content'] for m in second.requests[0]['messages'] if m['role'] == 'user'] == ['帮我查下天气', '北京']
+    assert [m['content'] for m in second.requests[0]['messages'] if m['role'] == 'user' and isinstance(m['content'], str)] == ['帮我查下天气', '北京']
     assert [e['payload']['text'] for e in await restored.store.history('room')][:3] == ['帮我查下天气', '你想查询哪个城市的天气？', '北京']
     trace = await restored.store.history('room', include_execution=True)
     http_events = [e for e in trace if e['type'] == 'tool_result' and e['payload']['tool'] == 'weather_lookup']
@@ -164,10 +172,10 @@ async def test_weather_skill_question_restart_api_and_history(load_bot):
     # Both result branches are examples even before a query. Only actual 18°C
     # data reaches the tool history; the successful example's 22°C does not.
     for request in [*first.requests, *second.requests]:
-        system = request['messages'][0]['content']
+        system = request_guidance(request)
         assert 'weather-success' in system and 'weather-unavailable' in system
         assert 'Result（示例结果条件）: 查询成功' in system
-        assert '22°C' not in str(request['messages'][1:])
+        assert '22°C' not in str(request['messages'][1:-1])
     assert '22°C' not in str(http_events)
     assert any(e['type'] == 'run_finished' for e in trace)
     view = await restored.store.trace('room', done['execution']['run_id'])
@@ -177,8 +185,8 @@ async def test_weather_skill_question_restart_api_and_history(load_bot):
     assert [e['payload']['resource']['skill'] for e in view['skill_history']] == ['weather']
     assert not first.responses and not second.responses
     # Real policy data must reach the model without rewriting the user's text.
-    assert '<business_guidance>' in first.requests[0]['messages'][0]['content']
-    assert 'weather-selection' in first.requests[0]['messages'][0]['content']
+    assert '<business_guidance>' in request_guidance(first.requests[0])
+    assert 'weather-selection' in request_guidance(first.requests[0])
 
 
 @pytest.mark.asyncio
@@ -197,9 +205,9 @@ async def test_weather_failure_and_fallback_results_reach_model(load_bot):
     assert any('HTTP 503' in r for r in results)
     assert any('results' in r for r in results)
     for request in model.requests:
-        assert 'weather-city-not-found' in request['messages'][0]['content']
-        assert 'weather-invalid-data' in request['messages'][0]['content']
-        assert '22°C' not in str(request['messages'][1:])
+        assert 'weather-city-not-found' in request_guidance(request)
+        assert 'weather-invalid-data' in request_guidance(request)
+        assert '22°C' not in str(request['messages'][1:-1])
     events = await agent.store.history('room', include_execution=True)
     assert any(e['type'] == 'tool_result' and e['payload']['tool'] == 'weather_lookup' and e['payload']['result'].get('success') is False for e in events)
 
@@ -247,10 +255,10 @@ async def test_pet_business_policy_question_and_cancel(load_bot):
     assert [e['payload']['text'] for e in await agent.store.history('room')] == [
         '帮我安排宠物的日常照护', '你养的是什么宠物？', '先不弄了', '好的，需要时再来找我。']
     assert not model.responses
-    assert '明确日常照护需求' in model.requests[0]['messages'][0]['content']
-    assert '尊重用户取消' in model.requests[2]['messages'][0]['content']
-    assert 'pet-cancel' in model.requests[0]['messages'][0]['content']
-    assert 'pet-cancel' in model.requests[1]['messages'][0]['content']
+    assert '明确日常照护需求' in request_guidance(model.requests[0])
+    assert '尊重用户取消' in request_guidance(model.requests[2])
+    assert 'pet-cancel' in request_guidance(model.requests[0])
+    assert 'pet-cancel' in request_guidance(model.requests[1])
 
 
 @pytest.mark.asyncio
@@ -288,10 +296,10 @@ async def test_reviewed_policy_is_saved_and_used_by_reloaded_bot(load_bot):
     ])
     result = await send(updated, '继续查询北京天气')
     for request in script.requests:
-        assert 'REVIEWED_SELECTION' in request['messages'][0]['content']
-        assert 'REVIEWED_REPLY' in request['messages'][0]['content']
-        assert 'Result（示例结果条件）: REVIEWED_RESULT' in request['messages'][0]['content']
-        assert 'REVIEWED_RESULT' not in str(request['messages'][1:])
+        assert 'REVIEWED_SELECTION' in request_guidance(request)
+        assert 'REVIEWED_REPLY' in request_guidance(request)
+        assert 'Result（示例结果条件）: REVIEWED_RESULT' in request_guidance(request)
+        assert 'REVIEWED_RESULT' not in str(request['messages'][1:-1])
     trace = await updated.store.trace('room', result['execution']['run_id'])
     assert trace['skills'][0]['payload']['resource']['skill'] == 'weather'
     prepared = next(e['payload']['llm']['policy'] for e in trace['events'] if e['payload'].get('llm'))
@@ -328,8 +336,8 @@ async def test_weather_outing_resources_policy_and_replay(load_bot, weather_stat
     assert skill_read_name(Event.from_dict(references[0])) is None  # Data read is not another Skill activation.
     last = model.requests[-1]
     assert 'hz-science' in str(last['messages'])
-    assert 'outing-weather-unavailable' in last['messages'][0]['content']
-    assert 'outing-budget' in last['messages'][0]['content']
+    assert 'outing-weather-unavailable' in request_guidance(last)
+    assert 'outing-budget' in request_guidance(last)
     assert {t['function']['name'] for t in last['tools']} == {'read', 'web_fetch', 'weather_lookup'}
     assert requests and not pending and not model.responses
     restored = await agent.store.load('room', agent=agent)
@@ -357,12 +365,12 @@ async def test_outing_city_budget_updates_survive_reload_and_do_not_leak(load_bo
     await send(restored, '预算改成一百，其他不变。', 'alice', 'alice')
     await send(restored, '换上海，预算恢复三百，人数不变。', 'alice', 'alice')
     await send(restored, '推荐个活动吧。', 'bob', 'bob')
-    users = [m['content'] for m in model.requests[1]['messages'] if m['role'] == 'user']
+    users = [m['content'] for m in model.requests[1]['messages'] if m['role'] == 'user' and isinstance(m['content'], str)]
     assert users == ['杭州，两大一小，只要室内，门票三百以内，不查天气。',
                      '预算改成一百，其他不变。', '换上海，预算恢复三百，人数不变。']
     assert any('hz-science' in str(m.get('content')) for m in model.requests[1]['messages'] if m['role'] == 'tool')
     assert not any(m['role'] == 'tool' for m in model.requests[2]['messages'])
-    assert [m['content'] for m in model.requests[2]['messages'] if m['role'] == 'user'] == ['推荐个活动吧。']
+    assert [m['content'] for m in model.requests[2]['messages'] if m['role'] == 'user' and isinstance(m['content'], str)] == ['推荐个活动吧。']
     assert not any(e['type'] == 'tool_started' and e['payload']['tool'] == 'web_fetch'
                    for e in await restored.store.events('alice'))
     assert not first.responses and not model.responses
@@ -440,7 +448,7 @@ async def test_portable_evaluation_runs_real_pi_and_judge_transport(tmp_path, mo
     assert len(judge_requests) == 2 and not bot_model.responses
     assert 'HIDDEN_REVIEW' not in json.dumps(bot_model.requests)
     assert 'HIDDEN_REVIEW' in json.dumps(judge_requests)
-    assert [m['content'] for m in bot_model.requests[-1]['messages'] if m['role'] == 'user'] == ['你好', '谢谢']
+    assert [m['content'] for m in bot_model.requests[-1]['messages'] if m['role'] == 'user' and isinstance(m['content'], str)] == ['你好', '谢谢']
     state = json.loads((output / turns[1]['trace']).read_text())
     assert state['model_debug'] and any(state['model_debug'].values())
     assert any(e['type'] == 'tool_result' for e in state['events'])

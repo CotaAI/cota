@@ -30,10 +30,12 @@ async def test_business_guidance_applies_on_new_active_and_followup_turns(mock_a
     store = MemoryStore()
     await PiAgentRuntime(mock_agent, dst, 's', checkpoint=store.save).run()
     messages = mock_agent._llm_mock.generate_chat.call_args.kwargs['messages']
-    assert 'business rule' in messages[0]['content']
+    assert 'business rule' not in messages[0]['content']
+    assert 'business rule' in str(messages[-1]['content'])
     assert 'Use the available tools to search the web.' not in messages[0]['content']
     assert '<active_skill' not in messages[0]['content']
-    assert messages[-1]['content'] == 'original question'
+    assert messages[-2]['content'] == 'original question'
+    assert 'business rule' not in str(dst.context_messages)
 
 
 @pytest.mark.asyncio

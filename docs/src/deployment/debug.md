@@ -48,10 +48,11 @@ Events 的序号属于完整事实流。聊天历史只展示 user_utter/bot_utt
 | debug.response | Cota 适配后的模型响应 |
 | debug.provider_response | Pi 原生调用为组装完成的 Pi 消息；Python 适配器为供应商响应，若提供 |
 | debug.preparation | Policy 的选择、thought、预算省略和准备诊断 |
-| debug.request_size | 按 system/user/assistant/tool 分类的实际字符数、system 内 Policy/Skill 目录大小、工具定义字符数、图片数量和内联字节数 |
+| debug.request_size | 按 system/user/assistant/tool 分类的实际字符数、runtime_context 与业务指导大小、system 内 Skill 目录大小、工具定义字符数、图片数量和内联字节数 |
 | debug.transport | OpenAI 适配器的总时限、最大重试次数和各 HTTP 尝试：number、started_ms、headers_ms、status_code、status；完整响应返回时记录 response_ready_ms；Pi 原生流另记录首个公开文字的 first_text_ms |
 | debug.preparation.context_budget | Pi token 估算、实际 usage 推导预算、模型容量及来源、预留 token；serialized_bytes / max_request_bytes 展示序列化预算，images / max_images 和 image_bytes / max_image_bytes 展示图片预算；估算不等同供应商计费 |
-| debug.usage | 供应商报告的输入、缓存命中、输出和推理 token 数；未提供时不伪造 |
+| debug.usage | 供应商经 Pi 标准化的输入、缓存读取、输出 token；cache_hit_ratio 为缓存读取量/总输入量，推理等字段以接口实际提供为准 |
+| debug.cache | Pi 原生主请求的 model/system/tools 小型指纹及同一 run 内的变化项；不扫描或证明完整历史前缀，首请求 changes 为空 |
 
 Model Requests 列表显示运行中请求的等待时长，详情显示本次耗时、实际用量和上下文构成，选中该页时自动刷新。等待模型期间没有新的执行事件是正常情况，不额外添加心跳 Event。查看较早的请求时仍可手动刷新或返回列表。
 
@@ -87,3 +88,7 @@ Web 与 Shell 的流式片段是临时展示，不会在 Events 中逐条出现�
 `max_iterations` 限制的是 Pi 的模型决策轮数，不是 Event 数量；同一响应的多个工具调用会产生多条事实。达到限制保留 `limited` 状态，并提示在本会话继续。运行总超时及原生模型请求超时保留失败状态与已提交事实，给用户明确的超时提示；不会自动重放可能已经产生外部副作用的工具。具体模型请求的时限和原因见对应请求诊断。
 
 SQL 中请求正文、准备详情及响应正文独立保存，状态更新只修改小记录。页面和 SDK 读取到的 JSON 结构不变。这样在多图长任务中查看等待状态，不会反复重写整个 prompt。
+
+在 Model Requests 详情的实际 request.messages 末尾，可以查看本次 runtime_context。它是请求投影，协议角色为 user；不是新增用户发言，不出现在 Events、DST 或 Channel 聊天记录中。前一请求的临时指导不会累积到下一请求。基础 system 和工具指纹不变并不保证供应商缓存命中；还需结合 usage、图片投影及压缩边界判断。
+
+Pi 会标准化不同供应商的 usage。若接口没有报告缓存细分，标准化字段可能为 0；不能仅凭这一数值认定服务端完全没有缓存。

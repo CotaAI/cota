@@ -213,7 +213,10 @@ class PolicyCatalog:
             chosen.append(policy)
             blocks.append(block)
             selected_thoughts.extend(t for t in policy_thoughts(policy) if focus is None or t['step'] == focus)
-        return {'text': _GUIDANCE + '\n' + '\n\n'.join(blocks) if blocks else '',
+        # Ranking chooses the cases within the budget, not their display order.
+        # The same selected cases must render identically after rank-only changes.
+        stable_blocks = [block for _, block in sorted(zip(chosen, blocks), key=lambda item: item[0]['name'])]
+        return {'text': _GUIDANCE + '\n' + '\n\n'.join(stable_blocks) if blocks else '',
                 'policies': deepcopy(chosen), 'thoughts': selected_thoughts,
                 'omitted_policies': omitted}
 

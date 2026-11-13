@@ -20,64 +20,6 @@
 
 ## 平台接入路径
 
-### Cota 绘本 Bot 配套入口
-
-若当前 Skill 随 Cota 绘本 Bot 分发，可使用 Bot 自带的制作程序；其他环境继续使用下方已有工具的接入方式。`default` 是规划与对话模型，`image` 和 `vision` 是配套程序使用的图像能力，并非可直接调用的 Pi 工具名。供应商、模型与凭证由部署配置管理，程序自行读取，不打开配置文件查找密钥。
-
-从实际运行环境说明取得 **Bot directory**、**Working directory** 和 **Python executable**。Bot 根目录下 `scripts/book.py` 使用 PEP 723 内联依赖声明，优先使用 `uv run` 执行以自动隔离依赖环境；无 uv 时回退到 Python 解释器（需手动安装依赖）。以下 `<BOT>` 是占位符，须替换成环境提供的真实值，并按当前 Shell 规则转义路径：
-
-```sh
-uv run "<BOT>/scripts/book.py" --help
-uv run "<BOT>/scripts/book.py" doctor
-uv run "<BOT>/scripts/book.py" init my-book
-uv run "<BOT>/scripts/book.py" --project my-book status
-uv run "<BOT>/scripts/book.py" --project my-book generate --help
-```
-
-三个路径基准需分清：
-
-- Skill 的参考资料和自带验证器，相对于 Pi 目录展示中 `SKILL.md` 所在目录定位。
-- Bot 制作程序相对于环境提供的 Bot 根目录定位，与当前 Shell 目录无关。
-- 作品保存在 Bot 根目录下 `workspace/books/作品名/`。`--project 作品名` 放在子命令之前；generate/review 等命令的文件参数相对于该作品目录。直接使用 read/write 操作作品文件时，使用作品文件的绝对路径，避免与工具工作目录混淆。
-
-每次 Shell 调用从运行环境的工作目录开始；一次命令中的 `cd` 不会改变下次 Bash 或 read/write 的路径基准。正常创作只需 CLI 帮助和当前阶段的 Skill 资料，不需要通读程序源码。
-
-| 能力 | 配套命令 | 使用方式 |
-|---|---|---|
-| 环境检查 | doctor | 只检查配置与依赖，不发起付费请求；样页验收仍需实际执行 |
-| 项目建立与续做 | init / status | 新任务先建立项目，续做先检查已保存资产和请求日志 |
-| image 绘图与修改 | generate | 先写提示词文件；参考图用真实文件的 --reference 传入，具体参数按需查看帮助 |
-| vision 图片理解 | review | 实际传入图片并保存观察证据，不能用文件名或全书缩略图代替逐页审校 |
-| 中文排版与质检 | build / validate | book.json 的版式字段和示例见 build --help；排版成功不等于审校通过 |
-| 附件交付 | deliverables | 返回已验证文件的绝对路径，再交给 send_files；--draft 仅用于明确未验收的审阅稿 |
-
-只查看当前步骤的子命令帮助。按故事与分镜、角色参考、一张样页、其余页面、排版审校的顺序推进。图片网络请求上限 240 秒，Bash 调用需给足时间且不超过运行环境的 300 秒上限。结果未知的付费请求先检查已保存日志与供应商记录，不盲目重试。
-
-### 修订与收敛
-
-- PDF 面的修订额度独立于 `generate`：`status.rendering` 按首版＋两次修订追踪整页，覆盖本地图片、文字和版式修改。已通过固定必要标准的版本保持不变。元数据修改不消耗额度；恢复缺失产物不算新版本。不要用改面号、项目名或删除记录绕过。`pending_pages` 不等于通过证明，查看当前页版本和审阅证据。
-- 验收标准写编号列表，默认必要项，可选项加 `[advice]` 或 `[optional]`。`review` 的 `verdict` 为 `pass/revise/uncertain`，逐项记录证据；只有必要项失败要求修订，建议不能无限阻塞交付，不确定则保留版本并报告。最终 PDF 面用 `pdf-face-01` 等稳定对象；规范报告与图片哈希一致、必要项全通过才冻结该版本，不自动替整书勾选 QA。
-- 排版在 `book.json` 用 `image_fit: contain`（保留整图，默认）或 `cover`（居中裁切填满）；不要写临时 Pillow 脚本反复拼色带。`build` 的 `changed_pages/pending_pages/invalidated_checks` 指明受影响范围，元数据变化不重绘或清空视觉审校。打印说明和纸张数由清单生成，只改清单，不覆盖生成文件。
-- `build` 和 `deliverables` 都按每文件20 MiB默认预检；以 `send_files` 实际公布上限传 `--max-file-bytes`。超限先解决导出，旧成品保持不变；`--draft` 也不跳过大小限制。默认 stdout 为完整精简 JSON，保留证据路径和哈希；需要原始字段加 `--full`，不截断命令结果。
-
-- `generate` 和 `review` 必须提供稳定的 `--asset`，如 `page-04`、`cover`；同一页的 `-r2/-r3` 文件仍用同一标识。最终 PDF 面可用 `pdf-face-05` 作为独立审阅对象，避免把插图和排版面的检查混为一谈。
-- 每个对象最多 **首次生成＋两次修订**，由既存请求日志计数；换文件名、重启会话不会恢复额度。完全相同且完整的已有输入/输出可复用，不另计次数。`status.production` 显示对象的次数、剩余可生成数和原审阅位置；它不是质量通过证明。旧日志没有对象标识时列入 `untracked_requests`，不猜测归属或倒写历史，也不代表全新额度：续作先核对旧记录与对象，未核实时保留现有图片、继续非付费工作并报告，不以新 ID 重画旧页面。
-- 同一对象的审阅 `--prompt` 是固定验收标准，路径通过 `--image` 提供：先传待审版本，再传参考图。`review` 按图片字节哈希、固定标准和视觉模型复用既存结论；另取报告名或复制同一图片不会再请求视觉服务。`image_inputs` 保留原请求标签和哈希，复用时 `current_image_inputs` 明示当前别名映射。不要改写已保存标准或报告来寻找“通过”。
-- 命令返回非零退出码和 `retryable: false` 时遵循 `reason` / `next`：次数用尽停止该对象重画；生成或审阅结果未知先核对已保存记录；证据损坏先核查，不通过新文件名重试。继续其它独立页面、文稿和可完成的排版，向用户说明未解决项，不能伪造验收。
-- 区分必须修正的问题与可选审美建议。已通过的版本保持稳定；相同版本的后续随口观察与已有证据冲突时标记待确认，不直接推翻成品、改全书比喻或重开制作循环。只有用户明确改变要求时才建立新制作任务，不自行换对象名、另建项目或绕过配套命令恢复次数。
-
-```sh
-uv run "<BOT>/scripts/book.py" --project my-book generate --asset page-04 --prompt prompts/page-04.txt --output illustrations/page-04-r1.png
-uv run "<BOT>/scripts/book.py" --project my-book review --asset page-04 --prompt reviews/page-04-criteria.txt --image illustrations/page-04-r1.png --output reviews/page-04-r1.json
-```
-
-- 直接运行制作命令并检查退出码及完整 JSON。不要接 `| tail`、`| head` 或末尾 `echo`，它们可能掩盖前面命令的失败。若确需管道，应在支持的 Shell 中启用 `pipefail`；输出有错误就先修正，不能把工具状态 success 当作业务验收通过。
-- 版式严格按 `build --help`：图片使用 `asset`，文字使用 `text_elements`。只写支持的字段；不支持的字段会报错。不要反复调整未实现的参数，也不要为此读取全部源码。`status` 的 pages 显示真实 PDF 面号与资产；面号从 1 起算且包括留白，不能把插图文件编号当作 PDF 页码。
-- 视觉审阅每张图分别用一次 `--image`。标准写明具体页面的检查项与参考用途，保持固定；实际目标和参考路径按顺序通过参数传入，程序自动加入标签与哈希，保存在报告的 `image_inputs` 中。换页使用该页对象及标准，不使用另一页的动作、箭头或情节作判据。
-- 每次修订保存“问题 → 修改 → 当前版本证据 → 复核结论”，不把读取过或脚本退出成功当成审阅通过。只修改存在明确问题的页面；同一对象首次生成后合计最多进行两轮有针对性的修正与复核，不按问题数另起额度，已通过的内容保持稳定，不反复做纯审美微调。
-- 构建返回 `input_hash` 和 `reused`；实际绘制输入未变且全部产物完整时复用，不重复渲染。修改后先检查受影响页面，再核对全书顺序与连续性；必要证据依据 `invalidated_checks` 补齐，不能盲目重置全书。独立参考审阅不代替最后 PDF 的逐页检查。
-- 同一对象两轮修订后仍未满足必要标准，或剩余问题需要未知能力时，停止该修正循环，保存现有作品、明确未解决问题并向用户报告。不要重建另一套作品、重画已确认资产或仅把 QA 改为 true。需要交付审阅稿时使用 `deliverables --draft` 并明确未通过项；正式交付仍需满足已有验证标准。
-
 以下是配置路径，不代表本 skill 已在所有平台完成兼容性测试。当前已有完整绘本制作经验的是作者使用的 Codex 桌面会话；不等于所有 Codex 版本、账号和操作系统均已验证。Claude Code 与 DeepSeek Harness 需要在目标环境完成样页验收，才记录为该配置可用。
 
 ### Codex
@@ -128,10 +70,11 @@ uv run "<BOT>/scripts/book.py" --project my-book review --asset page-04 --prompt
 
 优先使用环境已有的等效工具。现有制作路线可使用 Python 3、ReportLab、Pillow、pypdf，以及 Poppler 的 `pdftoppm`、`pdfinfo`、`pdffonts`；另需有权使用并可嵌入的中文字体。其他能完成相同检查的工具也可使用，不把某个系统路径写死。
 
-`scripts/book.py` 使用 PEP 723 内联依赖声明，通过 `uv run` 执行时会自动安装和隔离 Python 依赖（Pillow、ReportLab、pypdf 等），无需手动安装。如不使用 `uv run`，需在当前环境手动安装：
+例如，在项目虚拟环境内安装Python依赖：
 
 ```sh
-uv pip install reportlab Pillow pypdf
+python3 -m venv .venv
+.venv/bin/python -m pip install reportlab Pillow pypdf
 ```
 
 Windows使用 `.venv\Scripts\python.exe`；若环境没有 `python3` 命令，使用实际可用的Python启动命令。Poppler按操作系统的软件包管理方式安装；例如 macOS Homebrew 的 `brew install poppler` 或 Debian/Ubuntu 的 `apt install poppler-utils`。系统安装遵守当前权限要求；本 skill 不要求关闭沙箱或开放全部目录。

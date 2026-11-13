@@ -4,52 +4,21 @@
 
 本示例使用 **machine** 执行环境：Pi 的文件和 Shell 工具操作运行机器，不是访问聊天用户的电脑，也不是供不可信用户共用的隔离服务。Pi 的 cwd 是 Bot 下的 workspace/，不是沙箱。Web 界面用于部署者自己的验证；正式托管多人前需要真正的隔离执行环境。
 
-文件处理和命令执行使用 Pi 原生工具，联网查询可通过 bash 调用 curl 或脚本；原生工具保留 Pi 的输出截断机制。此 Bot 禁用 `web_fetch`，`tools.allow` 仅保留附件交付用的 `send_files`；原生工具由 `environment` 启用，无需加入 allow 列表。
+文件与命令执行复用 Pi 原生工具。绘图使用 `image_generate`，正式视觉审校使用 `image_understand`，附件通过 `send_files` 交付；不启用 `web_fetch`。
 
 ## 准备
 
-在仓库根目录执行 `cota init`，进入新建的 `cota_projects/picture-book`；也可以直接使用仓库的 `bots/picture-book`。init 会保留已有目录，不覆盖本地配置。
+执行 `cota init` 后进入生成的 `cota_projects/picture-book`，在 `endpoints.yml` 配置三个入口：
 
-`scripts/book.py` 使用 PEP 723 内联依赖声明。通过 `uv run` 执行时会自动安装和隔离 Python 依赖，无需手动安装。如不使用 `uv run`，可手动安装：
+| 配置 | 用途 |
+|---|---|
+| `llms.default` | 主对话、规划和工具调用，使用文本上下文，无需 `vision` 配置 |
+| `llms.image-generate` | 图片生成与参考图编辑，`type: openai` 或 `qwen` |
+| `llms.image-understanding` | 独立视觉模型，使用 OpenAI 兼容 Chat Completions 图片输入 |
 
-```sh
-uv pip install -r requirements.txt
-```
+分别填写 `key`、`apibase` 和 `model`。主模型不会因为配置了视觉入口而自动路由看图；此 Bot 明确使用 `image_understand` 审图，`read` 只读取文稿和文件，不能算完成视觉审校。
 
-另需 Poppler 的 `pdftoppm`：macOS 可 `brew install poppler`，Debian/Ubuntu 可 `sudo apt install poppler-utils`。准备一份可嵌入、含所需中文的 TrueType `.ttf/.ttc` 字体；不要把无授权字体放进分享包。以上依赖不进入 Cota 核心安装。
-
-编辑本目录 `endpoints.yml`，直接填写三组服务：
-
-| 配置 | 用途与协议 |
-| --- | --- |
-| `llms.default` | 主模型：OpenAI 兼容 Chat Completions，必须支持工具调用 |
-| `picture_book.image` | 绘图与参考图编辑：`api: openai` 或 `api: qwen`，由脚本处理协议差异 |
-| `picture_book.vision` | 审看实际图像：Chat Completions 的图片 data URI 输入 |
-| `picture_book.font` | 可选字体路径；macOS 可自动发现系统宋体，其它机器建议明确配置 |
-
-apibase 填 API base（例如供应商给出的 `https://…/v1`），不填完整 `/images/generations`。模型可以来自不同供应商；只支持文字接口的服务不能因“OpenAI 兼容”就假定能画图。不要把图片模型加入 `llms`，它由本 Bot 脚本读取。只写文稿可先仅配置 default。
-
-`api: openai` 为默认绘图协议，可配置 size、quality、response_format；参考图使用 multipart `/images/edits`，仅接收内联 b64_json。参考：[图像生成与编辑](https://developers.openai.com/api/docs/guides/image-generation)、[视觉输入](https://developers.openai.com/api/docs/guides/images-vision)。按实际服务文档调整参数，不写死模型型号，不内置任何账号额度。
-
-Qwen 图像服务使用 `api: qwen`：文生图和参考图编辑统一调用 JSON `/images/generations`，参考图以真实 Base64 Data URI 传入；可配置 size。支持返回 Base64 或下载返回的图片 URL。默认只允许 HTTPS `*.aliyuncs.com` 结果域名；其它供应商结果域名须在 image.download_hosts 明确列出（精确主机或 `*.domain`）。下载不携带 API Key，不跟随重定向，最多32 MiB；签名链接不写入错误或项目日志。Qwen Image 3.0 最多3张参考图，每张不超过10 MiB、单边8000像素、长宽比10:1。协议见 [Qwen 官方文档](https://help.aliyun.com/zh/model-studio/qwen-image-generation-and-editing-api-reference)。
-
-例如在自己的 Bot 副本中配置（密钥在本机填写）：
-
-```yaml
-picture_book:
-  image:
-    api: qwen
-    key: ""
-    apibase: "供应商提供的 compatible-mode/v1 基础地址"
-    model: qwen-image-3.0
-    size: 1536x1024
-  vision:
-    key: ""
-    apibase: "供应商提供的 compatible-mode/v1 基础地址"
-    model: qwen3.8-omni-flash
-```
-
-主对话仍在 llms.default 配置；也可使用 qwen3.8-omni-flash，并设置 vision: true。仓库模板保持空凭证，实际账号配置保存在自己的 Bot 目录。
+`scripts/book.py` 使用 PEP 723 内联依赖；安装 `uv` 和 Poppler（`pdftoppm`），并准备可嵌入的中文字体。macOS 可自动发现系统宋体；其它环境可在 `picture_book.font` 指定字体路径。
 
 ```sh
 uv run scripts/book.py doctor
@@ -67,21 +36,20 @@ doctor 只检查配置与依赖，不消耗模型额度，也不代表接口已�
 
 完整流程可能产生多次付费请求；主模型负责决策，脚本不会隐式重试或切换模型。进度和作品在 `workspace/books/<作品名>/`，Cota Trace/历史在 `workspace/sessions.db`。shell 重启创建新对话，但可以告知作品名，让 Bot 检查文件继续；这不是自动恢复正在运行的外部请求。
 
-Shell 中可用 `/file "/路径/参考图.png"` 添加参考图或资料，再输入说明并回车发送；直接回车可只发送附件，`/clear` 清空待发送列表。主模型是否直接理解图片取决于 endpoints.yml 的 `vision` 配置；默认由专门的视觉服务处理。
+Shell 中可用 `/file "/路径/参考图.png"` 添加参考图或资料，再输入说明并回车发送；直接回车可只发送附件，`/clear` 清空待发送列表。图片由 `image_understand` 的独立视觉服务检查，主模型根据其文字证据组织后续工作。
 
 ## 有限修订与审阅复用
 
-绘本配套命令按作品里的稳定对象 ID（`--asset page-04`、`--asset cover`）累计生成：首次生成后最多再修两轮。修订文件名可以变，对象 ID 不变；重启聊天也不会重置次数。相同输入已有完整图片时直接复用，不再次付费。生成结果未知时，即使换名也不再发起该对象的请求。
+插图按稳定对象标识管理，首次生成后最多再修两轮，换文件名不重置次数。原生 `image_generate` 不写旧配套 `generate` 的计数日志，因此 Bot 必须保存并核对制作记录；不能把 `status.production` 当作原生工具已强制执行的额度。PDF 每面预算仍由排版程序执行。已有完整图片与审阅证据先复用；结果未知时不盲目重试。
 
-审阅先固定该对象的验收标准。相同图片字节、标准和模型复用同一份观察；复制图片或换报告名不再次请求模型。`.bookbot/` 保存固定标准、规范审阅证据与请求记录，原生成日志仍在图片旁边；这些是作品文件，不是 Cota 的新 Event/数据库表。`image_inputs` 是服务实际见到的原标签，复用别名通过 `current_image_inputs` 对照，不伪造新的观察。
+审阅先固定编号标准和 JSON 返回格式，保存成文件，原样传给 `image_understand.prompt`；目标图片通过 `image_path` 的真实绝对路径传入。成功后用 `review --tool-call-id` 导入该次实际调用。导入只读本 Bot 的 SQLite Store，不请求模型；核对图片 SHA-256、标准、模型和成功状态，再生成规范审阅证据。已有同图同标准证据先复用，不能重复调用工具求不同结论。`.bookbot/` 保存固定标准和规范审阅证据，原生图像调用由 Cota Store 记录；这些是作品文件，不是 Cota 的新 Event/数据库表。`image_inputs` 是服务实际见到的原标签，复用别名通过 `current_image_inputs` 对照，不伪造新的观察。
 
 ```sh
-uv run scripts/book.py --project rabbit-cloud-v1 generate --asset page-04 --prompt prompts/page-04.txt --output illustrations/page-04-r1.png
-uv run scripts/book.py --project rabbit-cloud-v1 review --asset page-04 --prompt reviews/page-04-criteria.txt --image illustrations/page-04-r1.png --output reviews/page-04-r1.json
+uv run scripts/book.py --project rabbit-cloud-v1 review --tool-call-id "实际成功调用返回的tool_call_id" --asset page-04 --prompt reviews/page-04-criteria.txt --image illustrations/page-04-r1.png --output reviews/page-04-r1.json
 uv run scripts/book.py --project rabbit-cloud-v1 status
 ```
 
-`status.production` 显示每个对象的次数、剩余可生成数和报告位置；旧版未标识日志单列 `untracked_requests`，不会猜文件名或修改历史。未归属不代表没有花过额度：续作先核对旧记录与对象，不能以新 ID 把旧页面当作首次生成；未核实时先保留已有作品、继续非付费工作并报告。达到上限、结果未知或证据损坏时，命令返回非零退出码及可读 JSON（`reason`、`asset`、`retryable: false`、`next`）。Bot 应保留版本、停止该对象重试，继续独立工作并明确未验收项；不能换 ID、改标准或另建作品来绕过。真正改变要求的新制作任务须来自用户。
+`status.production` 显示旧配套生成命令记录的次数和规范审阅位置；旧版未标识日志单列 `untracked_requests`，不会猜文件名或修改历史。未归属不代表没有花过额度：续作先核对旧记录与对象，不能以新 ID 把旧页面当作首次生成；未核实时先保留已有作品、继续非付费工作并报告。达到上限、结果未知或证据损坏时，命令返回非零退出码及可读 JSON（`reason`、`asset`、`retryable: false`、`next`）。Bot 应保留版本、停止该对象重试，继续独立工作并明确未验收项；不能换 ID、改标准或另建作品来绕过。真正改变要求的新制作任务须来自用户。
 
 这些约束限制重复成本，审阅仍可能存在不确定性，不会自动把 `book.json.qa` 改为通过。相同图的观察冲突应如实标记待确认；可选审美建议不应触发无限重画。正式交付仍需完成原有验收；未完成时仅交付明确标记的审阅稿。
 
@@ -95,7 +63,7 @@ PDF 排版还按**每个面**累计整页版本：首版后最多两次修订，
 3. [advice] 背景色可以更柔和。
 ```
 
-`review` 返回 `pass`、`revise` 或 `uncertain`，并逐项保存证据；建议项失败不阻塞验收，无法解析或证据不全则为不确定。最终 PDF 面使用 `--asset pdf-face-01` 等稳定编号。命令默认输出完整的单行精简 JSON（问题、证据路径和哈希），完整原始报告仍保存在文件中；需要时加 `--full`，不要用 `head/tail` 截断输出或掩盖失败退出码。
+`review` 返回 `pass`、`revise` 或 `uncertain`，并逐项保存证据；建议项失败不阻塞验收，无法解析或证据不全则为不确定。最终 PDF 面使用 `--asset pdf-face-01` 等稳定编号。正式 `validate` / `deliverables` 检查每个非空白渲染面是否有当前图像的 `image_understand` 通过证据；只读取图片、手工勾选 QA 或不完整评语不能通过。未完成时可使用明确标注的 `--draft`。命令默认输出完整的单行精简 JSON（问题、证据路径和哈希），完整原始报告仍保存在文件中；需要时加 `--full`，不要用 `head/tail` 截断输出或掩盖失败退出码。
 
 `build` 支持 `image_fit: contain`（默认保留整图，可能留边）或 `cover`（居中裁切填满），不需要自行拼色带补背景。导出使用最多240dpi、高质量 JPEG 图片副本，原图不变、中文仍为矢量文字。仅更正注释、纸张说明等元数据不会重绘页面或清空视觉验收；内容变化通过 `changed_pages`、`pending_pages`、`invalidated_checks` 指明影响范围。打印说明和纸张数由清单生成，不直接修改生成文件。
 
@@ -117,9 +85,20 @@ cota run --config . --chat-app --debug --host 127.0.0.1 --port 5005
 
 不再需要 Bot 专属 serve.py、下载接口或发布脚本。飞书文件上传/发送尚未实现，会明确报告不支持，不会只发送文字而丢弃附件。当前机器工具权限适合部署者自用；远程使用由部署方提供 TLS 和外围身份/会话授权，不要把机器权限直接开放给陌生人。
 
+## Cota 运行与配套命令
+
+以下是本 Bot 的部署适配，不属于通用 Skill。实际工具名、参数和许可由 Cota/Pi 运行环境提供；Skill 只定义所需能力及其验收标准。
+
+- 从运行环境取得 Bot 根目录、工具工作目录及 Python 解释器；配套程序位于 Bot 根目录的 `scripts/book.py`，优先用 `uv run` 执行 PEP 723 依赖隔离。
+- 作品位于 Bot 根目录 `workspace/books/<作品名>/`；`--project` 放在子命令之前，程序文件参数相对于作品目录。工具的相对路径以工具工作目录为准，一次 Shell 的 `cd` 不会改变后续调用。
+- `doctor` 检查配置与依赖；`init/status` 建立或检查项目；`build` 排版；`validate/deliverables` 校验或取得交付清单。
+- `image_generate` 使用真实参考图生成与编辑；`image_understand` 使用真实目标图和固定标准进行视觉审校。主模型根据文字证据决策，`read` 不作为正式审校入口。
+- `review --tool-call-id` 只读导入成功调用；最终 PDF 面使用 `pdf-face-01` 等稳定对象。编号标准和 JSON 返回格式须原样传给视觉工具；当前图片哈希及必要项通过后才作为正式证据。
+- `send_files` 负责附件交付；导出前按它公布的实际限制预检。正常命令输出完整的精简 JSON，不用管道或末尾成功命令掩盖失败退出码。
+
 ## 可执行能力与成品
 
-通用创作流程由 [Skill](skills/creating-childrens-picture-books/SKILL.md) 提供，主文件保持原版；本 Bot 的配套入口写在已有的[环境接入说明](skills/creating-childrens-picture-books/references/runtime-setup.md)中。[agent.yml](agent.yml) 描述模型能力的用途与业务要求。运行环境自动提供 Bot 根目录、工具工作目录和 Cota 的 Python 解释器；Agent 使用绝对路径调用程序，进入作品目录后也无需猜测 `../` 层数。
+通用创作流程由 [Skill](skills/creating-childrens-picture-books/SKILL.md) 提供，主文件保持原版；Skill 的[环境准备](skills/creating-childrens-picture-books/references/runtime-setup.md)只描述通用能力与验收；Cota 接入方式在本 README、Agent 配置及配套程序帮助中。[agent.yml](agent.yml) 描述模型能力的用途与业务要求。运行环境自动提供 Bot 根目录、工具工作目录和 Cota 的 Python 解释器；Agent 使用绝对路径调用程序，进入作品目录后也无需猜测 `../` 层数。
 
 下面的手工命令在 Bot 根目录执行。使用 `uv run` 自动隔离依赖；命令参数、版式字段和示例通过脚本帮助按需查看：
 
@@ -130,7 +109,7 @@ uv run scripts/book.py review --help
 uv run scripts/book.py build --help
 ```
 
-多模态服务统一在 [endpoints.yml](endpoints.yml) 配置，由脚本读取；供应商、模型型号和接口参数无需写入 agent.yml 或 Skill。常用执行命令：
+多模态服务统一在 [endpoints.yml](endpoints.yml) 配置，由 Cota 注册的图像工具读取；供应商、模型型号和接口参数无需写入 agent.yml 或 Skill。常用执行命令：
 
 ```sh
 uv run scripts/book.py init rabbit-cloud-v1
@@ -140,13 +119,13 @@ uv run scripts/book.py --project rabbit-cloud-v1 validate
 uv run scripts/book.py --project rabbit-cloud-v1 deliverables
 ```
 
-init 创建空模板，不能直接 build；Bot 应先把用户确认的分页、资产及图文坐标写入 book.json。项目命令使用 `--project 作品名`，放在子命令之前。生成与看图命令分别为 generate / review，参数见各子命令 `--help`。Bash 调用时使用不超过300秒且足够的 timeout，不能把绘图任务裁成默认60秒。
+init 创建空模板，不能直接 build；Bot 应先把用户确认的分页、资产及图文坐标写入 book.json。项目命令使用 `--project 作品名`，放在子命令之前。绘图与看图分别调用 `image_generate` / `image_understand`；`review --tool-call-id` 只导入已有视觉调用的证据，不发送新请求。参数见工具 schema 与子命令 `--help`。Bash 调用时使用不超过300秒且足够的 timeout，不能把绘图任务裁成默认60秒。
 
 build 输出 book.pdf、全部逐页渲染图、全书联系表、封面封底预览、打印说明和纸张映射。中文由 ReportLab 使用嵌入字体排版，图片模型不生成最终中文；每页位置由明确的毫米坐标决定，不强制统一版式。文字溢出或字体缺字会报错。内容、插图、字体或版式变化时，重新 build 会清除旧的审校通过标志，要求复核；输入一致时保留有效审校状态。暂不实现出血、CMYK、骑马钉拼版等印厂流程；需要这些规格时应另做匹配的制作方案。
 
 版式字段严格校验：图片用 `asset`；文字只支持 `text/box/font_size/align/fill`，其中 `align` 为 left/center/right，`fill` 为 `#RRGGBB`。`image_path`、`weight` 等未实现字段会报错，避免“改了参数但画面没变”。`build --help` 列出全部页面字段；`status` 列出 PDF 面号与对应资产，包含结构留白。构建返回输入哈希；输入未变且 PDF、逐页预览和交付文件完整时 `reused: true`，不重复渲染；产物损坏则重建并清除旧 QA。
 
-`review` 为每张图片发送有序的路径与内容哈希，报告保留 `image_inputs`，便于核对具体版本。提示词需明确待审图、参考图和检查问题；每张图片分别写一次 `--image`。按“问题、修改、复核”推进，同一问题默认最多两轮无效修正后保存进度并报告阻塞，避免无限重建。命令直接执行，不接可能掩盖退出码的 `| tail` 等管道；脚本执行成功不等于画面或整本书验收通过。
+`image_understand` 发送真实图片，`review --tool-call-id` 从 Store 核验并导入这次调用，报告保留 `image_inputs` 与调用来源。每次导入用一个 `--image` 指定对应目标图，标准文件须与工具实际使用的 prompt 一致。按“问题、修改、复核”推进，同一问题默认最多两轮无效修正后保存进度并报告阻塞，避免无限重建。命令直接执行，不接可能掩盖退出码的 `| tail` 等管道；脚本执行成功不等于画面或整本书验收通过。
 
 原 Skill 的创作资料、主题指南和验证器完整保留。验证器通过不代表语言、视觉或实物打印自动合格；脚本不自动勾选审校。审校记录与实际页面必须一致。没有实物打印时保持 `print_tested: false` / `pending-physical-proof`。`deliverables --draft` 仅列出明确未验收的审阅稿；正式清单默认必须先 validate。脚本返回路径，由 send_files 完成通用附件交付。
 

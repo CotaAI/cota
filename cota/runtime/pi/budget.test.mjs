@@ -42,7 +42,7 @@ test('DSML is not a final reply; Pi retries text-only once within the original b
   assert.equal(result.status, 'limited');
   assert.equal(h.requests.at(-1).toolChoice, 'none');
   assert(!JSON.stringify(h.requests.at(-1).messages).includes('DSML'));
-  assert.match(h.requests.at(-1).systemPrompt, /previous.*invalid|protocol.*text/i);
+  assert.match(JSON.stringify(h.requests.at(-1).messages.at(-1)), /previous.*invalid|protocol.*text/i);
   assert(!h.events.some(e => e.message?.role === 'assistant' && JSON.stringify(e.message).includes('DSML')));
 });
 
@@ -58,8 +58,9 @@ test('repeated malformed wrap-up replies stop without side effects or false succ
 test('the original budget reserves a committed final reply and warns before wrap-up', async () => {
   const h = harness((request, n) => {
     if (n <= 8) return {tool_calls: [toolCall(n)]};
-    assert.deepEqual(request.tools, []);
-    assert.match(request.systemPrompt, /No tool calls|No tools/i);
+    assert.deepEqual(request.tools, [schema]);
+    assert.equal(request.toolChoice, 'none');
+    assert.match(JSON.stringify(request.messages.at(-1)), /No tool calls|No tools/i);
     return {content: finalText};
   });
   const input = options(), original = structuredClone(input);
@@ -115,7 +116,7 @@ test('early completion and default tiny budgets retain their original completion
   assert.equal(result.status, 'completed');
   assert.equal(tiny.calls.length, 2);
   assert(tiny.preparations.every(p => p.executionBudget.reserved === 0));
-  assert(tiny.requests.every(p => p.systemPrompt === ''));
+  assert(tiny.requests.every(p => p.systemPrompt === 'Business guidance.'));
 });
 
 test('explicit reserve supports small budgets and can be disabled without adding calls', async () => {
@@ -184,11 +185,12 @@ test('native provider receives no callable tools during wrap-up while retaining 
   assert.equal(result.status, 'limited'); assert.equal(result.hasFinalReply, true);
   assert.equal(f.bodies.length, 9);assert.equal(f.calls.length, 8);
   assert(f.bodies.slice(0, 8).every(body => body.tools?.some(tool => tool.function.name === 'act')));
-  assert.equal(f.bodies.at(-1).tools?.length ?? 0, 0);
+  assert.deepEqual(f.bodies.at(-1).tools, f.bodies[0].tools);
   assert.equal(f.bodies.at(-1).tool_choice, 'none');
-  assert.match(f.bodies.at(-1).messages[0].content, /wrap_up/);
-  assert(f.bodies.every((body, index) => body.messages[0].content.includes(`Execution decisions: ${index}/10 used`)));
-  assert(f.bodies.every(body => (body.messages[0].content.match(/<execution_budget /g) ?? []).length === 1));
+  assert.match(JSON.stringify(f.bodies.at(-1).messages.at(-1)), /wrap_up/);
+  assert(f.bodies.every(body => body.messages[0].content === 'Business guidance.'));
+  assert(!JSON.stringify(f.bodies[0].messages).includes('<execution_budget '));
+  assert.equal((JSON.stringify(f.bodies.at(-1).messages).match(/<execution_budget /g) ?? []).length, 1);
   assert.equal(f.bodies.at(-1).messages.filter(m => m.role === 'tool').length, 8);
 });
 
@@ -204,7 +206,7 @@ test('native provider repairs leaked protocol using Pi without replaying it or i
   assert.equal(result.hasFinalReply, true);
   assert.equal(f.bodies.length, 10);
   assert.equal(f.calls.length, 8);
-  assert(f.bodies.slice(8).every(body => body.tool_choice === 'none' && body.tools.length === 0));
+  assert(f.bodies.slice(8).every(body => body.tool_choice === 'none' && JSON.stringify(body.tools) === JSON.stringify(f.bodies[0].tools)));
   assert(!JSON.stringify(f.bodies[9].messages).includes('DSML'));
 });
 

@@ -6,6 +6,7 @@ import re
 def request_metrics(request):
     sections = {'system': 0, 'user': 0, 'assistant': 0, 'tool_results': 0}
     images, image_bytes = 0, 0
+    runtime_context_chars, business_guidance_chars = 0, 0
     system_sections = {'business_guidance': 0, 'skill_catalog': 0, 'base_and_environment': 0}
     for message in request.get('messages', []):
         content = message.get('content') or ''
@@ -16,6 +17,8 @@ def request_metrics(request):
         role = 'tool_results' if message.get('role') == 'tool' else message.get('role')
         if role in sections:
             sections[role] += len(text)
+        runtime_context_chars += sum(len(m.group()) for m in re.finditer(r'<runtime_context>.*?</runtime_context>', text, re.S))
+        business_guidance_chars += sum(len(m.group()) for m in re.finditer(r'<business_guidance>.*?</business_guidance>', text, re.S))
         if role == 'system':
             sizes = {}
             for name, tag in (('business_guidance', 'business_guidance'), ('skill_catalog', 'available_skills')):
@@ -33,6 +36,7 @@ def request_metrics(request):
                     image_bytes += max(0, len(encoded) * 3 // 4 - len(encoded) + len(encoded.rstrip('=')))
     return {'text_chars': sum(sections.values()), 'sections': sections,
             'system_sections': system_sections,
+            'runtime_context_chars': runtime_context_chars, 'business_guidance_chars': business_guidance_chars,
             'tool_definition_chars': len(json.dumps(request.get('tools', []), ensure_ascii=False)),
             'images': images, 'inline_image_bytes': image_bytes}
 

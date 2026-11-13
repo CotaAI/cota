@@ -27,6 +27,9 @@ def tool_call(name, args, identity):
 
 
 def latest_turn(messages):
+    # Request-local custom content converts to user blocks but is not an input.
+    messages = [m for m in messages if not (m['role'] == 'user' and isinstance(m['content'], list)
+                and any(b.get('text', '').startswith('<runtime_context>\n') for b in m['content']))]
     index = max(i for i, message in enumerate(messages) if message['role'] == 'user')
     return messages[index]['content'], messages[index + 1:]
 
@@ -134,11 +137,12 @@ async def test_socket_users_run_concurrently_with_fifo_and_private_sql_memory(tm
     async def respond(**kwargs):
         text, following = latest_turn(kwargs['messages'])
         turns.append(text)
-        snapshots[text] = [m['content'] for m in kwargs['messages'] if m['role'] == 'user']
+        snapshots[text] = [m['content'] for m in kwargs['messages'] if m['role'] == 'user' and isinstance(m['content'], str)]
         owner = text.split('-')[0]
         other = 'bob' if owner == 'alice' else 'alice'
-        assert owner + '_private_color' in kwargs['messages'][0]['content']
-        assert other + '_private_color' not in kwargs['messages'][0]['content']
+        assert owner + '_private_color' in str(kwargs['messages'][-1]['content'])
+        assert '_private_color' not in kwargs['messages'][0]['content']
+        assert other + '_private_color' not in str(kwargs['messages'])
         if text == 'alice-one':
             entered.set()
             await release.wait()

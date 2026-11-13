@@ -327,8 +327,10 @@ async def test_trained_policy_in_real_pi_loop_and_store_trace(mock_agent, tmp_pa
     await PiAgentRuntime(mock_agent, dst, 'trained', checkpoint=store.save).run()
     for request in mock_agent._llm_mock.generate_chat.call_args_list:
         system = request.kwargs['messages'][0]['content']
-        assert 'Policy: 天气查询' in system and 'Policy: 取消订单' not in system
-        assert '示例温度' not in str(request.kwargs['messages'][1:])
+        assert 'Policy:' not in system
+        guidance = str(request.kwargs['messages'][-1]['content'])
+        assert 'Policy: 天气查询' in guidance and 'Policy: 取消订单' not in guidance
+        assert '示例温度' not in str(request.kwargs['messages'][1:-1])
     restored = (await store.load('trained', agent=mock_agent))
     selections = [e.payload['llm']['policy'] for e in restored.events if e.payload.get('llm')]
     assert len(selections) == 2

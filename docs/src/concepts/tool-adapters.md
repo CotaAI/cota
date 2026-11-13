@@ -102,6 +102,10 @@ Cota 不管理业务 API 密钥、租户权限、业务幂等或服务专属重�
 
 参数：`image_path`（必填）、`prompt`（可选，默认"Describe this image in detail."）。支持 PNG、JPEG、WebP、GIF、BMP 格式，最大 32 MiB。超时 120 秒。
 
+成功结果包含视觉模型的原始文字和简短来源信息（`tool_call_id`、模型、图片路径与 `image_sha256`）。哈希针对实际发送的字节计算，不会因请求期间源文件被改写而改变。Cota 使用普通 `tool_started` / `tool_result` 保存证据；业务审阅标准与验收由 Bot 负责。绘本 Bot 可用 `review --tool-call-id` 核验并保存该次观察，不再次调用视觉服务。
+
+配置独立视觉端点不会自动接管 Pi `read` 的图片输入。需要明确模型分工时，应在 Bot 指引中指定 `image_understand`，并让业务验收检查对应执行证据；绘本示例的主模型不配置 `vision`。
+
 ### 端点配置
 
 在 `endpoints.yml` 的 `llms` 下配置，格式与普通模型一致（`key`、`apibase`、`model`、`type`）：

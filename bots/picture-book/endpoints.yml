@@ -3,38 +3,25 @@ base_store:
   dialect: sqlite
   db: workspace/sessions.db
 
-# 主对话模型需要工具调用能力；可以是纯文本模型，视觉审校可由下面的独立模型完成。
+# 主模型只负责规划、对话和工具决策；图像由专用工具处理，无需 vision 配置。
 llms:
   default:
     type: openai
-    # 只有主模型支持真实图片输入、且希望直接看上传图片时才设为 true。
-    # 不启用时可由 picture_book.vision 通过脚本审校图片。
-    vision: false
     key: ""
     apibase: ""
     model: ""
-  # 可选 evaluator 与 weather 相同：不添加时评测使用 default。
-
-# 本 Bot 的脚本读取以下配置；它们不是 Cota 通用文本 LLM 配置。
-# 不设置环境变量；key/apibase/model 直接填入服务商提供的实际值。
-picture_book:
-  image:
-    # openai：Images generations + multipart edits，要求 b64_json。
-    # qwen：文生图/参考图编辑都用 JSON images/generations，支持下载返回图片。
-    api: openai
+  image-generate:
+    type: openai  # Qwen 图片兼容接口使用 qwen
     key: ""
     apibase: ""
     model: ""
     size: 1536x1024
-    # 有些兼容服务需要 response_format: b64_json；GPT Image 一类接口可直接返回 base64。
-    # response_format: b64_json
-    # api=qwen 默认只允许从 *.aliyuncs.com 下载生成结果。
-    # 使用其它结果域名时，按供应商文档明确配置，不填写带密钥/签名的 URL。
-    # download_hosts: ["*.aliyuncs.com", "images.your-provider.example"]
-  vision:
+  image-understanding:
+    type: openai
     key: ""
     apibase: ""
     model: ""
-  # 可选：可嵌入的中文 TrueType 字体文件，绝对路径或相对 Bot 目录。
-  # 不随 Bot 分发第三方字体。macOS 可自动发现系统宋体，其他环境建议明确填写。
-  # font: /path/to/chinese-font.ttf
+
+# 可选排版配置；模型统一在 llms 下配置。
+# picture_book:
+#   font: /path/to/chinese-font.ttf

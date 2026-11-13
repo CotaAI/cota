@@ -55,7 +55,7 @@ def sha256(value):
     return hashlib.sha256(value).hexdigest()
 
 
-def book_config(root):
+def endpoint_config(root):
     try:
         config = yaml.safe_load((Path(root) / 'endpoints.yml').read_text(encoding='utf-8')) or {}
     except yaml.YAMLError:
@@ -63,12 +63,27 @@ def book_config(root):
         raise ValueError('Invalid endpoints.yml YAML; check the file locally (contents omitted)') from None
     if not isinstance(config, dict) or not isinstance(config.get('picture_book', {}), dict):
         raise ValueError('endpoints.yml and picture_book must be mappings')
-    return config.get('picture_book', {})
+    return config
+
+
+def book_config(root):
+    return endpoint_config(root).get('picture_book', {})
 
 
 def model_config(root, kind):
-    value = book_config(root).get(kind) or {}
-    label = f'endpoints.yml picture_book.{kind}'
+    config = endpoint_config(root)
+    alias = {'image': 'image-generate', 'vision': 'image-understanding'}[kind]
+    llms = config.get('llms') or {}
+    if not isinstance(llms, dict):
+        raise ValueError('endpoints.yml llms must be a mapping')
+    if alias in llms:
+        value = dict(llms[alias]) if isinstance(llms[alias], dict) else llms[alias]
+        if kind == 'image' and isinstance(value, dict):
+            value['api'] = value.get('type', 'openai')
+        label = f'endpoints.yml llms.{alias}'
+    else:
+        value = config.get('picture_book', {}).get(kind) or {}
+        label = f'endpoints.yml picture_book.{kind}'
     if not isinstance(value, dict) or any(not isinstance(value.get(k), str) or not value[k].strip()
                                           for k in ('key', 'apibase', 'model')):
         raise ValueError(f'Configure {label}: key, apibase, model')

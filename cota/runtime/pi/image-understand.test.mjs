@@ -157,3 +157,21 @@ test('re-throws AbortError on pre-aborted signal', async () => {
     tool.execute('vis-9', {image_path: '/tmp/x.png'}, controller.signal),
     {name: 'AbortError'});
 });
+
+test('records the hash of actual sent bytes even if source changes during analysis', async t => {
+  const {createHash} = await import('node:crypto');
+  const dir = await tempDir(t);
+  const imgPath = join(dir, 'version.png');
+  await writeFile(imgPath, PNG_1x1);
+  const tool = createImageUnderstandTool(config({request: async (_path, body) => {
+    assert.ok(body.messages[0].content[1].image_url.url.endsWith(PNG_1x1.toString('base64')));
+    await writeFile(imgPath, 'a later revision');
+    return chatResponse('Specific visible observation.');
+  }}));
+  const result = await tool.execute('vision-source-id', {image_path: imgPath, prompt: 'Check the target.'});
+  assert.equal(result.details.image_sha256, createHash('sha256').update(PNG_1x1).digest('hex'));
+  const source = JSON.parse(result.content[1].text);
+  assert.equal(source.tool_call_id, 'vision-source-id');
+  assert.equal(source.image_sha256, result.details.image_sha256);
+  assert.equal(result.content[0].text, 'Specific visible observation.');
+});

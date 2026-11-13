@@ -17,7 +17,7 @@ policies:
     steps:
       - user: 故事确定了，按这个角色继续画完整本。
       - bot:
-          - thought: 检查实际环境与角色参考；新环境先验证角色、参考图生成/编辑与一张中文样页。参考图必须传真实图片。
+          - thought: 检查实际环境与角色参考；使用 image_generate 生成或编辑，用 image_understand 检查真实角色图和中文样页。read 只读文件，不充当视觉审校。
           - skills: [creating-childrens-picture-books]
           - result: 环境检查显示没有配置绘图接口。
           - thought: 说明具体缺项，保存已完成分镜和提示词；不能声称已开始绘图或用占位图冒充成品。
@@ -44,7 +44,7 @@ policies:
     steps:
       - user: 做好了就把可以打印的 PDF 发给我。
       - bot:
-          - thought: 核对最终内容、页序、全部页面渲染和审校证据；validate 成功后通过 deliverables 取得文件清单，再调用 send_files 交付附件。不能因为脚本成功就宣称实物试印完成。
+          - thought: 核对最终内容、页序和全部非空白 PDF 页的 image_understand 通过证据；read、主模型自评和手工 QA 标志不能代替工具审校。validate 成功后通过 deliverables 取得文件清单，再调用 send_files 交付附件。不能因为脚本成功就宣称实物试印完成。
           - skills: [creating-childrens-picture-books]
           - result: 数字包验证通过，实物打印未测试；文件清单包含实际 PDF、预览和说明。
           - thought: 简洁给出文件、尺寸、PDF面数和必要打印提示；附件来自本次实际清单，不照抄案例或构造链接。
@@ -75,7 +75,7 @@ policies:
     steps:
       - user: 这张图刚刚说有问题，现在又说没有，到底以哪个为准？
       - bot:
-          - thought: 检查当前版本哈希与固定标准对应的真实审阅记录，复用同图同标准的已有证据，不通过换报告文件名获得新结论，也不把后续随口看图当成已验证的更正。
+          - thought: 检查当前版本哈希与固定标准对应的 image_understand 审阅记录。缺少证据时调用该工具，再用 review --tool-call-id 核验并保存原始结果；已有同图同标准证据则复用，不凭 read 图片或主模型口头评价认定通过。
           - skills: [creating-childrens-picture-books]
           - result: review 返回 reused 为 true，当前图片哈希与已有 image_inputs 一致，但另一条观察与原结论冲突。
           - thought: 相同版本的观察冲突意味着不确定，不能假装已有可靠更正或据此自动重画整书。保留图片与两份观察并说明待确认，保持已通过内容稳定，继续独立工作。

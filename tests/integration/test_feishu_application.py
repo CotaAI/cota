@@ -21,8 +21,11 @@ async def test_private_users_fifo_isolation_duplicate_and_committed_delivery(moc
     entered,release,bob_sent,all_sent=asyncio.Event(),asyncio.Event(),asyncio.Event(),asyncio.Event()
     observed={}; calls=[]; sent=[]
     async def model(**kwargs):
-        users=[m['content'] for m in kwargs['messages'] if m['role']=='user']
+        users=[m['content'] for m in kwargs['messages'] if m['role']=='user' and isinstance(m['content'],str)]
         text=users[-1];calls.append(text); observed[text]=users
+        expected,other=('Shanghai','Beijing') if text.startswith('bob-') else ('Beijing','Shanghai')
+        assert expected in str(kwargs['messages'][-1]['content'])
+        assert other not in str(kwargs['messages'])
         if text=='alice-one':
             entered.set();await release.wait()
         return {'content':'reply:'+text}

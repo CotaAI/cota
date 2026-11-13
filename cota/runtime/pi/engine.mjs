@@ -9,7 +9,7 @@ import { createImageUnderstandTool } from './image-understand.mjs';
 import { createNativeTools } from './tools.mjs';
 import { createSendFilesTool } from './files.mjs';
 import {resolveContextModel, compactionSettings, estimateRequest, compactContext, exceedsImageBudget} from './context.mjs';
-import {shouldCompact} from '@earendil-works/pi-coding-agent';
+import {shouldCompact, convertToLlm} from '@earendil-works/pi-coding-agent';
 import { Agent } from '@earendil-works/pi-agent-core';
 import piPackage from '@earendil-works/pi-agent-core/package.json' with {type: 'json'};
 import { createAssistantMessageEventStream, createInitialSystemMessage, getCurrentSystemPrompt,
@@ -57,7 +57,7 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
         : remaining <= Math.max(reserved + 2, Math.ceil(options.maxIterations / 5)) ? 'warning' : 'working'};
   };
   const budgetGuidance = budget => {
-    if (options.maxIterations < 10 && !reserved) return '';
+    if (budget.phase === 'working' || options.maxIterations < 10 && !reserved) return '';
     const guidance = [`Execution decisions: ${budget.used}/${budget.total} used; ${budget.remaining} remaining; ${budget.reserved} reserved for final text.`];
     if (budget.phase === 'warning') guidance.push('Finish necessary verification and delivery of existing work. Stop optional polishing and new branches; preserve completed work and unresolved issues.');
     if (budget.phase === 'wrap_up') guidance.push('No tool calls are available. Reply now using committed evidence: state completed work, remaining or blocked items, and whether files were actually sent. Say clearly if unfinished. Do not claim success or background work that did not happen. Describe task progress rather than internal decision accounting.');
@@ -131,30 +131,35 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
         const prepared = await request('prepare', {native: !!options.provider, skillPrompt: resources.prompt,
           toolPrompt: native.prompt, nativeTools: native.schemas, extensionTools, executionBudget: budget});
         native.imageResources.register(prepared.imageResources);
-        if (budget.phase === 'wrap_up') {wrappingUp = true; limited = true; prepared.tools = [];}
-        let history = options.provider
-          ? [...(prepared.systemPrompt ? [{role: 'system', content: prepared.systemPrompt, timestamp: 0}] : []),
-            ...messages.filter(message => message.role !== 'system')]
-          : prepared.messages;
+        if (budget.phase === 'wrap_up') {wrappingUp = true; limited = true;}
+        const source = options.provider ? messages : prepared.messages;
+        const systemPrompt = prepared.systemPrompt ?? getCurrentSystemPrompt(source);
+        let history = [...(systemPrompt ? [{role: 'system', content: systemPrompt, timestamp: 0}] : []),
+          ...source.filter(message => message.role !== 'system')];
         history = history.filter(message => !message.cotaDeferred && !message.cotaOutputError
           && !(message.role === 'assistant' && !message.content.some(block => block.type === 'toolCall')
             && hasToolProtocol(message)));
         const guidance = budgetGuidance(budget) + (repairRequested
           ? '\nThe previous response was invalid tool protocol text and was not delivered or executed. Give a normal text-only final summary of committed results and unresolved work; do not emit protocol markup or propose another tool call.' : '');
-        if (guidance) history = [{role: 'system', content: getCurrentSystemPrompt(history) + guidance, timestamp: 0},
-          ...history.filter(message => message.role !== 'system')];
-        return {...prepared, messages: history};
+        return {...prepared, messages: history, runtimeContext: [prepared.runtimeContext, guidance].filter(Boolean).join('\n\n')};
       };
+      // Request-local custom content never enters Agent.state or Cota facts.
+      // Pi's public converter maps it to user for every provider uniformly.
+      const projectRequest = (messages, guidance) => guidance ? [...messages, {
+        role: 'custom', customType: 'cota.runtime_context', display: false, timestamp: 0,
+        content: `<runtime_context>\n${guidance}\n</runtime_context>`,
+      }] : messages;
       let prepared = await prepare(context.messages);
       for (let attempt = 0; ; attempt++) {
-        requestMessages = wrappingUp
+        const projected = wrappingUp
           ? projectImageContext(prepared.messages, native.imageResources, {textOnly: true})
           : projectImageContext(await hydrateImageRefs(prepared.messages, native.imageResources, settings), native.imageResources);
-        contextBudget = {...estimateRequest(requestMessages, prepared.tools, model), context_window: model.contextWindow,
+        requestMessages = projectRequest(projected, prepared.runtimeContext);
+        contextBudget = {...estimateRequest(convertToLlm(requestMessages), prepared.tools, model), context_window: model.contextWindow,
           capacity_source: model.capacitySource, reserve_tokens: settings.reserveTokens,
           max_request_bytes: settings.maxRequestBytes, max_images: settings.maxImages,
           max_image_bytes: settings.maxImageBytes, execution: executionBudget()};
-        const fixed = estimateRequest(prepared.messages.filter(m => m.role === 'system'), prepared.tools, model);
+        const fixed = estimateRequest(convertToLlm(requestMessages.filter(m => m.role === 'system' || m.role === 'custom')), prepared.tools, model);
         if (fixed.budget_tokens >= model.contextWindow - settings.reserveTokens)
           throw new Error('System prompt and tool definitions exceed the model budget; reduce guidance or increase context_window');
         if (fixed.serialized_bytes >= settings.maxRequestBytes - Math.min(65536, Math.floor(settings.maxRequestBytes / 4)))
@@ -186,7 +191,7 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
           stream.push({type: 'done', reason: message.stopReason, message});
           return stream;
         };
-        const result = await compactContext(requestMessages, model, settings, summaryStream, signal, prepared.tools);
+        const result = await compactContext(projected, model, settings, summaryStream, signal, prepared.tools);
         const committed = await request('compact', result);
         native.imageResources.register(committed.imageResources);
         prepared = await prepare(committed.messages);
@@ -201,13 +206,14 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
       prepared.messages = [...(system ? [system] : []), ...prepared.messages.filter(message => message.role !== 'system')];
       requestMessages = [...(system ? [system] : []), ...requestMessages.filter(message => message.role !== 'system')];
       // prepareRequest changes the low-level loop's context, not Agent.state.
-      // Keep checkpoints on the raw prepared history. Only transformContext
-      // selects request pixels; tool results and original images stay intact.
+      // Keep checkpoints on raw history. Only transformContext selects request
+      // pixels and adds ephemeral guidance; original tool evidence stays intact.
       agent.state.messages = prepared.messages;
       agent.state.tools = tools;
       return {context: {messages: prepared.messages, tools}};
     },
     transformContext: () => requestMessages,
+    convertToLlm,
     beforeToolCall: async ({toolCall, args}) => {
       if (fatal) throw fatal;
       const start = pendingStarts.get(toolCall.id);

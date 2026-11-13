@@ -47,7 +47,7 @@ async def test_real_pi_rejects_protocol_without_delivery_or_tool_execution(
         assert '模型' in replies[0] and '已停止' in replies[0]
     if mode != 'early':
         assert requests[-1]['tool_choice'] == 'none'
-        assert 'tools' not in requests[-1]
+        assert requests[-1]['tools'] == requests[0]['tools']
         assert 'DSML' not in str(requests[-1]['messages'])
     diagnostics = [await store.model_debug(dst.session_id, row['request_id'])
                    for row in await store.model_debug_headers(dst.session_id)]

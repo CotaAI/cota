@@ -365,7 +365,7 @@ async def test_real_pi_long_tool_chain_and_sqlite_resume(book_modules, tmp_path)
     skill = root / 'skills/creating-childrens-picture-books'
     model = ModelHTTP([
         {'tool_calls': [call('read', {'path': str(skill / 'SKILL.md')}, 'skill')]},
-        {'tool_calls': [call('read', {'path': str(skill / 'references/runtime-setup.md')}, 'capabilities')]},
+        {'tool_calls': [call('read', {'path': str(root / 'README.md')}, 'capabilities')]},
         {'tool_calls': [call('bash', {'command': script + ' build --help'}, 'layout-help')]},
         {'tool_calls': [call('bash', {'command': script + ' init long-story'}, 'init')]},
         {'tool_calls': [call('write', {'path': 'books/long-story/故事与分镜.md', 'content': '小兔抬头，看见一片云。'}, 'story')]},
@@ -402,10 +402,13 @@ async def test_real_pi_long_tool_chain_and_sqlite_resume(book_modules, tmp_path)
         layout_help = json.dumps(model.requests[3]['messages'])
         assert 'image_box' in layout_help and 'text_elements' in layout_help
         capability_help = json.dumps(model.requests[2]['messages'], ensure_ascii=False)
-        assert 'Cota 绘本 Bot 配套入口' in capability_help
+        assert 'Cota 运行与配套命令' in capability_help
+        assert 'image_understand' in capability_help
         assert (root / 'workspace/books/long-story/故事与分镜.md').read_text() == '小兔抬头，看见一片云。'
-        assert 'Policy: text-only' in model.requests[0]['messages'][0]['content']
-        assert model.requests[0]['messages'][0]['content'].count('Policy: ') <= 3
+        guidance = str(model.requests[0]['messages'][-1]['content'])
+        assert 'Policy: text-only' in guidance
+        assert guidance.count('Policy: ') <= 3
+        assert 'Policy:' not in model.requests[0]['messages'][0]['content']
         system_prompt = model.requests[0]['messages'][0]['content']
         assert 'Bot directory: ' + json.dumps(str(root)) in system_prompt
         assert 'Python executable: ' + json.dumps(sys.executable) in system_prompt
@@ -422,7 +425,7 @@ async def test_real_pi_long_tool_chain_and_sqlite_resume(book_modules, tmp_path)
         state = await agent.store.export_session('book')
         restored = await agent.store.load('book', agent=agent)
         assert restored.context_messages == state['context_messages']
-        assert [m['content'] for m in model.requests[-1]['messages'] if m['role'] == 'user'] == ['开始写故事，先不画图', '继续刚才的作品']
+        assert [m['content'] for m in model.requests[-1]['messages'] if m['role'] == 'user' and isinstance(m['content'], str)] == ['开始写故事，先不画图', '继续刚才的作品']
         assert not model.responses
     finally:
         await close(agent)
@@ -602,8 +605,8 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
     port = site._server.sockets[0].getsockname()[1]
     endpoints = yaml.safe_load((root / 'endpoints.yml').read_text())
     endpoints['llms']['default'].update(key='MAIN_TEST', apibase=f'http://127.0.0.1:{port}/v1', model='main-test')
-    endpoints['picture_book']['image'].update(key='IMAGE_TEST', apibase=f'http://127.0.0.1:{port}/v1', model='illustrator-test')
-    endpoints['picture_book']['vision'].update(key='VISION_TEST', apibase=f'http://127.0.0.1:{port}/v1', model='vision-test')
+    endpoints['llms']['image-generate'].update(key='IMAGE_TEST', apibase=f'http://127.0.0.1:{port}/v1', model='illustrator-test')
+    endpoints['llms']['image-understanding'].update(key='VISION_TEST', apibase=f'http://127.0.0.1:{port}/v1', model='vision-test')
     (root / 'endpoints.yml').write_text(yaml.safe_dump(endpoints))
     script = shlex.quote(sys.executable) + ' ' + shlex.quote(str(root / 'scripts/book.py')) + ' --project example '
     sequence = [
@@ -612,7 +615,9 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
         {'tool_calls': [call('bash', {'command': script + 'generate --asset character-reference --prompt prompt.txt --output character.png', 'timeout': 300}, 'generate')]},
         {'tool_calls': [call('bash', {'command': script + 'generate --asset page-01 --prompt prompt.txt --reference character.png --output art.png', 'timeout': 300}, 'edit')]},
         {'tool_calls': [call('bash', {'command': script + 'generate --asset blocked-page --prompt prompt.txt --output must-not-generate.png', 'timeout': 300}, 'bounded')]},
-        {'tool_calls': [call('bash', {'command': script + 'review --asset page-01 --prompt prompt.txt --image art.png --image character.png --output review.json', 'timeout': 300}, 'vision')]},
+        {'tool_calls': [call('read', {'path': str(project / 'art.png')}, 'read-preview')]},
+        {'tool_calls': [call('image_understand', {'image_path': str(project / 'art.png'), 'prompt': '原创角色，在纯背景下站立，无文字'}, 'vision')]},
+        {'tool_calls': [call('bash', {'command': script + 'review --tool-call-id vision --asset page-01 --prompt prompt.txt --image art.png --output review.json', 'timeout': 300}, 'record-vision')]},
         {'tool_calls': [call('bash', {'command': script + 'build', 'timeout': 300}, 'pdf')]},
         {'tool_calls': [call('bash', {'command': script + 'deliverables --draft'}, 'deliverables')]},
         {'tool_calls': [call('send_files', {'paths': ['books/example/book.pdf', 'books/example/previews/overview.jpg', 'books/example/打印说明.md'], 'text': '审阅稿，尚未完成内容、视觉与语言验收。'}, 'deliver')]},
@@ -625,7 +630,7 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
         agent = Agent.load_from_path(str(root))
         await agent.create_processor().handle_message(Message(text='制作并发布一个审阅稿', session_id='production', sender_id='reader', receiver='bot'))
         assert observed == ['generate', 'edit', 'vision']
-        assert len(main_requests) == 10 and not sequence
+        assert len(main_requests) == 12 and not sequence
         session = await agent.store.export_session('production')
         blocked = next(e for e in session['events'] if e['type'] == 'tool_result'
                        and e['payload']['tool_call_id'] == 'bounded')
@@ -633,13 +638,15 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
         assert 'revision_limit_reached' in json.dumps(blocked)
         assert not (project / 'must-not-generate.png').exists()
         for request in main_requests:
-            assert {'read', 'write', 'edit', 'bash', 'send_files'} <= {
+            assert 'image_url' not in json.dumps(request['messages'])
+            assert {'read', 'write', 'edit', 'bash', 'send_files', 'image_understand'} <= {
                 tool['function']['name'] for tool in request.get('tools', [])}
+        assert json.loads((project / 'review.json').read_text())['source']['tool_call_id'] == 'vision'
         assert (project / 'book.pdf').read_bytes().startswith(b'%PDF-')
         events = await agent.store.events('production')
         results = [e for e in events if e['type'] == 'tool_result']
-        assert len(results) == 9
-        assert sum(e['payload']['status'] == 'success' for e in results) == 8
+        assert len(results) == 11
+        assert sum(e['payload']['status'] == 'success' for e in results) == 10
         assert all(e['payload']['status'] == 'success' for e in results
                    if e['payload']['tool_call_id'] != 'bounded')
         sent = next(e for e in events if e['type'] == 'bot_utter' and e['payload'].get('attachments'))

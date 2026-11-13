@@ -334,7 +334,7 @@ test('native compaction summarizes projected sources and recorded observations w
     f.options.messages.at(-1)]} : f.rpc(method, payload);
   await runAgent(f.options, rpc);
   const summary = JSON.stringify(f.requests[0].body.messages);
-  assert.match(summary, /sha256:/); assert.match(summary, /source_id/);
+  assert.match(summary, /sha256:/); assert.match(summary, /source event user-1/);
   assert.match(summary, /border is blue/); assert.match(summary, /re-read/);
   assert.doesNotMatch(summary, /data:image/);
   assert.deepEqual(f.options.messages, before);

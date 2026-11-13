@@ -193,3 +193,14 @@ async def test_exact_catalog_budget_remains_usable_through_runtime_policy():
     guidance = await AllPolicy(catalog).guidance(PolicyContext('session', available_skills=('weather',)))
     assert guidance['policies'] == [value]
     assert len(guidance['text']) <= size
+
+
+def test_selected_policy_rendering_ignores_rank_only_reordering():
+    first = policy(); first['name'] = 'a'
+    second = deepcopy(first); second['name'] = 'b'
+    catalog = PolicyCatalog([first, second])
+    matches = [{'name': name, 'status': 'candidate', 'step': None} for name in ['a', 'b']]
+    a = catalog.guidance(['weather'], [], matches=matches)
+    b = catalog.guidance(['weather'], [], matches=list(reversed(matches)))
+    assert a['text'] == b['text']
+    assert a['policies'] == list(reversed(b['policies']))

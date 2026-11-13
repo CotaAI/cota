@@ -100,14 +100,16 @@ async def test_policy_does_not_rewrite_user_input(mock_agent):
     dst = DST('s', mock_agent)
     dst.append_event(UserUtterEvent('hello'))
     from cota.policy import PolicyCatalog, AllPolicy
-    mock_agent.policy = AllPolicy(PolicyCatalog([{'name': 'reference', 'steps': [{'user': 'Applicable request'}, {'bot': [{'thought': 'business guidance'}, {'skills': ['SearchWeb']}]}]}]))
+    mock_agent.policy = AllPolicy(PolicyCatalog([{'name': 'reference', 'steps': [{'user': 'Applicable request'}, {'bot': [{'thought': 'BUSINESS_RULE_42'}, {'skills': ['SearchWeb']}]}]}]))
     await make_runtime(mock_agent, store, dst).run()
     messages = mock_agent._llm_mock.generate_chat.call_args.kwargs['messages']
-    assert [m['content'] for m in messages if m['role'] == 'user'] == ['hello']
-    assert 'business guidance' in messages[0]['content']
+    assert messages[1] == {'role': 'user', 'content': 'hello'}
+    assert messages[-1]['role'] == 'user'
+    assert 'BUSINESS_RULE_42' in str(messages[-1]['content'])
+    assert 'BUSINESS_RULE_42' not in messages[0]['content']
     output = next(e for e in dst.events if e.type == 'bot_utter' and e.payload.get('llm'))
     assert output.payload['llm']['policy']['policies'][0]['name'] == 'reference'
-    assert 'business guidance' not in str(dst.context_messages)
+    assert 'BUSINESS_RULE_42' not in str(dst.context_messages)
 
 
 @pytest.mark.asyncio

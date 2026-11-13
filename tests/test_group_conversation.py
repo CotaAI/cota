@@ -327,7 +327,8 @@ async def test_retry_recorded_mention_after_a_newer_completed_run(mock_agent):
         result = await retried.wait()
         assert result['receipt']['status'] == 'completed'
         assert mock_agent._llm_mock.generate_chat.await_count == 3
-        users = [m for m in mock_agent._llm_mock.generate_chat.call_args.kwargs['messages'] if m['role'] == 'user']
+        users = [m for m in mock_agent._llm_mock.generate_chat.call_args.kwargs['messages']
+                 if m['role'] == 'user' and isinstance(m['content'], str)]
         assert 'older question' in users[-1]['content']
 
 
@@ -367,7 +368,11 @@ async def test_multiple_late_retries_keep_current_trigger_last(mock_agent):
         for letter in ('a', 'b'):
             result = await (await app.submit(user_id=letter, session_id='g', text=f'question {letter}', message_id=letter, mentioned=True)).wait()
             assert result['receipt']['status'] == 'completed'
-            users = [m for m in mock_agent._llm_mock.generate_chat.call_args.kwargs['messages'] if m['role'] == 'user']
+            requests = mock_agent._llm_mock.generate_chat.call_args_list
+            assert requests[0].kwargs['messages'][0] == requests[-1].kwargs['messages'][0]
+            assert 'Group trigger:' in str(requests[-1].kwargs['messages'][-1]['content'])
+            users = [m for m in requests[-1].kwargs['messages']
+                     if m['role'] == 'user' and isinstance(m['content'], str)]
             assert f'question {letter}' in users[-1]['content']
 
 

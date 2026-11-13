@@ -84,6 +84,19 @@ def test_request_size_ignores_image_encoding_and_provider_usage_is_not_an_estima
     assert value['sections']['user'] == 4
 
 
+def test_request_metrics_distinguish_tail_guidance_from_system_and_user_text():
+    from cota.llm.metrics import request_metrics
+    guidance = '<business_guidance>Rule</business_guidance>'
+    tail = '<runtime_context>' + guidance + '</runtime_context>'
+    value = request_metrics({'messages': [{'role': 'system', 'content': 'fixed'},
+        {'role': 'user', 'content': 'question'},
+        {'role': 'user', 'content': [{'type': 'text', 'text': tail}]}]})
+    assert value['system_sections']['business_guidance'] == 0
+    assert value['runtime_context_chars'] == len(tail)
+    assert value['business_guidance_chars'] == len(guidance)
+    assert value['sections']['user'] == len('question') + len(tail)
+
+
 @pytest.mark.asyncio
 async def test_provider_usage_survives_outside_debug():
     client = OpenAIClient('test', 'https://example.invalid', 'test')

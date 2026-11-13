@@ -51,11 +51,38 @@ COTA_RUNTIME_DIR="$PWD/.build/pi-runtime" python -m build
 
 工具以顺序模式执行。Pi 的 `beforeToolCall` 钩子让 Cota 在副作用前保存校验后的参数；checkpoint 失败不会获得确认。
 
-Pi 1.4 区分可执行工具和供应商工具声明：`AgentContext.tools` 绑定执行器，provider 从 system 消息的 `toolsAdded` / `toolsRemoved` 解析模型可调用的能力。Cota 的 `prepareRequest` 重建指导时，使用 Pi 的 `createInitialSystemMessage` 和 `toToolDeclaration` 同步声明当前完整工具集合，避免只保留 prompt 文字却丢失实际 tools。每次 Policy 或工具范围变化后，下一次真实请求也必须反映该变化。
+Pi 1.4 区分可执行工具和供应商工具声明：`AgentContext.tools` 绑定执行器，provider 从 system 消息的 `toolsAdded` / `toolsRemoved` 解析模型可调用的能力。Cota 的 `prepareRequest` 使用 Pi 的 `createInitialSystemMessage` 和 `toToolDeclaration` 声明当前完整工具集合，避免只保留 prompt 文字却丢失实际 tools。工具声明按名称排序；权限变化仍在下一请求生效，不能为缓存沿用被撤销的能力。
+
+## 稳定 system 与本次请求指导
+
+基础 system 包含 Bot 固定指令、Skill 目录、工具使用指南和执行环境。Policy、用户记忆、知识检索结果、群聊触发信息不拼进基础 system。模板中的 `task_description` / `agent_description` 仍渲染 Bot 描述；其它运行时变量在 system 中保留稳定的引用提示，实际值放入 `runtimeContext`。原有 `agent.yml` 模板不需要改写。
+
+记忆、知识与模板动态值在本轮启动时读取；Policy 则在每次主模型请求前根据最新已提交事实重新准备。工具循环不会因此反复检索同一份知识或重读用户记忆。
+
+每次主模型请求的顺序为：
+
+1. Pi Core 调用 `prepareRequest`。Node 经桥接请求 Cota 的 `prepare`，不反传完整历史。
+2. Cota 从已提交 DST 工作上下文选择 Policy，返回 `systemPrompt`、`runtimeContext`、当前工具声明及图片资源目录。训练与检索仍由 Cota Policy 负责；人工 thought 作为业务指导，不冒充模型思考或执行事实。
+3. Node 投影需要的图片，在消息末尾临时追加一个 `role: custom`、`customType: cota.runtime_context` 的消息，内容用 `<runtime_context>` 包裹。执行预算只在警告/收尾时加入，不在普通请求中不断更新计数。
+4. 使用 Pi 官方 `convertToLlm()` 将该 custom 消息转换成 `user` 文本块，并计入 token/字节预算。必要时复用 Pi 压缩真实工作上下文；临时指导不进入摘要或 `replaced_message_ids`，压缩提交后重新准备指导。
+5. Pi Core 的 `transformContext` 返回本次投影，官方 `convertToLlm()` 转换后，由 Pi provider 组装实际请求、工具字段和流式连接。所有供应商使用相同的消息类型，没有按模型切换成 system/developer 的分支。
+6. Pi 执行模型决定的工具。Cota 提交真实回复和工具事实。下一请求重新执行以上过程，使用最新指导，而不携带上一次的临时指导。
+
+```text
+Agent.state / DST：真实用户消息 → Bot 决策 → 工具结果 → …
+                                      ↓ 本次请求投影
+LLM：稳定 system + 当前工具声明 + 工作历史 + 一条 runtime_context（user）
+```
+
+`display: false` 本身不是防持久化机制。这里依靠请求投影与 `agent.state.messages` 分离：临时消息仅由 `transformContext` 返回，不提交给 Agent 状态、DST、Store Events 或 Channel。它不会触发一个新用户回合，也不会成为下一次 Policy 检索的用户问题。Debug 可以保存含该消息的实际请求；关闭 Debug 后不保证能还原完整请求。这里的 `user` 是 Pi custom 转换后的模型协议角色，不是 Cota 的 `user_utter` 事件。
+
+缓存优化还包括：选定 Policy 案例在展示时按名称稳定排序（不改变检索排名、入选或步骤顺序）；Python 恢复与 Node 投影使用一致的历史图片引用、内容顺序与不可变版本路径；收尾保留工具声明，使用 `tool_choice: none` 并在执行前阻止工具副作用。
+
+这改善前缀稳定性，不承诺供应商的实际命中率。尾部指导变化会使它之后的前缀失效；图片从当前证据转为历史引用、压缩、模型/配置或权限变更仍会形成合理边界。第一版没有把过期指导留在历史中换取完全追加的请求。Debug 的 `cache` 指纹只检查同一 run 内 model/system/tools 的变化，不证明完整历史相同；`usage.cache_hit_ratio` 来自供应商用量，经 Pi 标准化，不是估算值。
 
 模型回复同时包含公开文字和工具调用时，完整 assistant 消息仍归属于第一条 `tool_started`；另保存一条以 `llm_event_id` 指向它的 `bot_utter` 用于历史展示和投递。两者同次提交后才执行工具；这条公开发言不再生成第二份模型上下文。隐藏推理不属于公开文字。
 
-原生请求单次默认总时限180秒、默认不自动重试；空行保活、SDK 退避以及请求观察钩子的等待不能延长该时限，详见 [endpoints.yml](../configuration/endpoints.md)。初始历史只同步一次，图片由不可变资源引用代替，不携带历史 Base64。普通 prepare 不从 Node 传回历史；Cota 从已提交 DST 计算 Policy，原生 provider 接收 system 指导、工具声明及资源目录，自定义适配器接收同样精简过的消息。压缩后也使用这一投影恢复。Debug 模式额外传回一次实际供应商请求。工具首次产生的图片仍完整提交给 Cota，后续按需通过 `image_resource(id)` 加载，尚未引入通用二进制传输协议。
+原生请求单次默认总时限180秒、默认不自动重试；空行保活、SDK 退避以及请求观察钩子的等待不能延长该时限，详见 [endpoints.yml](../configuration/endpoints.md)。初始历史只同步一次，图片由不可变资源引用代替，不携带历史 Base64。普通 prepare 不从 Node 传回历史；Cota 从已提交 DST 计算 Policy，Node 接收稳定 system、本次 runtimeContext、工具声明及资源目录，自定义适配器接收同样精简过的消息。压缩后也使用这一投影恢复。Debug 模式额外传回一次实际供应商请求。工具首次产生的图片仍完整提交给 Cota，后续按需通过 `image_resource(id)` 加载，尚未引入通用二进制传输协议。
 
 `text_delta` 只作为实时预览发送给支持它的 Channel；思考、工具参数等增量不作为用户回复。完整回复提交后以同一 request_id 替换预览，不新增逐 token Event。必要的 Pi 推理签名和续接内容保存在来源事件的可选 `llm.continuation` 中，用于恢复模型协议；普通聊天历史不展示它，普通无签名文本不会增加该字段。
 
@@ -81,7 +108,7 @@ Cota 负责证据、资源作用域和传输投影；Pi 继续负责模型—工
 
 ## 配置与排查
 
-每次模型请求前，Cota 的 Pi 适配层按 `max_iterations` 注入当前决策预算；剩余约20%时提示保存并收敛。预算至少10次时，默认在原有上限内预留最后两次仅文字的收尾请求：撤下工具声明、阻止工具副作用，不再加载历史图片字节。模型根据已保存结果说明完成与未完成项，不把尚未发送的附件说成已经交付。小于10次的预算不默认预留。
+Cota 的 Pi 适配层按 `max_iterations` 跟踪决策预算；普通请求不注入持续变化的计数，剩余约20%时在请求尾部提示保存并收敛。预算至少10次时，默认在原有上限内预留最后两次仅文字的收尾请求：保留工具声明，通过 tool_choice 禁用调用并阻止工具副作用，不再加载历史图片字节。模型根据已保存结果说明完成与未完成项，不把尚未发送的附件说成已经交付。小于10次的预算不默认预留。
 
 收尾使用 Pi 原有请求/回合钩子，未新增执行循环。完成收尾仍记录 `limited`；文字按普通 `bot_utter` 持久化并确认后，不再追加重复的通用上限提示。模型失败或未能生成有效收尾时才使用兜底提示；预算、网络和整轮超时仍可能先终止执行，不能保证所有故障下都有模型总结。Debug 请求的 preparation 记录执行预算；这些不是新的 Event 或业务任务状态。
 

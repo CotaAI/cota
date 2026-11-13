@@ -327,9 +327,10 @@ async def test_native_tool_batch_commits_commentary_before_effect_and_refreshes_
             assert effects == ['A'] and delivered == ['Checking now.', 'It is sunny.']
             assert 'lookup' in [tool['function']['name'] for tool in requests[0].get('tools', [])]
             assert 'lookup' in [tool['function']['name'] for tool in requests[1].get('tools', [])]
-            assert 'results_seen=0' in requests[0]['messages'][0]['content']
-            assert 'results_seen=1' in requests[1]['messages'][0]['content']
-            assert [m['role'] for m in requests[1]['messages']] == ['system', 'user', 'assistant', 'tool']
+            assert requests[0]['messages'][0] == requests[1]['messages'][0]
+            assert 'results_seen=0' in str(requests[0]['messages'][-1]['content'])
+            assert 'results_seen=1' in str(requests[1]['messages'][-1]['content'])
+            assert [m['role'] for m in requests[1]['messages']] == ['system', 'user', 'assistant', 'tool', 'user']
             assert requests[1]['messages'][2]['content'] == 'Checking now.'
             assert DST.from_events('s', dst.events, mock_agent).state_dict() == dst.state_dict()
             records = await store.model_debug_headers('s')
@@ -420,3 +421,28 @@ async def test_attachment_resource_rpc_checks_current_integrity(mock_agent, tmp_
     assert (await runtime._handle_request('image_resource', {'id': current['id']}))['type'] == 'image'
     path.write_bytes(b'bad image')
     assert 'error' in await runtime._handle_request('image_resource', {'id': current['id']})
+
+
+@pytest.mark.asyncio
+async def test_debug_cache_usage_and_static_prefix_changes_are_explicit(tmp_path):
+    from cota.runtime.pi_models import PiModelObserver
+    store, dst = MemoryStore(), DST('cache', None)
+    store.enable_debug_log(tmp_path / 'debug.log')
+    dst.append_event(Event('run_started', {}, run_id='cache-run'))
+    trace = PiTraceRecorder(dst, store)
+    async def checkpoint(): await store.save(dst)
+    observer = PiModelObserver(trace, checkpoint)
+    records = []
+    for system in ['stable', 'stable', 'changed']:
+        began = await observer.begin({'purpose': 'dialogue', 'model': 'test'})
+        await observer.observe({'request_id': began['request_id'], 'kind': 'request', 'request': {
+            'model': 'test', 'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': 'current guidance'}], 'tools': []}})
+        response = message()
+        response['usage'] = {'input': 20, 'cacheRead': 80, 'cacheWrite': 0, 'output': 2, 'totalTokens': 102}
+        await observer.complete({'request_id': began['request_id'], 'message': response, 'duration_ms': 5})
+        records.append(await store.model_debug('cache', began['request_id']))
+    assert records[1]['cache']['changes'] == []
+    assert records[2]['cache']['changes'] == ['system']
+    assert records[1]['usage']['cached_tokens'] == 80
+    assert records[1]['usage']['uncached_tokens'] == 20
+    assert records[1]['usage']['cache_hit_ratio'] == .8

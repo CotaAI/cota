@@ -257,6 +257,8 @@ function boot() {
         if (data.transport) body.append(section('Transport · attempts / header and response timing', data.transport, true));
         const budget = data.preparation?.context_budget;
         if (budget) body.append(section('Context budget · Pi estimates, not provider usage', budget, true));
+        if (data.cache) body.append(section('Cache prefix · model / system / tools changes within this run', data.cache, true));
+        if (data.usage) body.append(section('Usage · provider-reported tokens and cache ratio', data.usage, true));
         body.append(jsonView(data));
       } else {
         body.append(button('刷新请求', () => selectModelDebug()), element('div', '最近 100 次模型调用（包括尚未结束的请求）', 'meta'));

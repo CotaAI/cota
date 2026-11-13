@@ -6,6 +6,7 @@ import https from 'node:https';
 import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {extname} from 'node:path';
+import {createHash} from 'node:crypto';
 import {Type} from '@earendil-works/pi-ai';
 
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
@@ -90,8 +91,11 @@ export function createImageUnderstandTool(config) {
         const text = result?.choices?.[0]?.message?.content;
         if (typeof text !== 'string' || !text.trim()) return fail('Vision model did not return analysis text');
 
-        return {content: [{type: 'text', text}],
-          details: {model: config.model, image_path}, isError: false};
+        const details = {model: config.model, image_path,
+          image_sha256: createHash('sha256').update(data).digest('hex')};
+        return {content: [{type: 'text', text},
+          {type: 'text', text: JSON.stringify({tool_call_id: toolCallId, ...details})}],
+          details, isError: false};
       } catch (error) {
         if (signal?.aborted) throw new DOMException('Image understand cancelled', 'AbortError');
         return fail(error.message || 'Image understanding failed');

@@ -193,3 +193,65 @@ async def test_group_start_does_not_authorize_inputs_after_its_cutoff(mock_agent
     options = runtime._bridge.run.call_args.args[0]
     assert future['id'] not in json.dumps(options)
     assert 'later private input' not in json.dumps(options)
+
+
+@pytest.mark.asyncio
+async def test_runtime_guidance_is_separate_from_stable_system(mock_agent):
+    from cota.runtime.pi_runtime import PiAgentRuntime
+    from cota.policy import AllPolicy, PolicyCatalog
+    mock_agent.policy = AllPolicy(PolicyCatalog([{'name': 'guide', 'steps': [{'bot': [{'thought': 'CURRENT_BUSINESS_GUIDANCE'}]}]}]))
+    dst = DST('guidance', mock_agent)
+    dst.append_event(UserUtterEvent('real request'))
+    runtime = PiAgentRuntime(mock_agent, dst, dst.session_id)
+    prepared = await runtime._prepare({'native': True, 'nativeTools': [], 'extensionTools': []})
+    assert 'CURRENT_BUSINESS_GUIDANCE' not in prepared['systemPrompt']
+    assert 'CURRENT_BUSINESS_GUIDANCE' in prepared['runtimeContext']
+    assert 'CURRENT_BUSINESS_GUIDANCE' not in str(dst.as_dict())
+
+
+def test_historical_image_projection_matches_node_and_wrap_up():
+    import shutil
+    import subprocess
+    from pathlib import Path
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node is required for the Pi projection contract')
+    dst = history(blocks=[{'type': 'text', 'text': 'Read image file [image/png]'}, image()])
+    dst.append_event(Event('bot_utter', {'text': 'Observed the picture.'}))
+    resources = registry(dst)
+    expected = resources.project(dst.context_messages)[1]['content']
+    module = (Path(__file__).parents[1] / 'cota/runtime/pi/image-context.mjs').as_uri()
+    script = f'''import {{projectImageContext, createImageResources}} from {json.dumps(module)};
+    let input=''; for await (const part of process.stdin) input+=part;
+    const data=JSON.parse(input);const resources=createImageResources(data.catalog,()=>{{throw Error('No pixels needed')}});
+    console.log(JSON.stringify([false,true].map(textOnly=>projectImageContext(data.messages,resources,{{textOnly}})[1].content)));'''
+    result = subprocess.run([node, '--input-type=module', '-e', script], input=json.dumps({
+        'messages': dst.context_messages, 'catalog': resources.catalog()}), text=True, capture_output=True, check=True)
+    assert json.loads(result.stdout) == [expected, expected]
+
+
+@pytest.mark.asyncio
+async def test_dynamic_template_values_change_only_runtime_context_after_recovery(mock_agent):
+    from cota.runtime.pi_runtime import PiAgentRuntime
+    from cota.store import MemoryStore
+    prompt = '{{agent_description}}\nMemory: {{user_context_text}}\nQuestion: {{latest_user_query}}\nKnowledge: {{knowledge}}'
+    dst, store = DST('template', mock_agent), MemoryStore()
+    dst.append_event(Event('user_context_updated', {'user_id': 'u', 'context': {'city': 'Beijing'}}))
+    dst.append_event(UserUtterEvent('first question'))
+    first = PiAgentRuntime(mock_agent, dst, 'template', prompt=prompt)
+    first._system_prompt = first._build_system_prompt({'knowledge': 'FIRST_KNOWLEDGE'})
+    payload = {'native': True, 'nativeTools': [], 'extensionTools': []}
+    before = await first._prepare(payload)
+    await store.save(dst)
+    restored = await store.load('template', agent=mock_agent)
+    restored.append_event(Event('user_context_updated', {'user_id': 'u', 'context': {'city': 'Shanghai'}}))
+    restored.append_event(UserUtterEvent('second question'))
+    second = PiAgentRuntime(mock_agent, restored, 'template', prompt=prompt)
+    second._system_prompt = second._build_system_prompt({'knowledge': 'SECOND_KNOWLEDGE'})
+    after = await second._prepare(payload)
+    assert before['systemPrompt'] == after['systemPrompt']
+    assert 'A test bot' in before['systemPrompt']
+    assert 'Beijing' in before['runtimeContext'] and 'Shanghai' in after['runtimeContext']
+    assert 'first question' in before['runtimeContext'] and 'second question' in after['runtimeContext']
+    assert 'FIRST_KNOWLEDGE' in before['runtimeContext'] and 'SECOND_KNOWLEDGE' in after['runtimeContext']
+    assert 'SECOND_KNOWLEDGE' not in str(restored.as_dict())

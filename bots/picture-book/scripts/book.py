@@ -95,9 +95,11 @@ Such shell commands can hide a failed program exit. Read the JSON and exit statu
 
 Normal workflow (no implementation-source reading required):
   1. doctor once, then init; save the brief, story, storyboard and visual rules.
-  2. Read generate --help; write a prompt file, generate a character reference.
-  3. Inspect the actual image with read or review; generate and check one sample page.
-  4. Generate remaining art with --reference; fill book.json using build --help.
+  2. Use image_generate with actual reference files for character art and a sample.
+  3. Use image_understand for visual checks; save fixed numbered criteria first.
+     Import its successful call with review --tool-call-id (see review --help).
+     read is for files, not a substitute for formal visual review.
+  4. Generate remaining art with image_generate; fill book.json using build --help.
   5. build, inspect every rendered page, validate, then deliverables.
 Read only the help needed for the current step. For an existing project, status
 comes first; completed generation journals allow reuse without another paid call.
@@ -139,19 +141,21 @@ falsely setting QA to passed. Generate artwork without final Chinese text.''')
     generate.add_argument('--prompt', required=True, help='UTF-8 prompt file, relative to project')
     generate.add_argument('--output', required=True, help='PNG output, relative to project')
     generate.add_argument('--reference', action='append', default=[], help='Actual image file, relative to project; repeatable')
-    review = commands.add_parser('review', help='Review actual images and save the observations as JSON',
+    review = commands.add_parser('review', help='Verify and save an actual image_understand observation; no model request',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''All paths stay inside the project. Repeat --image for 1-8 actual PNG/JPEG/WebP
-images, each <=32 MiB. Include the character reference when checking continuity.
+        epilog='''First call image_understand with the target image and the exact prompt file text.
+Then pass its returned source tool_call_id here. This command only imports committed
+successful tool evidence from this Bot SQLite Store; it does not call a model.
+All paths stay inside the project. Use one --image for the actual target PNG/JPEG/WebP,
+<=32 MiB. A read result or main-model opinion is not formal visual review evidence.
 Review every rendered page, not only a small contact sheet. Output must end in .json.
 Use a stable --asset target (e.g. page-04 for artwork, pdf-face-05 for a rendered
 PDF face). Fixed criteria belong to that target: keep the prompt file content stable,
-put actual version paths only in --image, target first then references. Filename
+put the actual target version path only in --image. Filename
 changes do not create new review criteria. Do not alter criteria to seek approval.
-Each --image must have its own flag. Name the stable target and reference purpose
-in the fixed criteria; supply actual version paths through --image. Do not rely only
-on "image 1/image 2" or reuse another page's questions. The service receives labels/hashes next to the actual images; the saved
-report includes image_inputs in the same order. Review only the requested visible
+Name the stable target in the fixed criteria; supply its actual version path
+through --image. Do not reuse another page's questions. The saved report links
+image_inputs and the actual tool result. Review only the requested visible
 criteria and verify the specific correction on the new version.
 Identical criteria and image bytes reuse one canonical observation, even with new
 output names or byte-identical image aliases. image_inputs remains the original
@@ -171,8 +175,10 @@ Use pdf-face-01 etc. for final rendered faces. A canonical required-check pass
 freezes that exact page version; it does not automatically approve the whole book.''')
     review.add_argument('--asset', required=True, help='Stable review target; e.g. page-04 or pdf-face-05. Criteria are fixed on its first review')
     review.add_argument('--prompt', required=True, help='UTF-8 review instructions file, relative to project')
-    review.add_argument('--image', action='append', required=True, help='Actual image file; repeat for up to eight images')
+    review.add_argument('--image', action='append', required=True, help='One actual review target; same image_path used by image_understand')
     review.add_argument('--output', required=True, help='Review JSON path, relative to project')
+    review.add_argument('--tool-call-id', required=True, help='Import a committed image_understand result from this Bot SQLite Store; makes no model request. '
+        'Use one --image and the exact prompt sent to the tool. The returned tool source contains its call ID')
     build = commands.add_parser('build', help='Lay out Chinese text and render every PDF page',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''Fill book.json using the generic Skill project manifest. pages must contain every
@@ -269,8 +275,9 @@ Never set QA merely to make validate pass.''')
             from bookbot.models import generate
             result = generate(ROOT, project, args.prompt, args.output, asset=args.asset, references=args.reference)
         elif args.command == 'review':
-            from bookbot.models import review
-            result = review(ROOT, project, args.prompt, args.image, args.output, asset=args.asset)
+            from bookbot.tool_reviews import record_review
+            result = record_review(ROOT, project, args.prompt, args.image, args.output,
+                                   asset=args.asset, tool_call_id=args.tool_call_id)
         elif args.command == 'build':
             from bookbot.layout import build
             result = build(ROOT, project, max_file_bytes=args.max_file_bytes)
@@ -281,6 +288,8 @@ Never set QA merely to make validate pass.''')
             if args.command == 'validate' or not args.draft:
                 from bookbot.layout import require_current_render
                 require_current_render(ROOT, project)
+                from bookbot.tool_reviews import require_visual_reviews
+                require_visual_reviews(project)
                 checked = subprocess.run([sys.executable, str(SKILL / 'scripts/validate_book_package.py'), str(project)],
                                          capture_output=True, text=True, timeout=60)
                 result = {'valid': checked.returncode == 0, 'details': checked.stdout.strip()}

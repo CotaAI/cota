@@ -78,7 +78,7 @@ async def test_real_pi_wrapup_commits_useful_reply_within_original_budget(mock_a
     model_requests=[]
     async def respond(**kwargs):
         model_requests.append(kwargs)
-        if not kwargs.get('tools'):
+        if kwargs.get('tool_choice') == 'none':
             return {'content':f'已完成 {len(calls)} 次处理，尚未发送任何附件。'}
         return {'tool_calls':[{'id':f'work-{len(calls)+1}','type':'function',
             'function':{'name':'work','arguments':'{}'}}]}
@@ -88,8 +88,10 @@ async def test_real_pi_wrapup_commits_useful_reply_within_original_budget(mock_a
     runtime=PiAgentRuntime(mock_agent,dst,'real-wrap',max_iterations=10,checkpoint=store.save,store=store)
     await runtime.run()
     assert len(calls)==8 and len(model_requests)==9
-    assert 'tools' not in model_requests[-1]
-    assert '<execution_budget phase="wrap_up">' in model_requests[-1]['messages'][0]['content']
+    assert model_requests[-1]['tools'] == model_requests[0]['tools']
+    assert model_requests[-1]['tool_choice'] == 'none'
+    assert '<execution_budget phase="wrap_up">' in str(model_requests[-1]['messages'][-1]['content'])
+    assert all(r['messages'][0] == model_requests[0]['messages'][0] for r in model_requests)
     assert [e.text for e in dst.events if e.type=='bot_utter']==['已完成 8 次处理，尚未发送任何附件。']
     assert dst.execution['status']=='limited'
     assert (await store.load('real-wrap',mock_agent)).state_dict()==dst.state_dict()

@@ -91,7 +91,7 @@ policy:
 
 `bot_utter.payload.llm.policy` / `tool_started.payload.llm.policy` 保存本次实际注入案例的名称/内容哈希、策略类和版本、配置与训练状态哈希、有效 read_skills，以及选择状态、步骤、证据 ID。它是实际选择的记录，不表示案例的示例结果真实发生。
 
-Debug 模式下，独立模型诊断的 preparation 保存完整选择理由、thought、预算省略项、缓存命中与耗时；最终 request 保存实际 system prompt 和工具声明。完整案例不重复写入每个核心事件。
+Debug 模式下，独立模型诊断的 preparation 保存完整选择理由、thought、预算省略项、缓存命中与耗时；最终 request 保存实际 system prompt、工具声明与末尾 runtime_context。业务指导不写入基础 system 或真实对话事件。完整案例不重复写入每个核心事件。
 
 Trace 中的位置从 0 开始，仅供开发和审核；运营不用填写索引。
 

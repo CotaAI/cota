@@ -4,6 +4,13 @@ import {posix} from 'node:path';
 
 export const IMAGE_RESOURCE_ROOT = '/bot/.cota/context-images/';
 
+// Same canonical rendering as ContextImages._marker in Python. Do not include
+// request phases or mutable filesystem facts in historical resource references.
+function imageMarker({id, path, mimeType, size}, eventId) {
+  return {type: 'text', text: `Image pixels omitted (source event ${eventId}): ${JSON.stringify({id, path, mimeType, size})}`
+    + '. This is not review or approval. Use read(path) to re-read this exact version; the virtual resource path is not a filesystem file.'};
+}
+
 /** Per-run capabilities: catalog membership authorizes RPC bytes, never host paths. */
 export function createImageResources(initial = [], request) {
   const catalog = new Map(), paths = new Map(), loaded = new Map(), fingerprints = new Map();
@@ -63,6 +70,14 @@ function currentImageMessages(messages) {
     && (index === latestUser || message.role === 'toolResult' && index > boundary);
 }
 
+function orderReferences(message) {
+  const indexes = new Set(message.cotaImageRefs.map(ref => ref.index));
+  return {...message, cotaImagePixelsOmitted: true,
+    cotaImageRefs: message.cotaImageRefs.map((ref, index) => ({...ref, index})),
+    content: [...message.cotaImageRefs.map(ref => message.content[ref.index]),
+      ...message.content.filter((_block, index) => !indexes.has(index))]};
+}
+
 /** Fetch current evidence only, after checking known sizes without loading bytes. */
 export async function hydrateImageRefs(messages, resources, settings) {
   const active = currentImageMessages(messages), selected = new Map();
@@ -96,12 +111,9 @@ export async function hydrateImageRefs(messages, resources, settings) {
   return messages.map((message, index) => {
     if (!message.cotaImageRefs?.length) return message;
     if (!active(message, index)) {
-      // Pi keeps only the head of long tool text in summaries. Preserve lean
-      // source references first; their private indexes still name raw evidence.
-      const indexes = new Set(message.cotaImageRefs.map(ref => ref.index));
-      return {...message, cotaImagePixelsOmitted: true, content: [
-        ...message.cotaImageRefs.map(ref => message.content[ref.index]),
-        ...message.content.filter((_block, blockIndex) => !indexes.has(blockIndex))]};
+      // Pi keeps only the head of long tool text in summaries. Put references
+      // first and keep their request-local indexes synchronized.
+      return orderReferences(message);
     }
     const content = [...message.content];
     for (const ref of message.cotaImageRefs) if (ref.auto !== false) content[ref.index] = images.get(ref.id);
@@ -131,12 +143,8 @@ export function projectImageContext(messages, resources, {textOnly = false} = {}
     if (message.role === 'assistant') for (const block of message.content)
       if (block.type === 'toolCall') calls.set(block.id, block);
     if (!message.content.some(block => block.type === 'image')) {
-      if (!textOnly || !message.cotaImageRefs?.length) return message;
-      const indexes = new Set(message.cotaImageRefs.map(ref => ref.index));
-      return {...message, cotaImagePixelsOmitted: true, content: [
-        {type: 'text', text: 'Image pixels omitted for text-only wrap-up; no new visual review was performed.'},
-        ...message.cotaImageRefs.map(ref => message.content[ref.index]),
-        ...message.content.filter((_block, blockIndex) => !indexes.has(blockIndex))]};
+      if (!message.cotaImageRefs?.length) return message;
+      return orderReferences(message);
     }
     const call = message.role === 'toolResult' ? calls.get(message.toolCallId) : undefined;
     const active = !textOnly && current(message, index);
@@ -145,7 +153,8 @@ export function projectImageContext(messages, resources, {textOnly = false} = {}
       if (block.type !== 'image') return [block];
       const hash = contentHash(block), source = block.cotaImageSource ?? {};
       const id = source.attachment_id ?? message.cotaEventId ?? message.toolCallId ?? `message-${index}`;
-      const path = source.path ?? resources?.forId(hash)?.path ?? call?.arguments?.path ?? call?.arguments?.file_path;
+      const descriptor = resources?.forId(source.attachment_id) ?? resources?.forId(hash);
+      const path = descriptor?.path ?? source.path ?? call?.arguments?.path ?? call?.arguments?.file_path;
       const label = JSON.stringify({source_id: id, ...(path ? {path} : {}), image_index: imageIndex, hash});
       const duplicate = active && visible.get(hash);
       if (active && !duplicate) {
@@ -153,9 +162,10 @@ export function projectImageContext(messages, resources, {textOnly = false} = {}
         references.push({type: 'text', text: `Image source ${label}. Not review/approval.`});
         return [block];
       }
-      references.push({type: 'text', text: `Image pixels omitted ${label}${duplicate ? `; duplicate of ${duplicate}` : ''}. `
-        + (textOnly ? 'No new visual review was performed during text-only wrap-up.'
-          : 'Not review/approval; re-read source to inspect (files may change).')});
+      references.push(duplicate
+        ? {type: 'text', text: `Image pixels omitted ${label}; duplicate of ${duplicate}. Not review/approval.`}
+        : imageMarker(descriptor ?? {id: hash, path, mimeType: block.mimeType,
+          size: Buffer.byteLength(block.data ?? '', 'base64')}, message.cotaEventId ?? id));
       return [];
     });
     // Pi truncates tool-result text during summarization. Put short provenance

@@ -83,7 +83,8 @@ class ContextImages:
 
     @staticmethod
     def _marker(descriptor, event_id):
-        return {'type': 'text', 'text': f'Image pixels omitted (source event {event_id}): ' + json.dumps(descriptor)
+        return {'type': 'text', 'text': f'Image pixels omitted (source event {event_id}): '
+                + json.dumps(descriptor, ensure_ascii=False, separators=(',', ':'))
                 + '. This is not review or approval. Use read(path) to re-read this exact version; '
                   'the virtual resource path is not a filesystem file.'}
 
@@ -123,6 +124,9 @@ class ContextImages:
                 message['cotaAttachmentsHydrated'] = True
             message['content'] = content
             if refs:
-                message['cotaImageRefs'] = refs
+                indexes = {ref['index'] for ref in refs}
+                message['content'] = [content[ref['index']] for ref in refs] + [
+                    block for index, block in enumerate(content) if index not in indexes]
+                message['cotaImageRefs'] = [{**ref, 'index': index} for index, ref in enumerate(refs)]
             result.append(message)
         return result

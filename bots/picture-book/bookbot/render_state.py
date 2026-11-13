@@ -45,7 +45,7 @@ def load_state(project, manifest=None):
         raise _invalid() from None
 
 
-def accepted_review(project, number, preview_hash):
+def accepted_review(project, number, preview_hash, *, require_native=False):
     """Only exact, checksum-verified canonical required-check passes can freeze."""
     folders = confined(project, '.bookbot/reviews')
     if not folders.exists():
@@ -63,6 +63,12 @@ def accepted_review(project, number, preview_hash):
                 metadata = read_json(confined(project, path.with_suffix('.request.json')))
                 target = report['image_inputs'][0]
                 assessment = report['assessment']
+                if require_native:
+                    source = report.get('source', {})
+                    if source.get('tool') != 'image_understand' or not all(
+                            isinstance(source.get(k), str) and source[k] for k in
+                            ('session_id', 'run_id', 'event_id', 'tool_call_id')):
+                        continue
                 checks = assessment.get('checks')
                 if not isinstance(checks, list) or not checks or not all(isinstance(c, dict) for c in checks):
                     continue
