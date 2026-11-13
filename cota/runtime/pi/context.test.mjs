@@ -60,6 +60,42 @@ test('explicit capacity wins and unknown capacity is labelled as a fallback', ()
   assert.equal(resolveContextModel({id: 'private-model', maxTokens: 2000}).capacitySource, 'fallback');
 });
 
+test('working threshold is independent of model capacity and bounds retention', () => {
+  const large = resolveContextModel({id: 'large', contextWindow: 1000000, maxTokens: 8000});
+  const defaults = compactionSettings(large);
+  assert.equal(large.contextWindow, 1000000);
+  assert.equal(defaults.triggerTokens, 64000);
+  assert.equal(defaults.keepRecentTokens, 12000);
+  assert.equal(compactionSettings(large, {trigger_tokens: 32000}).triggerTokens, 32000);
+  assert.equal(compactionSettings(model, {trigger_tokens: 64000, reserve_tokens: 1000}).triggerTokens, 7000);
+  for (const trigger_tokens of [0, -1, true, 1.2])
+    assert.throws(() => compactionSettings(large, {trigger_tokens}), /working|trigger|budget/i);
+  assert.throws(() => compactionSettings(large, {trigger_tokens: 4000, keep_recent_tokens: 5000}), /budget/i);
+});
+
+test('usage is valid again after omitted image projection stabilizes', () => {
+  const history = [{role: 'user', content: 'task', cotaEventId: 'u'},
+    {role: 'toolResult', toolCallId: 'r', toolName: 'read', cotaEventId: 'r',
+      cotaImagePixelsOmitted: true, content: [{type: 'text', text: 'immutable image reference'}]}];
+  const measured = estimateRequest(history);
+  const response = {...msg('assistant', [{type: 'text', text: 'observed'}], 'a'),
+    cotaImageProjection: measured.image_projection,
+    usage: {input: 250000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 250100}};
+  const budget = estimateRequest([...history, response, msg('user', 'continue', 'next')]);
+  assert(budget.usage_based_tokens >= 250100);
+  const changed = [...history];
+  changed[1] = {...history[1], content: [{type: 'image', mimeType: 'image/png', data: 'eA=='}]};
+  assert.equal(estimateRequest([...changed, response]).usage_based_tokens, null);
+});
+
+test('projection calibration is not reused after switching the model', () => {
+  const messages = [msg('user', 'task', 'u')];
+  const measured = estimateRequest(messages, [], {id:'first'});
+  messages.push({...msg('assistant', [{type:'text',text:'done'}], 'a'), cotaImageProjection: measured.image_projection,
+    usage:{input:50000,output:10,cacheRead:0,cacheWrite:0,totalTokens:50010}});
+  assert.equal(estimateRequest(messages, [], {id:'second'}).usage_based_tokens, null);
+});
+
 test('oversized imported summary input is rejected before calling a provider', async () => {
   const calls = [];
   const messages = [msg('user', 'a'.repeat(40000), 'u1'), msg('user', 'b'.repeat(40000), 'u2'),

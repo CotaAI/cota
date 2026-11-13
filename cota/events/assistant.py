@@ -1,6 +1,7 @@
 """Assistant message provenance carried by bot/tool events, independent of Debug."""
 from copy import deepcopy
 import json
+import re
 
 
 def canonical_json(value):
@@ -48,8 +49,11 @@ def validate_carrier(event):
         raise ValueError('llm requires request_id')
     if type(llm.get('request_sequence')) is not int or llm['request_sequence'] < 1:
         raise ValueError('llm requires a positive request_sequence')
-    if set(llm) - {'request_id', 'request_sequence', 'model', 'duration_ms', 'policy', 'stop_reason', 'message', 'usage', 'continuation'}:
+    if set(llm) - {'request_id', 'request_sequence', 'model', 'duration_ms', 'policy', 'stop_reason', 'message', 'usage', 'continuation', 'image_projection'}:
         raise ValueError('Unexpected llm fields; full provider requests/responses belong in Debug')
+    if 'image_projection' in llm and (not isinstance(llm['image_projection'], str)
+            or not re.fullmatch(r'[a-f0-9]{64}', llm['image_projection'])):
+        raise ValueError('llm.image_projection requires a SHA-256 fingerprint')
     if 'usage' in llm:
         usage = llm['usage']
         if (not isinstance(usage, dict) or set(usage) != {'input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens'}
@@ -164,18 +168,24 @@ def assistant_from_event(event):
     """Project one owner only. Followers and tool-generated utterances add nothing."""
     from cota.events.context import assistant_message
     p = event.payload
+    projection = p.get('llm', {}).get('image_projection')
+
+    def measured(message):
+        if projection:
+            message['cotaImageProjection'] = projection
+        return message
     usage = p.get('llm', {}).get('usage', {})
     usage = {'cost': {'input': 0, 'output': 0, 'cacheRead': 0, 'cacheWrite': 0, 'total': 0}, **usage} if usage else None
     if event.type == 'bot_utter' and not p.get('tool_event_id') and not p.get('llm_event_id'):
         llm = p.get('llm', {})
         if llm.get('continuation'):
-            return deepcopy(llm['continuation'])
-        return assistant_message({'content': p['text'], 'finish_reason': llm.get('stop_reason'), 'usage': usage}, int(event.timestamp * 1000))
+            return measured(deepcopy(llm['continuation']))
+        return measured(assistant_message({'content': p['text'], 'finish_reason': llm.get('stop_reason'), 'usage': usage}, int(event.timestamp * 1000)))
     if event.type == 'tool_started' and p.get('llm'):
         if p['llm'].get('continuation'):
-            return deepcopy(p['llm']['continuation'])
+            return measured(deepcopy(p['llm']['continuation']))
         original = p['llm']['message']
         message = assistant_message({'usage': usage}, int(event.timestamp * 1000))
         message.update(content=deepcopy(original['content']), stopReason=original['stop_reason'])
-        return message
+        return measured(message)
     return None

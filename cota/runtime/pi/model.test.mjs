@@ -28,6 +28,64 @@ async function fixture(t,handler, extra={}) {
 function sse(res){res.writeHead(200,{'content-type':'text/event-stream'});}
 function done(res,text='done'){sse(res);res.write(chunk({content:text}));res.write(chunk({},'stop'));res.end('data: [DONE]\n\n');}
 
+for (const mode of ['success', 'repeat', 'commit-failure', 'cancel', 'limit'])
+test(`context overflow recovery is bounded and never replays tools (${mode})`, async t => {
+  let dialogue = 0, compactions = 0;
+  const controller = new AbortController();
+  const f = await fixture(t, async (_req, res) => {
+    if (f.requests.at(-1).body.messages[0].content.includes('context summarization assistant'))
+      return done(res, 'Older task facts. A real tool has already saved its result.');
+    dialogue++;
+    if (dialogue === 1) {
+      sse(res);res.write(chunk({tool_calls:[{index:0,id:'once',type:'function',function:{name:'act',arguments:'{"n":1}'}}]}));
+      res.write(chunk({},'tool_calls'));return res.end('data: [DONE]\n\n');
+    }
+    if (dialogue === 2 || mode === 'repeat') {
+      res.writeHead(400, {'content-type':'application/json'});
+      return res.end(JSON.stringify({error:{message:'maximum context length exceeded'}}));
+    }
+    return done(res);
+  });
+  f.options.maxIterations = mode === 'limit' ? 2 : 5;
+  f.options.model = {contextWindow: 1000000, maxTokens: 500};
+  f.options.compaction = mode === 'success' ? {} : {keep_recent_tokens: 10};
+  f.options.messages = [{...user, content:'older facts '.repeat(1500)},
+    {role:'assistant',content:[{type:'text',text:'Earlier work is saved.'}],cotaEventId:'old-a',timestamp:2},
+    {...user,content:'Continue this task',cotaEventId:'current',timestamp:3}];
+  let history = structuredClone(f.options.messages);
+  const rpc = async (method, payload) => {
+    if (method === 'event' && payload.event.type === 'message_end' && payload.event.message.role !== 'system') {
+      const m = {...payload.event.message, cotaEventId:`event-${history.length}`,timestamp:history.length + 10};
+      history.push(m);
+      await f.rpc(method,payload);
+      return m.role === 'assistant' ? {assistantMessage:m} : {messageId:m.cotaEventId,timestamp:m.timestamp};
+    }
+    if (method === 'compact') {
+      compactions++;
+      assert.equal(payload.reason,'overflow');
+      assert(!JSON.stringify(payload).includes('maximum context'));
+      if (mode === 'commit-failure') throw new Error('compaction checkpoint failed');
+      history = [{role:'user',content:payload.summary,cotaCompaction:true,cotaEventId:'summary',timestamp:100},
+        ...history.slice(payload.replaced_message_ids.length)];
+      if (mode === 'cancel') controller.abort();
+      return {messages:history};
+    }
+    return f.rpc(method,payload);
+  };
+  const run = runAgent(f.options,rpc,controller.signal);
+  if (mode === 'success') {
+    const result = await run;
+    assert.equal(result.status,'completed');
+    assert(!JSON.stringify(result.messages).includes('maximum context'));
+    assert(f.requests.at(-1).body.messages.some(m=>m.role==='tool' && m.content==='acted'));
+    assert(!JSON.stringify(f.requests.at(-1).body.messages).includes(f.options.messages[0].content));
+  } else await assert.rejects(run, mode === 'commit-failure' ? /checkpoint failed/ : /abort|interrupt|Native model/i);
+  assert.equal(compactions, mode === 'limit' ? 0 : 1);
+  assert.equal(f.toolCalls.length,1);
+  assert.equal(dialogue, ['success','repeat'].includes(mode) ? 3 : 2);
+  assert(!f.rpcCalls.some(c=>c.method==='event' && c.payload.event.message?.stopReason==='error'));
+});
+
 test('split DSML never leaks through native streaming or becomes a committed reply', async t => {
   const raw = 'Saved progress.\n<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="act">\n</｜｜DSML｜｜ calls>';
   const f = await fixture(t, async (_req,res) => {

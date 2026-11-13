@@ -50,7 +50,7 @@ Events 的序号属于完整事实流。聊天历史只展示 user_utter/bot_utt
 | debug.preparation | Policy 的选择、thought、预算省略和准备诊断 |
 | debug.request_size | 按 system/user/assistant/tool 分类的实际字符数、runtime_context 与业务指导大小、system 内 Skill 目录大小、工具定义字符数、图片数量和内联字节数 |
 | debug.transport | OpenAI 适配器的总时限、最大重试次数和各 HTTP 尝试：number、started_ms、headers_ms、status_code、status；完整响应返回时记录 response_ready_ms；Pi 原生流另记录首个公开文字的 first_text_ms |
-| debug.preparation.context_budget | Pi token 估算、实际 usage 推导预算、模型容量及来源、预留 token；serialized_bytes / max_request_bytes 展示序列化预算，images / max_images 和 image_bytes / max_image_bytes 展示图片预算；估算不等同供应商计费 |
+| debug.preparation.context_budget | Pi token 估算、实际 usage 推导预算、模型容量及来源、工作阈值 trigger_tokens、近期保留目标 keep_recent_tokens、预留 token；serialized_bytes / max_request_bytes 展示序列化预算，images / max_images 和 image_bytes / max_image_bytes 展示图片预算；估算不等同供应商计费 |
 | debug.usage | 供应商经 Pi 标准化的输入、缓存读取、输出 token；cache_hit_ratio 为缓存读取量/总输入量，推理等字段以接口实际提供为准 |
 | debug.cache | Pi 原生主请求的 model/system/tools 小型指纹及同一 run 内的变化项；不扫描或证明完整历史前缀，首请求 changes 为空 |
 
@@ -92,3 +92,5 @@ SQL 中请求正文、准备详情及响应正文独立保存，状态更新只�
 在 Model Requests 详情的实际 request.messages 末尾，可以查看本次 runtime_context。它是请求投影，协议角色为 user；不是新增用户发言，不出现在 Events、DST 或 Channel 聊天记录中。前一请求的临时指导不会累积到下一请求。基础 system 和工具指纹不变并不保证供应商缓存命中；还需结合 usage、图片投影及压缩边界判断。
 
 Pi 会标准化不同供应商的 usage。若接口没有报告缓存细分，标准化字段可能为 0；不能仅凭这一数值认定服务端完全没有缓存。
+
+压缩时查看 purpose=compaction 的模型请求和侧栏 Compacting context；提交完成后 Events 中出现 context_compaction，包含 reason（threshold/bytes/overflow）和 tokens_before。下一次主请求的 context_budget 展示压缩后预算；不要把工作阈值误认作模型硬容量。原生溢出恢复时，前一主请求可显示 failed / ContextOverflowError，随后是 compaction 和新的 dialogue 请求；这不代表整个 run 已失败，最终以 run_finished 为准。

@@ -50,6 +50,7 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
     throw new Error('wrapUpIterations must be an integer from 0 to maxIterations - 1');
   let turns = 0, limited = false, wrappingUp = false, hasFinalReply = false, fatal;
   let repairRequested = false, outputRejected = false;
+  let overflowPending = false, overflowRecovered = false, forceCompaction = false;
   const executionBudget = () => {
     const remaining = options.maxIterations - turns;
     return {total: options.maxIterations, used: turns, remaining, reserved,
@@ -82,6 +83,7 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
     return recorded;
   };
   const acceptAssistant = async message => {
+    if (contextBudget) message.cotaImageProjection = contextBudget.image_projection;
     if (hasToolProtocol(message)) {
       await request('reject_output', {error_type: 'ToolProtocolText'});
       // The raw response has been retained in diagnostics. Pi must see no
@@ -157,11 +159,12 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
         requestMessages = projectRequest(projected, prepared.runtimeContext);
         contextBudget = {...estimateRequest(convertToLlm(requestMessages), prepared.tools, model), context_window: model.contextWindow,
           capacity_source: model.capacitySource, reserve_tokens: settings.reserveTokens,
+          trigger_tokens: settings.triggerTokens, keep_recent_tokens: settings.keepRecentTokens,
           max_request_bytes: settings.maxRequestBytes, max_images: settings.maxImages,
           max_image_bytes: settings.maxImageBytes, execution: executionBudget()};
         const fixed = estimateRequest(convertToLlm(requestMessages.filter(m => m.role === 'system' || m.role === 'custom')), prepared.tools, model);
-        if (fixed.budget_tokens >= model.contextWindow - settings.reserveTokens)
-          throw new Error('System prompt and tool definitions exceed the model budget; reduce guidance or increase context_window');
+        if (fixed.budget_tokens >= settings.triggerTokens)
+          throw new Error('System prompt, tool definitions and runtime context exceed the working budget; reduce guidance or increase compaction.trigger_tokens');
         if (fixed.serialized_bytes >= settings.maxRequestBytes - Math.min(65536, Math.floor(settings.maxRequestBytes / 4)))
           throw new Error('System prompt and tool definitions exceed the byte budget; reduce guidance or increase compaction.max_request_bytes');
         // Projection has already omitted historical pixels. The remaining
@@ -169,7 +172,7 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
         // user input or split its current comparison batch to make it fit.
         if (exceedsImageBudget(contextBudget, settings))
           throw new Error('Current user input/tool batch exceeds the image budget; use fewer/smaller images or increase compaction.max_images/max_image_bytes');
-        if (!shouldCompact(contextBudget.budget_tokens, model.contextWindow, settings)
+        if (!forceCompaction && !shouldCompact(contextBudget.budget_tokens, settings.triggerTokens + settings.reserveTokens, settings)
             && contextBudget.serialized_bytes <= settings.maxRequestBytes) break;
         if (attempt >= 2) throw new Error('Context still exceeds the Pi token/byte/image budget after compaction; narrow the task or increase the context budget');
         const summaryStream = async (_model, summaryContext) => {
@@ -191,8 +194,13 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
           stream.push({type: 'done', reason: message.stopReason, message});
           return stream;
         };
-        const result = await compactContext(projected, model, settings, summaryStream, signal, prepared.tools);
-        const committed = await request('compact', result);
+        const retention = forceCompaction ? {...settings, keepRecentTokens: Math.min(settings.keepRecentTokens,
+          Math.max(1, Math.floor(contextBudget.estimated_tokens / 2)))} : settings;
+        const result = await compactContext(projected, model, retention, summaryStream, signal, prepared.tools);
+        const committed = await request('compact', {...result,
+          reason: forceCompaction ? 'overflow' : contextBudget.serialized_bytes > settings.maxRequestBytes ? 'bytes' : 'threshold',
+          tokens_before: contextBudget.budget_tokens});
+        forceCompaction = false;
         native.imageResources.register(committed.imageResources);
         prepared = await prepare(committed.messages);
       }
@@ -263,6 +271,13 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
     if (event.type === 'message_end' && event.message.cotaOutputError) return;
     if (event.type === 'message_end' && event.message.role === 'assistant'
         && ['error', 'aborted'].includes(event.message.stopReason)) {
+      // Failed requests are diagnostic evidence, never bot/tool facts. Pi ends
+      // this invocation; one continuation may compact before requesting again.
+      if (event.message.cotaContextOverflow && !overflowRecovered && !wrappingUp
+          && turns < options.maxIterations - 1 && !signal?.aborted) {
+        overflowPending = true;
+        return;
+      }
       fatal ??= Object.assign(new Error(event.message.errorMessage || 'Pi model request interrupted'),
         options.provider && event.message.cotaModelError && !signal?.aborted
           ? {code: 'model_error', error_type: event.message.cotaErrorType} : {});
@@ -299,6 +314,12 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
   try {
     if (signal?.aborted) throw new Error('Aborted before start');
     await agent.continue();
+    if (overflowPending) {
+      overflowRecovered = true;
+      forceCompaction = true;
+      agent.state.messages = agent.state.messages.filter(message => !message.cotaContextOverflow);
+      await agent.continue();
+    }
     if (fatal) throw fatal;
     if (agent.state.errorMessage) throw new Error(agent.state.errorMessage);
     return {messages: agent.state.messages, status: limited ? 'limited' : outputRejected ? 'failed' : 'completed', hasFinalReply,

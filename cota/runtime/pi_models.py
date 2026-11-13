@@ -52,6 +52,9 @@ class PiModelObserver:
                     'purpose': purpose, 'model': payload['model']}
         if purpose == 'dialogue':
             metadata['policy'] = deepcopy(self.recorder.policy)
+            projection = payload.get('contextBudget', {}).get('image_projection')
+            if projection:
+                metadata['image_projection'] = projection
         await self.checkpoint()
         diagnostic = {**metadata, 'run_id': self.recorder.dst.execution.get('run_id'),
                       'started_at': time.time(), 'status': 'running'}

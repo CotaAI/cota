@@ -18,6 +18,101 @@ def message(text='hello'):
 
 
 @pytest.mark.asyncio
+async def test_image_projection_usage_source_survives_replay_without_debug():
+    from cota.runtime.pi_models import PiModelObserver
+    dst, store = DST('projection', None), MemoryStore()
+    dst.append_event(Event('run_started', {}, run_id='r'))
+    trace = PiTraceRecorder(dst, store)
+    observer = PiModelObserver(trace, AsyncMock())
+    key = 'a' * 64
+    call = await observer.begin({'purpose': 'dialogue', 'model': 'test',
+                                 'contextBudget': {'image_projection': key}})
+    await observer.complete({'request_id': call['request_id'], 'message': message(), 'duration_ms': 1})
+    event = trace.observe_assistant(message())
+    assert event.payload['llm']['image_projection'] == key
+    restored = DST.from_events('projection', dst.events)
+    assert restored.context_messages[-1]['cotaImageProjection'] == key
+    assert await store.model_debug('projection', call['request_id']) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('fail_commit', [False, True])
+async def test_native_overflow_continues_only_after_durable_compaction(mock_agent, tmp_path, fail_commit):
+    import json
+    from aiohttp import web
+    from cota.events import UserUtterEvent, BotUtterEvent
+    from cota.executor.tools import FunctionTool
+    from cota.llm import LLM
+    from cota.runtime.pi_runtime import PiAgentRuntime
+    bodies, effects = [], []
+    dialogue = 0
+
+    async def serve(request):
+        nonlocal dialogue
+        body = await request.json()
+        bodies.append(body)
+        summary = 'context summarization assistant' in body['messages'][0]['content']
+        if not summary:
+            dialogue += 1
+        if not summary and dialogue == 2:
+            return web.json_response({'error': {'message': 'maximum context length exceeded'}}, status=400)
+        delta = {'role': 'assistant', 'content': 'Preserve the task and the committed effect.' if summary else 'done'}
+        if not summary and dialogue == 1:
+            delta = {'role': 'assistant', 'tool_calls': [{'index': 0, 'id': 'effect-once', 'type': 'function',
+                'function': {'name': 'effect', 'arguments': '{}'}}]}
+        frames = [{'choices': [{'index': 0, 'delta': delta, 'finish_reason': None}]},
+                  {'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'tool_calls' if 'tool_calls' in delta else 'stop'}]}]
+        return web.Response(text=''.join('data: ' + json.dumps(v) + '\n\n' for v in frames) + 'data: [DONE]\n\n',
+                            content_type='text/event-stream')
+
+    app = web.Application()
+    app.router.add_post('/v1/chat/completions', serve)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '127.0.0.1', 0)
+    await site.start()
+    llm = LLM({'type': 'openai', 'key': 'local-only', 'model': 'test', 'context_window': 1000000,
+               'apibase': f'http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/v1'})
+    mock_agent.llm_instance = lambda name=None: llm
+    mock_agent.get_tool_registry().register(FunctionTool('effect', 'Save a result',
+        {'type': 'object', 'properties': {}}, lambda: effects.append('saved') or {'saved': True}))
+    mock_agent.dialogue['compaction'] = {'keep_recent_tokens': 10}
+    dst, store = DST('overflow', mock_agent), MemoryStore()
+    store.enable_debug_log(tmp_path / 'debug.log')
+    dst.append_event(UserUtterEvent('older facts ' * 2000))
+    dst.append_event(BotUtterEvent('Earlier work saved.'))
+    dst.append_event(UserUtterEvent('continue'))
+
+    async def save(tracker):
+        if fail_commit and any(e.type == 'context_compaction' for e in tracker.events):
+            raise OSError('compaction storage failed')
+        await store.save(tracker)
+
+    try:
+        runtime = PiAgentRuntime(mock_agent, dst, 'overflow', max_iterations=5, checkpoint=save, store=store)
+        if fail_commit:
+            with pytest.raises(OSError, match='compaction storage failed'):
+                await runtime.run()
+            assert dialogue == 2
+            assert not any(e['type'] == 'context_compaction' for e in await store.events('overflow'))
+        else:
+            await runtime.run()
+            assert dst.execution['status'] == 'completed' and dialogue == 3
+            event = next(e for e in dst.events if e.type == 'context_compaction')
+            assert event.payload['reason'] == 'overflow' and event.payload['tokens_before'] > 0
+            restored = await store.load('overflow', mock_agent)
+            assert DST.from_events('overflow', dst.events, mock_agent).state_dict() == restored.state_dict() == dst.state_dict()
+            assert 'maximum context' not in str(restored.context_messages)
+            assert len([e for e in dst.events if e.type == 'tool_started' and e.tool == 'effect']) == 1
+        assert effects == ['saved']
+        records = [await store.model_debug('overflow', row['request_id']) for row in await store.model_debug_headers('overflow')]
+        assert any(r.get('error_type') == 'ContextOverflowError' for r in records)
+    finally:
+        await llm.close()
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('debug', [False, True])
 async def test_native_response_is_staged_and_debug_request_is_optional(tmp_path, debug):
     from cota.runtime.pi_models import PiModelObserver

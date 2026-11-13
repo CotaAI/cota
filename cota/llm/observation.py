@@ -45,6 +45,8 @@ async def observe_model_call(callback, request, *, llm=None):
     metadata = {'request_id': uuid4().hex, 'request_sequence': ordinal, 'purpose': _purpose.get(), 'model': llm}
     if metadata['purpose'] == 'dialogue':
         metadata['policy'] = deepcopy(recorder.policy)
+        if recorder.image_projection:
+            metadata['image_projection'] = recorder.image_projection
     # Core state must be committed before invoking a provider; full request bodies
     # are diagnostics and are deliberately not part of this checkpoint.
     await checkpoint()
@@ -62,6 +64,8 @@ async def observe_model_call(callback, request, *, llm=None):
             response = await callback(**request)
             duration_ms = (time.perf_counter() - started) * 1000
             message = assistant_message(response, int(time.time() * 1000)) if metadata['purpose'] == 'dialogue' else None
+            if message is not None and metadata.get('image_projection'):
+                message['cotaImageProjection'] = metadata['image_projection']
         except BaseException as error:
             transport = diagnostic.get('transport')
             if transport and transport.get('attempts'):

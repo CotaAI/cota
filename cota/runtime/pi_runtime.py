@@ -434,6 +434,7 @@ class PiAgentRuntime:
                 raise ValueError('Pi compaction must replace an exact current context prefix')
             self._trace.record('context_compaction', {
                 'summary': payload['summary'], 'replaced_message_ids': ids,
+                **{k: payload[k] for k in ('reason', 'tokens_before') if k in payload},
             })
             await self._checkpoint()
             return {'messages': self._working_context(), 'imageResources': self._images.catalog()}
@@ -456,6 +457,7 @@ class PiAgentRuntime:
                 'status': 'committed'}, ensure_ascii=False)}], 'details': {}, 'isError': False}
         if method == 'model':
             try:
+                self._trace.image_projection = payload.get('contextBudget', {}).get('image_projection')
                 if self._trace.debug_enabled:
                     self._trace.preparation['context_budget'] = payload.get('contextBudget', {})
                 response = await self._call_llm(to_openai(payload['messages'], payload['systemPrompt']), payload['tools'],

@@ -43,14 +43,16 @@ Cota 的模型上下文由事件增量投影而来，并包含在快照中。恢
 
 Pi 只持有本轮暂态上下文。普通模型请求的 `prepare` 不从 Node 传回整份历史，Cota 从自己的已提交投影计算 Policy，Node 将返回的指导应用到本轮工作上下文。固定 system、Skill 目录、Pi 工具使用指南和执行环境说明保持稳定；当前 Policy、记忆、知识与群聊触发信息作为一条请求专用 runtime_context 放在末尾。它通过 Pi 的 transformContext 与官方 convertToLlm 转换成 user 文本块，不进入 Pi 原始历史、DST 或用户发言事件，也不参与后续 Policy 检索。具体接口及顺序见 [Pi runtime](pi-runtime.md#稳定-system-与本次请求指导)。Policy 的“已阅读 Skill”依据仍留在模型上下文中的成功读取结果计算；最近阅读标签 `active_skill` 不能替代这一证据。
 
-每次模型请求前，Node 适配层复用 Pi 的 `estimateTokens`、`shouldCompact`、`findCutPoint` 和 `compact`，结合实际供应商 usage 检查 token 预算。图片采用 Pi 的独立估算，不按 Base64 字符数计算；工具定义和临时指导也计入预算。usage 推导预算会保守预留当前 system/工具大小，可能提前压缩，不代表精确计费。超过模型容量减预留 token 的阈值时，Pi 选择安全切分点并生成摘要，支持在同一个用户任务中切分，保留最近的工具调用与结果配对。普通 openai 端点的摘要请求也通过 Node 中的 Pi 官方 provider 发出，不向用户流式展示摘要；输出最多2000 token且不超过预留预算；摘要输入本身过大时在调用供应商前拒绝。
+每次模型请求前，Node 适配层复用 Pi 的 `estimateTokens`、`shouldCompact`、`findCutPoint` 和 `compact`，结合实际供应商 usage 检查 token 预算。图片采用 Pi 的独立估算，不按 Base64 字符数计算；工具定义和临时指导也计入预算。usage 推导预算会保守预留当前 system/工具大小，可能提前压缩，不代表精确计费。超过工作触发阈值（默认 64000，并受模型容量减预留 token 约束）时，Pi 选择安全切分点并生成摘要，支持在同一个用户任务中切分，保留最近的工具调用与结果配对。普通 openai 端点的摘要请求也通过 Node 中的 Pi 官方 provider 发出，不向用户流式展示摘要；输出最多2000 token且不超过预留预算；摘要输入本身过大时在调用供应商前拒绝。
 
 Cota 在启动、prepare 和压缩恢复边界用不可变引用替换历史图片；Node 在预算检查前按需加载本次图片证据，并通过 Pi 的公开 `transformContext` 钩子交给模型：最新用户输入图片和当前完整工具批次保留像素，相同字节只发送一次；较早图片替换为包含消息或附件 ID、已知资源路径、已知内容 SHA-256 和重新读取说明的引用。工具结果的简短图片引用置于原始长文本之前，避免 Pi 摘要截断时丢失来源。同一路径更新后按实际图片字节区分版本；新的显式读取仍可带回像素。已有文字观察照常保留，图片读取或引用均不表示审校通过。该选择只影响工作消息和模型请求，DST、原始事件和图片保持完整；恢复后重新计算选择。需要复查时，Pi 官方 read 工厂通过 Operations 接口加载本会话的精确旧版本，即使工作文件已被覆盖；虚拟资源路径并非磁盘文件。附件也在预算前按需加载，避免发送边界重新补回旧像素。
 
-Cota 同时检查序列化体积（默认 32 MiB）、图片数量（默认8张）和图片解码后总字节（默认16 MiB），分别使用 `dialogue.compaction.max_request_bytes`、`max_images`、`max_image_bytes` 配置。图片选择后的当前输入或工具批次仍超过图片预算时明确报错。token 或整体字节超限时继续由 Pi 选择安全切点和生成摘要，保留工具调用与结果配对；摘要仅根据已有文本证据，保留资源位置供需要时重新读取。旧像素省略后的请求不能沿用包含这些像素的旧 usage 总数作为预算，会重新采用当前投影估算。
+Cota 同时检查序列化体积（默认 32 MiB）、图片数量（默认8张）和图片解码后总字节（默认16 MiB），分别使用 `dialogue.compaction.max_request_bytes`、`max_images`、`max_image_bytes` 配置。图片选择后的当前输入或工具批次仍超过图片预算时明确报错。token 或整体字节超限时继续由 Pi 选择安全切点和生成摘要，保留工具调用与结果配对；摘要仅根据已有文本证据，保留资源位置供需要时重新读取。图片投影改变后不能沿用包含旧像素的 usage；投影稳定并取得新响应后恢复使用真实 usage。助手来源保存一个小型 image_projection 指纹（模型标识与图片可见版本），从事件恢复时同样可校验，不重复保存历史或图片。
 
 Cota 验证替换范围是当前上下文的准确前缀，保存 `context_compaction` 并提交 Store，再从 DST 投影重新准备 Policy 和上下文。原始事件不删除；无须 AgentSession 或 Pi 会话文件。空摘要、截断、取消、提交失败时不继续模型/工具执行；无法缩减的单条输入或最近工具批次明确报错。旧摘要前的 usage 不用于新的上下文预算。模型容量优先来自 `endpoints.yml` 的 `context_window`，其次是 Pi 内置目录；未知型号使用标记为 fallback 的 65,536 token 运行预算，部署者可按供应商确认值覆盖。
 
 实现入口：`cota/processor.py`、`cota/runtime/pi_runtime.py`、`cota/runtime/pi/engine.mjs`、`cota/runtime/pi_trace.py`。
 
 相关文档：[DST 与 Store](dst.md) · [Pi runtime](pi-runtime.md) · [Skill 与 Policy](skill-policy.md) · [可靠投递](../deployment/delivery.md)
+
+原生主模型请求的上下文溢出由 Pi `isContextOverflow` 识别。第一次溢出仅作为失败模型诊断保存，不变成 Bot 回复或工具事实。尚有决策预算时，Cota 的 Node 适配层让当前 Pi 调用结束，省略未提交的失败响应，再调用一次 Pi continuation；其 prepare 阶段强制使用同一套 Pi 压缩组件。Store 确认压缩提交后才允许下一次模型请求。重复溢出、取消、预算耗尽或提交失败时结束，不自动重放工具。压缩原因及压缩前预算记在现有 context_compaction 中；不增加 Event 类型。

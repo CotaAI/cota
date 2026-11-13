@@ -314,3 +314,7 @@ async def test_snapshot_cannot_hide_missing_events(event_store):
             conn.execute(table.delete().where(table.c.session_id == dst.session_id, table.c.sequence == 1))
     with pytest.raises(ValueError, match='event stream'):
         await event_store.load(dst.session_id)
+@pytest.mark.parametrize('extra', [{'reason': 'network'}, {'tokens_before': -1}, {'tokens_before': True}])
+def test_compaction_diagnostics_are_validated(extra):
+    with pytest.raises(ValueError, match='compaction|tokens_before'):
+        Event('context_compaction', {'summary': 'older facts', 'replaced_message_ids': ['u'], **extra}).validate()

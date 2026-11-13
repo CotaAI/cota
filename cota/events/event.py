@@ -191,6 +191,11 @@ class Event:
             ids = self.payload.get('replaced_message_ids', [])
             if not ids or any(not isinstance(i, str) or not i for i in ids) or len(set(ids)) != len(ids):
                 raise ValueError('Compaction requires unique replaced message IDs')
+            if 'reason' in self.payload and self.payload['reason'] not in ('threshold', 'bytes', 'overflow'):
+                raise ValueError('Invalid compaction reason')
+            if 'tokens_before' in self.payload and (type(self.payload['tokens_before']) is not int
+                    or self.payload['tokens_before'] < 0):
+                raise ValueError('compaction.tokens_before must be a nonnegative integer')
         for key, expected in required.items():
             if not isinstance(self.payload.get(key), expected):
                 raise ValueError(f'{self.type} requires {key} of type {expected.__name__}')

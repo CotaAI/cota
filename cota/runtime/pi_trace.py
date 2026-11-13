@@ -23,6 +23,7 @@ class PiTraceRecorder:
         self.store = store
         self.preparation = {}
         self.policy = {}
+        self.image_projection = None
         self._request_sequence = 0
         self._request_run_id = None
         self._pending_model = None
@@ -58,7 +59,7 @@ class PiTraceRecorder:
         pending = self._pending_model
         metadata = pending['metadata']
         origin = {key: deepcopy(metadata[key]) for key in
-                ('request_id', 'request_sequence', 'duration_ms', 'policy') if key in metadata} | {
+                ('request_id', 'request_sequence', 'duration_ms', 'policy', 'image_projection') if key in metadata} | {
                     'model': metadata.get('model'), 'stop_reason': pending['message']['stopReason']}
         usage = pending['message'].get('usage', {})
         if usage.get('totalTokens', 0) > 0:

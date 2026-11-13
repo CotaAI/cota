@@ -133,6 +133,20 @@ function contentHash(block) {
   return hash;
 }
 
+// Compare only image visibility/version, not the full transcript or Base64
+// again. Message identities are immutable Cota evidence identities.
+export function imageProjectionKey(messages, modelId = '') {
+  const signature = createHash('sha256');
+  signature.update(modelId);
+  for (const [index, message] of messages.entries()) {
+    const images = Array.isArray(message.content) ? message.content.filter(b => b.type === 'image') : [];
+    if (images.length || message.cotaImagePixelsOmitted)
+      signature.update(JSON.stringify([message.cotaEventId ?? message.toolCallId ?? index,
+        images.length ? images.map(contentHash) : 'omitted']));
+  }
+  return signature.digest('hex');
+}
+
 export function projectImageContext(messages, resources, {textOnly = false} = {}) {
   // A batch is current until the next assistant response or user input. Keep
   // all images returned by its tool calls, including side-by-side comparisons.

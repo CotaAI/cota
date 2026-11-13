@@ -95,3 +95,31 @@ test('Pi compacts durable facts without summarizing or persisting ephemeral guid
   assert.equal(outcome.status, 'completed');
   assert(!JSON.stringify(outcome.messages).includes('EPHEMERAL_RULE'));
 });
+
+test('a large model compacts at its working threshold before sending the next request', async () => {
+  const old = {role: 'user', content: 'older '.repeat(3000), cotaEventId: 'old', timestamp: 1};
+  const latest = {role: 'user', content: 'continue', cotaEventId: 'latest', timestamp: 2};
+  let history = [old, {role: 'assistant', content: [{type:'text',text:'saved'}], cotaEventId:'old-a',timestamp:1}, latest], compactions = 0;
+  await runAgent({messages: history, maxIterations: 1, model: {contextWindow: 1000000, maxTokens: 500},
+    compaction: {trigger_tokens: 3000, keep_recent_tokens: 500}}, async (method, p) => {
+    if (method === 'skills_loaded' || method === 'event') return {};
+    if (method === 'prepare') return {messages: history, systemPrompt: 'fixed', tools: []};
+    if (method === 'summarize') return {content: 'older facts'};
+    if (method === 'compact') {
+      compactions++;
+      assert.equal(p.reason, 'threshold');
+      history = [{role: 'user', content: p.summary, cotaEventId: 'summary', cotaCompaction: true, timestamp: 3}, latest];
+      return {messages: history};
+    }
+    if (method === 'model') {
+      assert.equal(compactions, 1);
+      assert.equal(p.contextBudget.context_window, 1000000);
+      assert.equal(p.contextBudget.trigger_tokens, 3000);
+      assert(p.contextBudget.budget_tokens < 3000);
+      assert(!JSON.stringify(p.messages).includes(old.content));
+      return {content: 'done'};
+    }
+    throw new Error(`Unexpected ${method}`);
+  });
+  assert.equal(compactions, 1);
+});

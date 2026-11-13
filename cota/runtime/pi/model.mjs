@@ -1,6 +1,6 @@
 /** Official Pi provider stream; Cota retains observations and durable acknowledgments. */
 import {stream as streamCompletions} from '@earendil-works/pi-ai/api/openai-completions';
-import {createAssistantMessageEventStream} from '@earendil-works/pi-ai';
+import {createAssistantMessageEventStream, isContextOverflow} from '@earendil-works/pi-ai';
 import {PublicTextGuard} from './output.mjs';
 
 export function nativeModel(model, provider) {
@@ -46,7 +46,7 @@ export async function nativeStream({model, provider, context, purpose = 'dialogu
   const publicText = new PublicTextGuard();
   const notification = phase => visible ? notify('stream', {request_id, phase}) : Promise.resolve();
   void (async () => {
-    let partial;
+    let partial, overflow = false;
     try {
       await bounded(notification('start'));
       controller.signal.throwIfAborted();
@@ -93,7 +93,10 @@ export async function nativeStream({model, provider, context, purpose = 'dialogu
           const text = publicText.push(event.delta);
           if (visible && text) await bounded(notify('stream', {request_id, phase: 'delta', text}));
         }
-        if (event.type === 'error') throw new Error(event.error.errorMessage || 'Model request failed');
+        if (event.type === 'error') {
+          overflow = isContextOverflow(event.error, model.contextWindow);
+          throw new Error(event.error.errorMessage || 'Model request failed');
+        }
         if (event.type === 'done') {
           controller.signal.throwIfAborted();
           const message = event.message;
@@ -108,7 +111,8 @@ export async function nativeStream({model, provider, context, purpose = 'dialogu
         } else output.push(event);
       }
     } catch (error) {
-      const error_type = timedOut ? 'TimeoutError' : controller.signal.aborted ? 'AbortError' : error?.name || 'Error';
+      const error_type = timedOut ? 'TimeoutError' : controller.signal.aborted ? 'AbortError'
+        : overflow ? 'ContextOverflowError' : error?.name || 'Error';
       const message = timedOut ? 'Model request timed out' : safeError(error, provider);
       const attempt = transport.attempts.at(-1);
       if (attempt && !['http_error', 'completed'].includes(attempt.status))
@@ -119,6 +123,7 @@ export async function nativeStream({model, provider, context, purpose = 'dialogu
       try {await bounded(notification('error'));} catch { /* The bridge may already be disconnected. */ }
       output.push({type: 'error', reason: controller.signal.aborted ? 'aborted' : 'error', error: {
         ...partial, role: 'assistant', content: [], cotaModelError: !signal?.aborted, cotaErrorType: error_type,
+        ...(overflow && !controller.signal.aborted ? {cotaContextOverflow: true} : {}),
         api: model.api, provider: model.provider, model: model.id,
         stopReason: controller.signal.aborted ? 'aborted' : 'error',
         errorMessage: timedOut ? 'Model request timed out' : `Native model request failed (request=${request_id}, type=${error_type})`, timestamp: Date.now(),

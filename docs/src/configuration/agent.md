@@ -40,12 +40,24 @@ policy:
 | `dialogue.max_tokens` | 每次主模型请求上限，默认 500，正整数 |
 | `dialogue.max_iterations` | Processor 创建 runtime 时默认 30，正整数 |
 | `dialogue.run_timeout_seconds` | 整轮 Pi bridge 超时，默认 300，正有限数值 |
+| `dialogue.compaction.trigger_tokens` | 工作上下文触发阈值，默认 64000；实际取它与 `context_window-reserve_tokens` 的较小值。整数且至少为 2，不修改供应商模型真实容量 |
 | `dialogue.compaction.reserve_tokens` | 上下文预留 token；默认取输出上限与 `min(16384, context_window/4)` 中较大者，必须覆盖 `max_tokens` 且小于模型容量 |
-| `dialogue.compaction.keep_recent_tokens` | Pi 切分时尽量保留的最近 token；默认 `min(20000, (context_window-reserve_tokens)/2)`，须小于剩余预算 |
+| `dialogue.compaction.keep_recent_tokens` | Pi 切分时尽量保留的最近 token；默认 `min(12000, 实际触发阈值/2)` 向下取整，须小于实际触发阈值；安全切分需要时可减少保留量 |
 | `dialogue.compaction.max_request_bytes` | 序列化工作上下文（含工具定义、图片 Base64 与待注入图片的估计体积）的字节预算，默认 32 MiB（33554432），正整数且不超过 64 MiB；超出时也复用 Pi 压缩 |
 | `dialogue.compaction.max_images` | 有效模型上下文中的图片数量预算，默认 8，正整数 |
 | `dialogue.compaction.max_image_bytes` | 有效上下文中的图片解码后总字节预算，默认 16 MiB（16777216），正整数；与 Base64 后的整体请求预算分别计算 |
 | `dialogue.pi_node` | 可选 Node 路径或可执行文件名称 |
+
+工作预算包含 system、工具声明、本次临时指导及工作历史。模型支持 1M token 不代表应每次携带接近 1M 的历史；例如可配置：
+
+```yaml
+dialogue:
+  compaction:
+    trigger_tokens: 64000
+    keep_recent_tokens: 12000
+```
+
+超过 token 或序列化字节预算时，运行适配层调用 Pi 的公共判断、切分和摘要组件。单条当前输入、工具批次或固定指导过大时会明确报错。原生主模型明确报告上下文溢出时，在剩余模型决策次数允许且非收尾阶段下，最多压缩并续接一次；不会重放已执行工具。Python custom/RAG 适配器仍沿用自身错误路径。
 
 `mode` 和 `response` 的行为需结合 [群聊](../deployment/group.md) 与 Application 使用。`use_proxy_user`、`max_proxy_step`、`proxy_prompt` 和顶层 `user_proxy.description` 仍被配置校验接受，但当前带输入标识的 Processor 路径明确拒绝启用 proxy 模拟，不作为可部署对话方案。
 

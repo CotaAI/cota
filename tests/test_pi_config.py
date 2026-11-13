@@ -73,3 +73,15 @@ def test_image_budget_settings_are_positive_integers(field, value):
 def test_image_budget_settings_are_part_of_the_bot_contract():
     from cota.config import validate_bot_config
     validate_bot_config({'dialogue': {'compaction': {'max_images': 8, 'max_image_bytes': 16777216}}})
+
+
+def test_working_context_budget_is_configurable():
+    from cota.config import validate_bot_config
+    validate_bot_config({'dialogue': {'compaction': {'trigger_tokens': 64000, 'keep_recent_tokens': 12000}}})
+
+
+@pytest.mark.parametrize('value', [0, 1, -1, True, '64000', 1.5])
+def test_invalid_working_context_budget_fails_before_resources(value):
+    from cota.config import validate_bot_config
+    with pytest.raises(ValueError, match='trigger_tokens'):
+        validate_bot_config({'dialogue': {'compaction': {'trigger_tokens': value}}})

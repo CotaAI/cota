@@ -1,6 +1,7 @@
 /** Adapt Cota's event identities to Pi's public compaction APIs; no session files. */
 import {getBuiltinProviders, getBuiltinModels} from '@earendil-works/pi-ai/providers/all';
 import {estimateTokens, calculateContextTokens, findCutPoint, compact} from '@earendil-works/pi-coding-agent';
+import {imageProjectionKey} from './image-context.mjs';
 
 export function resolveContextModel(options = {}) {
   const id = options.id || 'cota-configured-model';
@@ -17,18 +18,21 @@ export function resolveContextModel(options = {}) {
 
 export function compactionSettings(model, options = {}) {
   const reserveTokens = options.reserve_tokens ?? Math.max(model.maxTokens, Math.min(16384, Math.floor(model.contextWindow / 4)));
-  const keepRecentTokens = options.keep_recent_tokens ?? Math.min(20000, Math.floor((model.contextWindow - reserveTokens) / 2));
+  const triggerTokens = Math.min(options.trigger_tokens ?? 64000, model.contextWindow - reserveTokens);
+  const keepRecentTokens = options.keep_recent_tokens ?? Math.min(12000, Math.floor(triggerTokens / 2));
   const maxRequestBytes = options.max_request_bytes ?? 32 * 1024 * 1024;
   const maxImages = options.max_images ?? 8;
   const maxImageBytes = options.max_image_bytes ?? 16 * 1024 * 1024;
   if (!Number.isInteger(reserveTokens) || reserveTokens < model.maxTokens || reserveTokens >= model.contextWindow
-      || !Number.isInteger(keepRecentTokens) || keepRecentTokens < 1 || keepRecentTokens >= model.contextWindow - reserveTokens)
+      || !Number.isInteger(triggerTokens) || triggerTokens < 2
+      || options.trigger_tokens !== undefined && (!Number.isInteger(options.trigger_tokens) || options.trigger_tokens < 2)
+      || !Number.isInteger(keepRecentTokens) || keepRecentTokens < 1 || keepRecentTokens >= triggerTokens)
     throw new Error('Invalid compaction budget: reserve_tokens must cover output; keep_recent_tokens must fit remaining context');
   if (!Number.isInteger(maxRequestBytes) || maxRequestBytes < 1 || maxRequestBytes > 64 * 1024 * 1024)
     throw new Error('compaction.max_request_bytes must be a positive integer no larger than 64 MiB');
   if (!Number.isInteger(maxImages) || maxImages < 1 || !Number.isInteger(maxImageBytes) || maxImageBytes < 1)
     throw new Error('compaction.max_images and max_image_bytes must be positive integers');
-  return {enabled: true, reserveTokens, keepRecentTokens, maxRequestBytes, maxImages, maxImageBytes};
+  return {enabled: true, reserveTokens, triggerTokens, keepRecentTokens, maxRequestBytes, maxImages, maxImageBytes};
 }
 
 export function exceedsImageBudget(budget, settings) {
@@ -54,6 +58,7 @@ export function estimateRequest(messages, tools = [], model = {}) {
   // Retained responses preceding a summary describe the old context and are stale.
   const boundary = messages.findLastIndex(m => m.cotaCompaction);
   const last = messages.findLastIndex((m, i) => i > boundary && m.role === 'assistant' && m.usage?.totalTokens > 0
+    && !['error', 'aborted'].includes(m.stopReason)
     && (boundary < 0 || m.timestamp > messages[boundary].timestamp));
   // Previous usage includes old instructions, whose footprint is not a durable
   // fact. Reserve current system/tools conservatively so changed Policy cannot
@@ -61,13 +66,16 @@ export function estimateRequest(messages, tools = [], model = {}) {
   const instructionReserve = sections.system + sections.tool_definitions;
   // Old provider totals measured a different pixel load. They cannot represent
   // a smaller request projection, just as pre-compaction usage cannot.
-  const usage = last < 0 || messages.slice(boundary + 1, last + 1).some(m => m.cotaImagePixelsOmitted)
-    ? 0 : calculateContextTokens(messages[last].usage) + instructionReserve
+  const compatible = last >= 0 && (messages[last].cotaImageProjection
+    ? messages[last].cotaImageProjection === imageProjectionKey(messages.slice(0, last), model.id)
+    : !messages.slice(boundary + 1, last + 1).some(m => m.cotaImagePixelsOmitted));
+  const usage = !compatible ? 0 : calculateContextTokens(messages[last].usage) + instructionReserve
     + messages.slice(last + 1).reduce((n, m) => n + estimateTokens(m), 0);
   return {estimated_tokens: estimated, budget_tokens: Math.max(estimated, usage),
     serialized_bytes: Buffer.byteLength(JSON.stringify({messages, tools}), 'utf8'),
     sections, images, image_bytes: imageBytes, usage_based_tokens: usage || null,
-    instruction_reserve_tokens: last < 0 ? 0 : instructionReserve};
+    instruction_reserve_tokens: last < 0 ? 0 : instructionReserve,
+    image_projection: imageProjectionKey(messages, model.id)};
 }
 
 export async function compactContext(messages, model, settings, streamFn, signal, tools = []) {
@@ -81,14 +89,16 @@ export async function compactContext(messages, model, settings, streamFn, signal
   let cut = findCutPoint(entries, 0, entries.length, keep);
   // Pi still chooses legal boundaries. Its token heuristic intentionally ignores
   // Base64 length, so lower the retention target separately for wire-size pressure.
-  if (settings.maxRequestBytes || settings.maxImages || settings.maxImageBytes) {
+  if (settings.maxRequestBytes || settings.maxImages || settings.maxImageBytes || cut.firstKeptEntryIndex <= 0) {
     const systems = messages.filter(m => m.role === 'system');
     const byteTarget = settings.maxRequestBytes - Math.min(65536, Math.floor(settings.maxRequestBytes / 4));
     while (true) {
       const budget = estimateRequest([...systems, ...history.slice(cut.firstKeptEntryIndex)], tools, model);
       const bytesExceeded = settings.maxRequestBytes && budget.serialized_bytes > byteTarget;
-      if (!bytesExceeded && !exceedsImageBudget(budget, settings)) break;
+      if (cut.firstKeptEntryIndex > 0 && !bytesExceeded && !exceedsImageBudget(budget, settings)) break;
       if (keep <= 1) {
+        if (cut.firstKeptEntryIndex <= 0)
+          throw new Error('Context cannot be compacted at a safe message boundary; narrow the task or increase context_window');
         if (exceedsImageBudget(budget, settings))
           throw new Error('Latest message/tool batch exceeds the image budget; use fewer/smaller images or increase compaction.max_images/max_image_bytes');
         throw new Error('Latest message/tool batch exceeds the byte budget; read a smaller image or increase compaction.max_request_bytes');

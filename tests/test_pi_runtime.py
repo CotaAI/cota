@@ -27,6 +27,45 @@ def make_runtime(agent, store, dst):
 
 
 @pytest.mark.asyncio
+async def test_python_adapter_preserves_image_projection_usage_source(mock_agent):
+    from cota.events import BotUtterEvent
+    dst, store = DST('projection', mock_agent), MemoryStore()
+    dst.append_event(UserUtterEvent('question'))
+    await make_runtime(mock_agent, store, dst).run()
+    origin = next(e.payload['llm'] for e in dst.events if isinstance(e, BotUtterEvent) and e.payload.get('llm'))
+    assert len(origin['image_projection']) == 64
+    restored = await store.load('projection', mock_agent)
+    assert restored.context_messages[-1]['cotaImageProjection'] == origin['image_projection']
+
+
+@pytest.mark.asyncio
+async def test_usage_calibration_recovers_after_cross_turn_image_projection(mock_agent, tmp_path):
+    from cota.executor.tools import FunctionTool
+    store = MemoryStore()
+    store.enable_debug_log(tmp_path / 'debug.log')
+    mock_agent.get_tool_registry().register(FunctionTool('picture', 'Return image',
+        {'type':'object','properties':{}}, lambda: {'content':[{'type':'image','mimeType':'image/png','data':'eA=='}]}))
+    mock_agent.get_tool_registry().register(FunctionTool('note', 'Save note',
+        {'type':'object','properties':{}}, lambda: {'saved':True}))
+    usage = {'input':25000,'output':100,'cacheRead':0,'cacheWrite':0,'totalTokens':25100}
+    mock_agent._llm_mock.generate_chat.side_effect = [
+        {'tool_calls':[call('picture', {}, 'image')]}, {'content':'observed', 'usage':usage},
+        {'tool_calls':[call('note', {}, 'note')], 'usage':usage}, {'content':'done', 'usage':usage}]
+    dst = DST('images', mock_agent)
+    dst.append_event(UserUtterEvent('inspect'))
+    await make_runtime(mock_agent, store, dst).run()
+    restored = await store.load('images', mock_agent)
+    restored.append_event(UserUtterEvent('save a note'))
+    await make_runtime(mock_agent, store, restored).run()
+    rows = await store.model_debug_headers('images')
+    records = sorted([await store.model_debug('images', row['request_id']) for row in rows], key=lambda r:r['started_at'])
+    assert len(records) == 4
+    assert records[2]['preparation']['context_budget']['usage_based_tokens'] is None
+    assert records[3]['preparation']['context_budget']['usage_based_tokens'] >= 25100
+    assert DST.from_events('images', restored.events, mock_agent).state_dict() == restored.state_dict()
+
+
+@pytest.mark.asyncio
 async def test_full_tool_trace_and_context_survive_new_runtime(mock_agent, tmp_path):
     store = SQLStore(db=str(tmp_path / 'pi.db'))
     dst = DST('s', mock_agent)
