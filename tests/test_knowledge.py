@@ -89,18 +89,20 @@ class TestIndex:
     def test_build_and_search(self, kb_dir):
         index = KnowledgeIndex.build(kb_dir)
         assert index is not None
-        result = index.search('退款')
+        result, count = index.search('退款')
         assert '退款' in result
+        assert count >= 1
 
     def test_search_relevance_order(self, kb_dir):
         index = KnowledgeIndex.build(kb_dir)
-        result = index.search('企业版价格')
+        result, count = index.search('企业版价格')
         assert '企业版' in result
 
     def test_no_match_returns_empty(self, kb_dir):
         index = KnowledgeIndex.build(kb_dir)
-        result = index.search('xyznotexist')
+        result, count = index.search('xyznotexist')
         assert result == ''
+        assert count == 0
 
 
 class TestTool:
@@ -146,7 +148,7 @@ class TestRerank:
         index = KnowledgeIndex.build(kb_dir)
         llm = SimpleNamespace(generate_chat=AsyncMock(side_effect=RuntimeError('fail')))
         result = await index.search_with_rerank('退款', llm)
-        assert '退款' in result
+        assert '退款' in result[0]
 
     @pytest.mark.asyncio
     async def test_rerank_uses_llm_response(self, kb_dir):
@@ -155,7 +157,7 @@ class TestRerank:
         index = KnowledgeIndex.build(kb_dir)
         llm = SimpleNamespace(generate_chat=AsyncMock(return_value={'content': '0'}))
         result = await index.search_with_rerank('退款', llm)
-        assert result  # should return the first candidate
+        assert result[0]  # should return the first candidate
 
     @pytest.mark.asyncio
     async def test_rerank_preserves_heading_chain(self, kb_dir):
@@ -164,13 +166,13 @@ class TestRerank:
         index = KnowledgeIndex.build(kb_dir)
         llm = SimpleNamespace(generate_chat=AsyncMock(return_value={'content': '0'}))
         result = await index.search_with_rerank('退款', llm)
-        assert '[' in result and ']' in result
+        assert '[' in result[0] and ']' in result[0]
 
 
 class TestIndexQuality:
     def test_tags_extracted_from_frontmatter(self, kb_dir):
         index = KnowledgeIndex.build(kb_dir)
-        result = index.search('售后')
+        result, _ = index.search('售后')
         assert '退款' in result
 
     def test_result_size_bounded(self, tmp_path):
@@ -180,6 +182,6 @@ class TestIndexQuality:
         for i in range(10):
             _write(str(d / f'doc{i}.md'), f'# Doc {i}\n\n' + f'搜索关键词 内容块{i} ' * 200)
         index = KnowledgeIndex.build(str(d))
-        result = index.search('搜索关键词')
+        result, _ = index.search('搜索关键词')
         from cota.knowledge.index import _MAX_RESULT_CHARS
         assert len(result) <= _MAX_RESULT_CHARS + 500  # allow margin for last chunk

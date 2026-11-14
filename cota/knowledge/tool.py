@@ -45,22 +45,22 @@ class KnowledgeTool(Tool):
         rerank = self._index.manifest.rerank
         try:
             if rerank == 'false':
-                result = self._index.search(query)
+                result, result_count = self._index.search(query)
             else:
                 llm = self._resolve_llm()
                 if rerank == 'navigate':
-                    result = await self._index.search_with_navigate(query, llm)
+                    result, result_count = await self._index.search_with_navigate(query, llm)
                 else:
-                    result = await self._index.search_with_rerank(query, llm)
+                    result, result_count = await self._index.search_with_rerank(query, llm)
         except Exception as e:
             logger.error(f'Knowledge search failed: {e}')
             return {'content': [{'type': 'text', 'text': f'知识库检索失败：{e}'}],
                     'details': {}, 'isError': True}
 
         if not result:
-            return {'content': [{'type': 'text', 'text': '未找到相关知识。'}], 'details': {}}
+            return {'content': [{'type': 'text', 'text': '未找到相关知识。'}], 'details': {'hits': 0}}
 
-        return {'content': [{'type': 'text', 'text': result}], 'details': {}}
+        return {'content': [{'type': 'text', 'text': result}], 'details': {'hits': result_count}}
 
     def _resolve_llm(self):
         llm_name = self._index.manifest.llm

@@ -86,19 +86,22 @@ class PolicyIndex:
         return cls(manifest, catalog, bm25)
 
     def search(self, query, top_k=None):
+        """Returns (formatted_text, hit_count)."""
         k = top_k or self.manifest.top_k
         results = self._bm25.search(query, top_k=k)
         if not results:
-            return ''
+            return '', 0
         parts = [_GUIDANCE]
         total = len(_GUIDANCE)
+        hit_count = 0
         for r in results:
             policy = self._by_name.get(r['id'])
             if not policy:
                 continue
             rendered = _render(policy)
-            if total + len(rendered) > _MAX_RESULT_CHARS and len(parts) > 1:
+            if total + len(rendered) > _MAX_RESULT_CHARS and hit_count > 0:
                 break
             parts.append(rendered)
             total += len(rendered)
-        return '\n\n'.join(parts)
+            hit_count += 1
+        return '\n\n'.join(parts), hit_count

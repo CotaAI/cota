@@ -99,17 +99,17 @@ class KnowledgeIndex:
         return cls(manifest, chunks, bm25)
 
     def search(self, query, top_k=None):
-        """BM25 search, return formatted chunks."""
+        """BM25 search, return (formatted_text, hit_count)."""
         k = top_k or self.manifest.top_k
         results = self._bm25.search(query, top_k=k)
         return self._format_results(results)
 
     async def search_with_rerank(self, query, llm_instance, top_k=None):
-        """BM25 candidate retrieval + LLM reranking."""
+        """BM25 candidate retrieval + LLM reranking. Returns (text, hit_count)."""
         k = top_k or self.manifest.top_k
         candidates = self._bm25.search(query, top_k=k * _BM25_CANDIDATE_MULTIPLIER)
         if not candidates:
-            return ''
+            return '', 0
         prompt = self._build_rerank_prompt(query, candidates)
         try:
             with model_purpose('knowledge'):
@@ -174,9 +174,12 @@ class KnowledgeIndex:
         return await self.search_with_rerank(query, llm_instance, top_k)
 
     def _format_results(self, results):
-        """Format BM25 results as readable text for the model."""
+        """Format BM25 results as readable text for the model.
+
+        Returns (text, hit_count) tuple.
+        """
         if not results:
-            return ''
+            return '', 0
         parts = []
         total = 0
         for r in results:
@@ -192,7 +195,7 @@ class KnowledgeIndex:
                 break
             parts.append(part)
             total += len(part)
-        return '\n\n---\n\n'.join(parts)
+        return '\n\n---\n\n'.join(parts), len(parts)
 
     def _build_rerank_prompt(self, query, candidates):
         numbered = '\n\n'.join(
@@ -206,11 +209,11 @@ class KnowledgeIndex:
         )
 
     def _parse_rerank_response(self, response, candidates, top_k):
-        """Parse LLM rerank response: extract indices, return formatted results."""
+        """Parse LLM rerank response: extract indices, return (text, hit_count)."""
         import re
         indices = [int(x) for x in re.findall(r'\d+', response) if int(x) < len(candidates)]
         if not indices:
-            return ''
+            return '', 0
         seen = set()
         unique = []
         for idx in indices:

@@ -508,14 +508,11 @@ class PiAgentRuntime:
         if model_result.get('isError'):
             return None
         query = args.get(query_key, '')
-        text = '\n'.join(b.get('text', '') for b in model_result.get('content', []) if b.get('type') == 'text')
-        if not text.strip() or '未找到' in text:
-            return {'mode': 'summary', 'summary': f'[{label}: "{query}" → 无结果]'}
-        if name == 'search_knowledge':
-            n = text.count('\n\n---\n\n') + 1
-        else:
-            n = sum(1 for line in text.splitlines() if line.startswith('Policy: '))
-        return {'mode': 'summary', 'summary': f'[{label}: "{query}" → {n}条结果]'}
+        hits = model_result.get('details', {}).get('hits')
+        if hits is None:
+            return None
+        summary = f'[{label}: "{query}" → {hits}条结果]' if hits else f'[{label}: "{query}" → 无结果]'
+        return {'mode': 'summary', 'summary': summary}
 
     async def run(self):
         with model_trace(self._trace, self._checkpoint):

@@ -159,23 +159,25 @@ class TestToolContextHint:
         from cota.runtime.pi_runtime import PiAgentRuntime
         return PiAgentRuntime._tool_context_hint(name, args, result)
 
-    def test_knowledge_counts_by_separator(self):
-        text = '[Section A]\nContent A\n\n---\n\n[Section B]\nContent B'
-        result = {'content': [{'type': 'text', 'text': text}]}
+    def test_knowledge_reads_hits_from_details(self):
+        result = {'content': [{'type': 'text', 'text': 'anything'}], 'details': {'hits': 3}}
         hint = self._hint('search_knowledge', {'query': 'test'}, result)
-        assert '2条结果' in hint['summary']
+        assert '3条结果' in hint['summary']
 
-    def test_knowledge_empty(self):
-        result = {'content': [{'type': 'text', 'text': '未找到相关知识。'}]}
+    def test_knowledge_zero_hits(self):
+        result = {'content': [{'type': 'text', 'text': '未找到相关知识。'}], 'details': {'hits': 0}}
         hint = self._hint('search_knowledge', {'query': 'test'}, result)
         assert '无结果' in hint['summary']
 
-    def test_policy_counts_lines(self):
-        text = '指导文本\n\nPolicy: 退款\n  示例\n\nPolicy: 换货\n  示例'
-        result = {'content': [{'type': 'text', 'text': text}]}
+    def test_policy_reads_hits_from_details(self):
+        result = {'content': [{'type': 'text', 'text': 'policies'}], 'details': {'hits': 2}}
         hint = self._hint('policy_guidance', {'scenario': 'test'}, result)
         assert '2条结果' in hint['summary']
 
     def test_error_returns_none(self):
         result = {'content': [{'type': 'text', 'text': 'error'}], 'isError': True}
+        assert self._hint('search_knowledge', {'query': 'x'}, result) is None
+
+    def test_missing_hits_returns_none(self):
+        result = {'content': [{'type': 'text', 'text': 'text'}], 'details': {}}
         assert self._hint('search_knowledge', {'query': 'x'}, result) is None

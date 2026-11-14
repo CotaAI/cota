@@ -41,13 +41,13 @@ class PolicyTool(Tool):
                     'details': {}, 'isError': True}
 
         try:
-            result = self._index.search(scenario)
+            result, result_count = self._index.search(scenario)
         except Exception as e:
             logger.error(f'Policy search failed: {e}')
             return {'content': [{'type': 'text', 'text': f'策略检索失败：{e}'}],
                     'details': {}, 'isError': True}
 
         if not result:
-            return {'content': [{'type': 'text', 'text': '未找到相关业务策略。'}], 'details': {}}
+            return {'content': [{'type': 'text', 'text': '未找到相关业务策略。'}], 'details': {'hits': 0}}
 
-        return {'content': [{'type': 'text', 'text': result}], 'details': {}}
+        return {'content': [{'type': 'text', 'text': result}], 'details': {'hits': result_count}}
