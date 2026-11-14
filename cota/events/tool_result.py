@@ -7,6 +7,7 @@ from cota.events.event import Event
 
 class ToolResultEvent(Event):
     """Observed outcome; arguments and model origin belong to tool_started."""
+    _event_type = EventType.TOOL_RESULT
     def __init__(self, tool: str, result=None, *, tool_call_id=None, content=None,
                  status='success', duration_ms=None, resource=None, context=None, **kw):
         from cota.events.utils.tool import result_payload

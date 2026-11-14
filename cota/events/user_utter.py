@@ -4,6 +4,7 @@ from cota.events.event import Event
 
 
 class UserUtterEvent(Event):
+    _event_type = EventType.USER_UTTER
     def __init__(self, text: str, metadata=None, *, attachments=None, **kw):
         payload = {'text': text, 'metadata': metadata or {}}
         if attachments is not None:

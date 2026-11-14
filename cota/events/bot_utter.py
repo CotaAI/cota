@@ -4,6 +4,7 @@ from cota.events.event import Event
 
 
 class BotUtterEvent(Event):
+    _event_type = EventType.BOT_UTTER
     def __init__(self, text: str, metadata=None, *, llm=None, llm_event_id=None,
                  tool_event_id=None, attachments=None, **kw):
         payload = {'text': text, 'metadata': metadata or {}}

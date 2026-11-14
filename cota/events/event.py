@@ -26,6 +26,8 @@ TYPES = frozenset(v for k, v in vars(EventType).items() if k.isupper())
 
 ENVELOPE = ('schema_version', 'event_id', 'sequence', 'timestamp', 'run_id', 'type', 'source', 'payload')
 
+_registry = {}
+
 
 def validate_execution(value):
     """Validate execution checkpoint fields before the reducer changes state."""
@@ -62,6 +64,13 @@ class Event:
     sequence: Optional[int] = None
     timestamp: float = field(default_factory=time.time)
     schema_version: int = 1
+
+    _event_type = None
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if cls._event_type is not None:
+            _registry[cls._event_type] = cls
 
     def __setattr__(self, name, value):
         if self.__dict__.get('_sealed'):
@@ -102,68 +111,11 @@ class Event:
         self.timestamp = float(self.timestamp)
 
     def _validate_payload(self):
-        """Type-specific payload validation. Subclasses override this.
-
-        Returns a dict of {field_name: expected_type} for required-field checking.
-        """
-        p = self.payload
-        required = {}
-        if self.type == EventType.USER_CONTEXT_UPDATED:
-            required = {'context': dict}
-            if 'user_id' not in p:
-                raise ValueError('user_context_updated requires user_id and context')
-            if p['user_id'] is not None and not isinstance(p['user_id'], str):
-                raise ValueError('user_id must be a string or None')
-            if p['user_id'] is None and p.get('context'):
-                raise ValueError('Unidentified user cannot carry user context')
-        if self.type in (EventType.RUN_STARTED, EventType.RUN_FINISHED):
-            validate_execution(p)
-        if self.type in (EventType.USER_UTTER, EventType.BOT_UTTER):
-            required = {'text': str}
-            if 'attachments' in p:
-                from cota.files import validate_attachments
-                validate_attachments(p['attachments'])
-        elif self.type == EventType.TOOL_STARTED:
-            required = {'tool_call_id': str, 'tool': str, 'arguments': dict}
-            if set(p) - {'tool_call_id', 'tool', 'arguments', 'requested_arguments', 'llm', 'llm_event_id'}:
-                raise ValueError('Unexpected tool_started fields; outcomes belong on tool_result')
-            if 'requested_arguments' in p:
-                from cota.events.utils import _same
-                requested = p['requested_arguments']
-                if (not isinstance(requested, dict) or _same(requested, p.get('arguments'))
-                        or not ('llm' in p or 'llm_event_id' in p)):
-                    raise ValueError('requested_arguments requires a distinct proposal and its model source')
-        elif self.type == EventType.TOOL_RESULT:
-            required = {'tool_call_id': str, 'tool': str, 'status': str}
-            if 'result' not in p:
-                raise ValueError('tool_result requires result')
-            if p.get('status') not in ('success', 'error', 'blocked'):
-                raise ValueError('Invalid tool_result status')
-            if set(p) - {'tool_call_id', 'tool', 'status', 'result', 'content', 'duration_ms', 'resource', 'context'}:
-                raise ValueError('Unexpected tool_result fields; arguments belong on tool_started')
-            if 'content' in p:
-                blocks = p['content']
-                if not isinstance(blocks, list) or any(not isinstance(b, dict) or not isinstance(b.get('type'), str) for b in blocks):
-                    raise ValueError('content must contain Pi content blocks')
-            if 'context' in p:
-                ctx = p['context']
-                if (not isinstance(ctx, dict) or ctx.get('mode') not in ('summary',)
-                        or not isinstance(ctx.get('summary'), str) or not ctx['summary']):
-                    raise ValueError('context requires mode and a nonempty summary')
-        elif self.type == EventType.RUN_FINISHED:
-            required = {'status': str}
-            if p.get('status') not in ('limited', 'completed', 'failed', 'interrupted'):
-                raise ValueError('Invalid run_finished status')
-        elif self.type == EventType.CONTEXT_COMPACTION:
-            required = {'summary': str, 'replaced_message_ids': list}
-            ids = p.get('replaced_message_ids', [])
-            if not ids or any(not isinstance(i, str) or not i for i in ids) or len(set(ids)) != len(ids):
-                raise ValueError('Compaction requires unique replaced message IDs')
-            if 'reason' in p and p['reason'] not in ('threshold', 'bytes', 'overflow'):
-                raise ValueError('Invalid compaction reason')
-            if 'tokens_before' in p and (type(p['tokens_before']) is not int or p['tokens_before'] < 0):
-                raise ValueError('compaction.tokens_before must be a nonnegative integer')
-        return required
+        """Type-specific payload validation. Subclasses override this."""
+        registered = _registry.get(self.type)
+        if registered is not None and type(self) is Event:
+            return registered._validate_payload(self)
+        return {}
 
     def validate(self):
         if self.__dict__.get('_sealed'):
@@ -248,14 +200,7 @@ class Event:
             raise ValueError('Expected versioned event envelope')
         if not isinstance(data.get('type'), str):
             raise ValueError('Event type must be a string')
-        from cota.events.user_utter import UserUtterEvent
-        from cota.events.bot_utter import BotUtterEvent
-        from cota.events.tool_result import ToolResultEvent
-        _type_to_class = {
-            EventType.USER_UTTER: UserUtterEvent, EventType.BOT_UTTER: BotUtterEvent,
-            EventType.TOOL_RESULT: ToolResultEvent,
-        }
-        subtype = _type_to_class.get(data.get('type'), Event)
+        subtype = _registry.get(data.get('type'), Event)
         event = subtype.__new__(subtype)
         Event.__init__(event, **deepcopy(data))
         return event
