@@ -2,6 +2,7 @@
 import logging
 from typing import Optional
 
+from cota.llm.observation import model_purpose
 from cota.retrieval.bm25 import BM25Index
 from cota.retrieval.chunker import chunk_markdown, parse_frontmatter
 from .loader import KnowledgeManifest, discover_files
@@ -11,6 +12,30 @@ logger = logging.getLogger(__name__)
 _BM25_CANDIDATE_MULTIPLIER = 4
 _MAX_CHUNK_CHARS = 800
 _MAX_RESULT_CHARS = 4000
+
+
+def _extract_window(text, matched_terms, max_chars):
+    """Extract a window around the first matched term instead of head-truncating."""
+    if len(text) <= max_chars:
+        return text
+    best = -1
+    text_lower = text.lower()
+    for term in matched_terms:
+        pos = text_lower.find(term.lower())
+        if pos != -1:
+            best = pos
+            break
+    if best == -1:
+        best = 0
+    half = max_chars // 2
+    start = max(0, best - half)
+    end = start + max_chars
+    if end > len(text):
+        end = len(text)
+        start = max(0, end - max_chars)
+    prefix = '...' if start > 0 else ''
+    suffix = '...' if end < len(text) else ''
+    return prefix + text[start:end] + suffix
 
 
 class KnowledgeIndex:
@@ -76,10 +101,11 @@ class KnowledgeIndex:
             return ''
         prompt = self._build_rerank_prompt(query, candidates)
         try:
-            response = await llm_instance.generate_chat(
-                messages=[{'role': 'user', 'content': prompt}],
-                max_tokens=500, temperature=0.0,
-            )
+            with model_purpose('knowledge'):
+                response = await llm_instance.generate_chat(
+                    messages=[{'role': 'user', 'content': prompt}],
+                    max_tokens=500, temperature=0.0,
+                )
             return self._parse_rerank_response(response['content'], candidates, k)
         except Exception as e:
             logger.warning(f'LLM rerank failed, falling back to BM25: {e}')
@@ -101,10 +127,11 @@ class KnowledgeIndex:
             f'最多列出 {min(max_steps, 5)} 个。'
         )
         try:
-            response = await llm_instance.generate_chat(
-                messages=[{'role': 'user', 'content': nav_prompt}],
-                max_tokens=200, temperature=0.0,
-            )
+            with model_purpose('knowledge'):
+                response = await llm_instance.generate_chat(
+                    messages=[{'role': 'user', 'content': nav_prompt}],
+                    max_tokens=200, temperature=0.0,
+                )
             target_sources = self._parse_nav_response(response['content'])
         except Exception as e:
             logger.warning(f'LLM navigation failed, falling back to rerank: {e}')
@@ -123,10 +150,11 @@ class KnowledgeIndex:
                     # Step 3: LLM rerank on scoped results
                     prompt = self._build_rerank_prompt(query, candidates)
                     try:
-                        response = await llm_instance.generate_chat(
-                            messages=[{'role': 'user', 'content': prompt}],
-                            max_tokens=500, temperature=0.0,
-                        )
+                        with model_purpose('knowledge'):
+                            response = await llm_instance.generate_chat(
+                                messages=[{'role': 'user', 'content': prompt}],
+                                max_tokens=500, temperature=0.0,
+                            )
                         return self._parse_rerank_response(response['content'], candidates, k)
                     except Exception as e:
                         logger.warning(f'LLM rerank (navigate) failed: {e}')
@@ -147,7 +175,7 @@ class KnowledgeIndex:
             header = ' > '.join(chunk['heading_chain']) if chunk['heading_chain'] else chunk['source']
             text = chunk['text']
             if len(text) > _MAX_CHUNK_CHARS:
-                text = text[:_MAX_CHUNK_CHARS] + '...'
+                text = _extract_window(text, r.get('matched_terms', []), _MAX_CHUNK_CHARS)
             part = f'[{header}]\n{text}'
             if total + len(part) > _MAX_RESULT_CHARS and parts:
                 break
@@ -157,7 +185,7 @@ class KnowledgeIndex:
 
     def _build_rerank_prompt(self, query, candidates):
         numbered = '\n\n'.join(
-            f'[{i}] {self._chunks[c["id"]]["text"][:500]}'
+            f'[{i}] {_extract_window(self._chunks[c["id"]]["text"], c.get("matched_terms", []), 500)}'
             for i, c in enumerate(candidates) if c['id'] in self._chunks)
         return (
             f'用户问题：{query}\n\n'

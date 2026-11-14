@@ -226,7 +226,7 @@ async def test_openai_endpoint_exports_native_transport_but_custom_adapters_do_n
 
 
 @pytest.mark.asyncio
-async def test_native_prepare_uses_durable_projection_without_returning_history(mock_agent):
+async def test_native_prepare_includes_summarized_history(mock_agent):
     from cota.events import UserUtterEvent
     from cota.runtime.pi_runtime import PiAgentRuntime
     dst = DST('s', mock_agent)
@@ -236,7 +236,7 @@ async def test_native_prepare_uses_durable_projection_without_returning_history(
     runtime._system_prompt = 'You are helpful.'
     prepared = await runtime._prepare({'native': True, 'skillPrompt': 'Skills', 'toolPrompt': '',
                                        'nativeTools': [], 'extensionTools': []})
-    assert 'messages' not in prepared
+    assert 'messages' in prepared
     assert prepared['systemPrompt'] == 'You are helpful.Skills'
     assert prepared['imageResources'] == []
 

@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 _FRONTMATTER = re.compile(r'\A---\n(.*?\n)---\n', re.DOTALL)
 _HEADING = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
 _FENCE = re.compile(r'^(`{3,}|~{3,})', re.MULTILINE)
+_MAX_CHUNK_CHARS = 1200
 
 
 def parse_frontmatter(text):
@@ -39,6 +40,7 @@ def chunk_markdown(text, source=""):
 
     chunks = []
     heading_stack = []
+    id_counts = {}
     for level, title, content in splits:
         if level is not None:
             while heading_stack and heading_stack[-1][0] >= level:
@@ -53,9 +55,14 @@ def chunk_markdown(text, source=""):
             continue
 
         chunk_title = ' > '.join(chain) if chain else source
-        chunk_id = f"{source}#{chunk_title}" if source else chunk_title
-        chunks.append({'id': chunk_id, 'heading_chain': list(chain),
-                       'title': chunk_title, 'text': chunk_text, 'source': source})
+        base_id = f"{source}#{chunk_title}" if source else chunk_title
+
+        for sub_text in _split_oversized(chunk_text, _MAX_CHUNK_CHARS):
+            n = id_counts.get(base_id, 0)
+            id_counts[base_id] = n + 1
+            chunk_id = base_id if n == 0 else f"{base_id}:{n}"
+            chunks.append({'id': chunk_id, 'heading_chain': list(chain),
+                           'title': chunk_title, 'text': sub_text, 'source': source})
     return chunks or [{'id': source, 'heading_chain': [], 'title': source,
                        'text': body.strip(), 'source': source}]
 
@@ -84,6 +91,28 @@ def _in_fence(pos, ranges):
         if pos < start:
             break
     return False
+
+
+def _split_oversized(text, max_chars):
+    """Split text exceeding max_chars at paragraph boundaries."""
+    if len(text) <= max_chars:
+        return [text]
+    paragraphs = re.split(r'\n\n+', text)
+    parts = []
+    current = []
+    current_len = 0
+    for para in paragraphs:
+        added = len(para) + (2 if current else 0)
+        if current and current_len + added > max_chars:
+            parts.append('\n\n'.join(current))
+            current = [para]
+            current_len = len(para)
+        else:
+            current.append(para)
+            current_len += added
+    if current:
+        parts.append('\n\n'.join(current))
+    return parts or [text]
 
 
 def _split_by_headings(text, fenced_ranges):

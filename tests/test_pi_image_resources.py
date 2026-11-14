@@ -139,7 +139,8 @@ async def test_prepare_uses_canonical_history_and_only_image_references(mock_age
     assert prepared['imageResources'][0]['id'] == 'sha256:' + hashlib.sha256(b'original image').hexdigest()
     assert image()['data'] not in json.dumps(prepared)
     if native:
-        assert 'messages' not in prepared
+        assert 'forged' not in json.dumps(prepared)
+        assert 'inspect' in json.dumps(prepared)
     else:
         assert 'forged' not in json.dumps(prepared)
         assert 'inspect' in json.dumps(prepared)

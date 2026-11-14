@@ -3,7 +3,7 @@
 import pytest
 
 from cota.dst import DST
-from cota.events import Event, UserUtterEvent, BotUtterEvent, ToolResultEvent
+from cota.events import Event, UserUtterEvent, BotUtterEvent, ToolResultEvent, RunFinishedEvent
 from tests.resource_fixtures import skill_result
 
 class TestEvent:
@@ -226,7 +226,7 @@ def test_resource_result_roundtrip():
 @pytest.mark.parametrize("event", [
     UserUtterEvent("hello"), BotUtterEvent("answer"), skill_result("weather"),
     ToolResultEvent('read', result='instructions'),
-    Event(type="run_finished", payload={"status": "completed"}),
+    RunFinishedEvent(type="run_finished", payload={"status": "completed"}),
 ])
 def test_event_subclass_and_identity_roundtrip(event):
     restored = Event.from_dict(event.as_dict())

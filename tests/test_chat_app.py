@@ -41,9 +41,10 @@ def test_cli_explicitly_selects_chat_factory(tmp_path, monkeypatch, enabled):
     import cota.webapp
     agent = SimpleNamespace(name='Bot')
     channel_factory, chat_factory = Mock(), Mock()
+    channel_factory.return_value.router.routes = []
+    chat_factory.return_value.router.routes = []
     monkeypatch.setattr(cli.Agent, 'load_from_path', Mock(return_value=agent))
     monkeypatch.setattr(cli, 'configure_execution_logging', Mock())
-    monkeypatch.setattr(cli, 'list_routes', Mock())
     monkeypatch.setattr(cli, 'create_server_config', Mock(return_value={}))
     monkeypatch.setattr(cli.server, 'create_app', channel_factory)
     monkeypatch.setattr(cota.webapp, 'create_app', chat_factory)

@@ -308,7 +308,8 @@ class PiAgentRuntime:
         await self._checkpoint()
         resources = self._images.catalog()
         if native:
-            return {'systemPrompt': base, 'runtimeContext': runtime_context, 'tools': tools, 'imageResources': resources}
+            return {'systemPrompt': base, 'runtimeContext': runtime_context, 'tools': tools,
+                    'imageResources': resources, 'messages': self._working_context(messages)}
         return {'messages': self._working_context(messages), 'runtimeContext': runtime_context,
                 'tools': tools, 'imageResources': resources}
 

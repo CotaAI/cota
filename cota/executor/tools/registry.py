@@ -81,16 +81,16 @@ class ToolPolicy:
         Args:
             tool: Python tool instance or the name of a Pi tool
         """
-        if not isinstance(tool, str) and getattr(tool, 'internal', False):
-            return True
         tool_name = tool if isinstance(tool, str) else tool.name
 
-        # Deny wins
+        # Deny wins over everything, including internal tools
         if self.deny_all or tool_name in self.deny:
             return False
 
-        # If allow is set, tool must be in allow list
+        # If allow is set, tool must be in allow list (internal tools pass)
         if self.allow is not None and not self.allow_all:
+            if not isinstance(tool, str) and getattr(tool, 'internal', False):
+                return True
             return tool_name in self.allow
 
         return True

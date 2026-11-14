@@ -36,13 +36,15 @@ class BM25Index:
         scored = []
         for doc in self._docs:
             score = 0.0
+            matched = []
             for term, weight in query_terms.items():
                 freq = doc['terms'].get(term, 0)
                 if freq:
                     idf = math.log(1 + (self._n - self._df[term] + .5) / (self._df[term] + .5))
                     score += weight * idf * freq * 2.5 / (freq + 1.5 * (.25 + .75 * doc['length'] / self._avgdl))
+                    matched.append(term)
             if score > 0:
-                scored.append((score, doc))
+                scored.append((score, doc, matched))
         scored.sort(key=lambda item: -item[0])
-        return [{'id': doc['id'], 'score': score, 'text': doc['text']}
-                for score, doc in scored[:top_k]]
+        return [{'id': doc['id'], 'score': score, 'text': doc['text'], 'matched_terms': matched}
+                for score, doc, matched in scored[:top_k]]
