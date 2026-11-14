@@ -6,7 +6,7 @@ from time import perf_counter
 
 from cota.events import Event, BotUtterEvent
 from cota.events.tool import result_payload, text_result
-from cota.events.assistant import _same, canonical_json
+from cota.events.utils import _same, canonical_json
 
 logger = logging.getLogger(__name__)
 

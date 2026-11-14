@@ -2,7 +2,7 @@
 from copy import deepcopy
 
 from cota.events import Event
-from cota.events.event import _json_native
+from cota.events.utils import _json_native
 
 
 def validate_run_metadata(metadata, events):

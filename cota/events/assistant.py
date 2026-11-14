@@ -1,24 +1,8 @@
 """Assistant message provenance carried by bot/tool events, independent of Debug."""
 from copy import deepcopy
-import json
 import re
 
-
-def canonical_json(value):
-    """JSON numbers survive JS roundtrips; booleans remain a distinct type."""
-    def normalize(item):
-        if isinstance(item, dict):
-            return {key: normalize(value) for key, value in item.items()}
-        if isinstance(item, list):
-            return [normalize(value) for value in item]
-        if isinstance(item, float) and item.is_integer():
-            return int(item)
-        return item
-    return json.dumps(normalize(value), sort_keys=True, ensure_ascii=False, allow_nan=False)
-
-
-def _same(a, b):
-    return canonical_json(a) == canonical_json(b)
+from cota.events.utils import _same
 
 
 def public_content(content):
