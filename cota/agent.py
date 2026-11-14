@@ -15,7 +15,7 @@ from cota.store import Store
 from cota.llm import LLM
 from cota.policy import Policy, AllPolicy, PolicyServices, load_policy
 from cota.config import validate_bot_config
-from cota.knowledge.knowledge import KnowledgeFactory, Knowledge
+from cota.knowledge import KnowledgeIndex, KnowledgeTool
 from cota.utils.common import merge_dicts
 
 from cota.executor.tools import ToolRegistry
@@ -37,7 +37,6 @@ class Agent:
         store: Optional[Store] = None,
         dialogue: Optional[Dict] = None,
         user_proxy: Optional[Dict] = None,
-        knowledge: Optional[Knowledge] = None,
         environment: Optional[ExecutionEnvironment] = None,
         deploy: str = DEFAULT_DEPLOY,
         file_storage=None,
@@ -52,7 +51,6 @@ class Agent:
         self.dialogue = dialogue or {}
         validate_runtime_selection(self.dialogue)
         self.user_proxy = user_proxy
-        self.knowledge = knowledge
         self.deploy = deploy
         self.environment = environment if environment is not None else ExecutionEnvironment.for_deployment(
             deploy, {}, base_path=os.getcwd())
@@ -127,9 +125,9 @@ class Agent:
             llms[llm_name] = LLM(config)
             llms[llm_name].name = llm_name
 
-        # Knowledge
-        knowledge_configs = agent_config.get("knowledge", [])
-        knowledge = KnowledgeFactory.create(knowledge_configs, path)
+        # Knowledge — auto-discover from knowledge/ directory
+        knowledge_dir = os.path.join(path, 'knowledge')
+        knowledge_index = KnowledgeIndex.build(knowledge_dir) if os.path.isdir(knowledge_dir) else None
 
         # User memory
         user_memory = create_user_memory(endpoints_config)
@@ -154,7 +152,6 @@ class Agent:
             policy=policy,
             dialogue=dialogue,
             user_proxy=user_proxy,
-            knowledge=knowledge,
             deploy=agent_config.get('deploy', DEFAULT_DEPLOY),
             environment=ExecutionEnvironment.for_deployment(
                 agent_config.get('deploy', DEFAULT_DEPLOY), agent_config.get('environment', {}), base_path=path),
@@ -165,6 +162,8 @@ class Agent:
         agent.policy_services = PolicyResources(endpoints_config, model=agent.llm_instance).services()
         agent.workspace_path = workspace_path
         agent._tool_registry = tool_registry
+        if knowledge_index:
+            tool_registry.register(KnowledgeTool(knowledge_index, agent))
         skill_dir = os.path.abspath(os.path.join(path, 'skills'))
         agent.skill_paths = [skill_dir] if os.path.isdir(skill_dir) else []
         agent.user_memory = user_memory

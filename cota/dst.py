@@ -459,25 +459,6 @@ class DST:
         return prompt
 
 
-    async def format_knowledge(self, prompt: Text, *, query=None) -> Dict[str, str]:
-        knowledge_variables = re.findall(r"\{\{(knowledge)\}\}", prompt)
-        if not knowledge_variables:
-            return {}
-        knowledge = getattr(self.agent, "knowledge", None)
-        if not knowledge:
-            return {}
-        try:
-            query = self.latest_user_text() if query is None else query
-            content = await knowledge.process_query(
-                query=query,
-                context={"dst": self, "agent": self.agent},
-            )
-            return {"knowledge": content or ""}
-        except Exception as e:
-            logger.error(f"Knowledge retrieval failed: {e}")
-            return {"knowledge": ""}
-
-
     # ------------------------------------------------------------------
     # Observe methods (for prompt template variables)
     # ------------------------------------------------------------------

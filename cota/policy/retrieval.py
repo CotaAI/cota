@@ -6,19 +6,7 @@ import unicodedata
 
 from .base import Policy, Match, Selection
 from .catalog import policy_skills
-
-
-def tokens(text):
-    """Latin words plus Chinese characters/bigrams, with no tokenizer download."""
-    parts = re.findall(r'[a-z0-9_]+|[\u3400-\u9fff]+', unicodedata.normalize('NFKC', text).casefold())
-    result = []
-    for part in parts:
-        if '\u3400' <= part[0] <= '\u9fff':
-            result.extend(part)
-            result.extend(part[i:i + 2] for i in range(len(part) - 1))
-        else:
-            result.append(part)
-    return result
+from cota.retrieval import tokens
 
 
 def documents(policies):

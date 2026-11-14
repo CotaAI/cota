@@ -5,7 +5,7 @@ from math import isfinite
 
 PROMPT_VARIABLES = {
     'task_description', 'agent_description', 'user_context_text', 'session_summary',
-    'latest_user_query', 'compressed_history', 'history_messages', 'knowledge',
+    'latest_user_query', 'compressed_history', 'history_messages',
 }
 
 
@@ -23,7 +23,7 @@ def _names(value, path):
 
 
 def validate_bot_config(config):
-    _object(config, {'system', 'dialogue', 'tools', 'policy', 'knowledge', 'channels', 'user_proxy', 'environment', 'deploy'}, 'agent')
+    _object(config, {'system', 'dialogue', 'tools', 'policy', 'channels', 'user_proxy', 'environment', 'deploy'}, 'agent')
     from cota.executor.environment import DEFAULT_DEPLOY, ExecutionEnvironment, NATIVE_TOOLS
     ExecutionEnvironment.for_deployment(config.get('deploy', DEFAULT_DEPLOY), config.get('environment', {}), base_path='.')
     _object(config.get('system', {}), {'name', 'description'}, 'system')
@@ -77,10 +77,3 @@ def validate_bot_config(config):
     if not isinstance(config.get('channels', {}), dict):
         raise ValueError('channels must be an object')
     _object(config.get('user_proxy', {}), {'description'}, 'user_proxy')
-    knowledge = config.get('knowledge', [])
-    if not isinstance(knowledge, list):
-        raise ValueError('knowledge must be a list')
-    for item in knowledge:
-        _object(item, {'type', 'llm', 'prompt', 'max_tokens', 'temperature'}, 'knowledge entry')
-        if item.get('type') != 'llm' or not isinstance(item.get('llm'), str) or not item['llm']:
-            raise ValueError('knowledge entry requires type=llm and an llm name')

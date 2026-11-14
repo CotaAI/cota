@@ -234,12 +234,12 @@ def test_historical_image_projection_matches_node_and_wrap_up():
 async def test_dynamic_template_values_change_only_runtime_context_after_recovery(mock_agent):
     from cota.runtime.pi_runtime import PiAgentRuntime
     from cota.store import MemoryStore
-    prompt = '{{agent_description}}\nMemory: {{user_context_text}}\nQuestion: {{latest_user_query}}\nKnowledge: {{knowledge}}'
+    prompt = '{{agent_description}}\nMemory: {{user_context_text}}\nQuestion: {{latest_user_query}}\nHistory: {{compressed_history}}'
     dst, store = DST('template', mock_agent), MemoryStore()
     dst.append_event(Event('user_context_updated', {'user_id': 'u', 'context': {'city': 'Beijing'}}))
     dst.append_event(UserUtterEvent('first question'))
     first = PiAgentRuntime(mock_agent, dst, 'template', prompt=prompt)
-    first._system_prompt = first._build_system_prompt({'knowledge': 'FIRST_KNOWLEDGE'})
+    first._system_prompt = first._build_system_prompt()
     payload = {'native': True, 'nativeTools': [], 'extensionTools': []}
     before = await first._prepare(payload)
     await store.save(dst)
@@ -247,11 +247,9 @@ async def test_dynamic_template_values_change_only_runtime_context_after_recover
     restored.append_event(Event('user_context_updated', {'user_id': 'u', 'context': {'city': 'Shanghai'}}))
     restored.append_event(UserUtterEvent('second question'))
     second = PiAgentRuntime(mock_agent, restored, 'template', prompt=prompt)
-    second._system_prompt = second._build_system_prompt({'knowledge': 'SECOND_KNOWLEDGE'})
+    second._system_prompt = second._build_system_prompt()
     after = await second._prepare(payload)
     assert before['systemPrompt'] == after['systemPrompt']
     assert 'A test bot' in before['systemPrompt']
     assert 'Beijing' in before['runtimeContext'] and 'Shanghai' in after['runtimeContext']
     assert 'first question' in before['runtimeContext'] and 'second question' in after['runtimeContext']
-    assert 'FIRST_KNOWLEDGE' in before['runtimeContext'] and 'SECOND_KNOWLEDGE' in after['runtimeContext']
-    assert 'SECOND_KNOWLEDGE' not in str(restored.as_dict())

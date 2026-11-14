@@ -7,7 +7,6 @@ import pytest
 from cota.llm.custom import CustomHttpClient
 from cota.llm.llm import LLM
 from cota.llm.openai import OpenAIClient, OpenAIRAGClient
-from cota.knowledge.llm_knowledge import LLMKnowledge
 
 
 @pytest.mark.asyncio
@@ -43,39 +42,6 @@ async def test_custom_tool_only_response_preserves_structured_calls():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('kind', ['openai', 'openai-rag', 'custom'])
-async def test_knowledge_temperature_reaches_real_adapter(kind):
-    config = {'type': kind, 'key': 'test-only', 'apibase': 'https://example.invalid/v1',
-              'model': 'test-model', 'knowledge_id': 'kb'}
-    llm = LLM(config)
-    if kind == 'custom':
-        reply = SimpleNamespace(raise_for_status=Mock(), json=AsyncMock(return_value={'content': 'knowledge'}))
-        context = AsyncMock()
-        context.__aenter__.return_value = reply
-        provider = Mock(return_value=context)
-        llm.client._session = SimpleNamespace(closed=False, post=provider, close=AsyncMock())
-    else:
-        provider = AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(
-            message=SimpleNamespace(content='knowledge', tool_calls=None), finish_reason='stop')]))
-        llm.client.client.chat.completions.create = provider
-    knowledge = LLMKnowledge({'llm': 'default', 'temperature': .2, 'prompt': '{{query}} {{history}}'})
-    try:
-        result = await knowledge.retrieve('question', {'agent': SimpleNamespace(llm_instance=lambda name: llm)})
-        assert result == 'knowledge'
-        request = provider.call_args.kwargs['json'] if kind == 'custom' else provider.call_args.kwargs
-        assert request['temperature'] == .2
-        assert request['messages'] == [{'role': 'user', 'content': 'question '}]
-        if kind == 'openai-rag':
-            assert request['tools'][0]['retrieval']['knowledge_id'] == 'kb'
-    finally:
-        close = getattr(llm, 'close', None)
-        if close:
-            await close()
-        elif kind != 'custom':
-            await llm.client.client.close()
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize('client_type', [OpenAIClient, OpenAIRAGClient])
 async def test_openai_adapter_preserves_calls_finish_reason_and_optional_settings(client_type):
     extra = {'knowledge_id': 'kb'} if client_type is OpenAIRAGClient else {}
@@ -107,8 +73,3 @@ async def test_agent_cleanup_closes_unique_models_even_when_tools_fail():
     with pytest.raises(RuntimeError, match='tool cleanup'):
         await agent.cleanup()
     llm.close.assert_awaited_once()
-
-
-def test_knowledge_prompt_without_context_has_no_unexpanded_history():
-    knowledge = LLMKnowledge({'llm': 'default', 'prompt': '{{query}} {{history}}'})
-    assert knowledge._build_prompt('hello') == 'hello '

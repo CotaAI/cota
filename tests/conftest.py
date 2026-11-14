@@ -26,7 +26,6 @@ class MockAgent:
         }
         from cota.policy import PolicyCatalog, AllPolicy
         self.policy = AllPolicy(PolicyCatalog())
-        self.knowledge = None
         self.is_team = False
         self.agents = {}
         self.store = None

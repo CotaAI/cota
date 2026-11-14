@@ -103,13 +103,6 @@ def test_removed_action_helpers_and_renamed_tool_servers():
 
 
 @pytest.mark.asyncio
-async def test_knowledge_uses_named_model_without_action_routing(mock_agent):
-    from cota.knowledge.llm_knowledge import LLMKnowledge
-    provider = LLMKnowledge({'llm': 'default'})
-    assert await provider.retrieve('question', {'agent': mock_agent}) == 'hello'
-
-
-@pytest.mark.asyncio
 async def test_execution_policy_requires_exact_retained_read_result(mock_agent):
     from cota.policy import PolicyCatalog, AllPolicy
     mock_agent.policy = AllPolicy(PolicyCatalog([{'name': 'execute', 'steps': [{'bot': [{'thought': 'check the source'}, {'skills': ['SearchWeb']}]}]}]))

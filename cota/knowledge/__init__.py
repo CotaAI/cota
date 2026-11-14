@@ -1,5 +1,5 @@
-"""Knowledge retrieval system for COTA."""
+"""File-driven knowledge base: auto-discovered, BM25-indexed, optional LLM rerank."""
+from .index import KnowledgeIndex
+from .tool import KnowledgeTool
 
-from .knowledge import Knowledge, KnowledgeFactory
-
-__all__ = ['Knowledge', 'KnowledgeFactory']
+__all__ = ['KnowledgeIndex', 'KnowledgeTool']
