@@ -71,9 +71,6 @@ def validate_bot_config(config):
             raise ValueError('Configure Pi native tools through environment, not tools.allow/deny')
     from cota.executor.tools.registry import ToolPolicy
     ToolPolicy(**tools)  # Reject unknown groups before opening runtime resources.
-    policy = config.get('policy', {})
-    from cota.policy import validate_policy_config
-    validate_policy_config(policy)
     if not isinstance(config.get('channels', {}), dict):
         raise ValueError('channels must be an object')
     _object(config.get('user_proxy', {}), {'description'}, 'user_proxy')

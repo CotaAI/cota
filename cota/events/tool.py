@@ -18,7 +18,7 @@ def result_content(payload):
     return [{'type': 'text', 'text': text}]
 
 
-def result_payload(tool, call_id, result, *, content=None, status='success', duration_ms=None, resource=None):
+def result_payload(tool, call_id, result, *, content=None, status='success', duration_ms=None, resource=None, context=None):
     payload = {'tool_call_id': call_id, 'tool': tool, 'status': status, 'result': deepcopy(result)}
     if content is not None and content != result_content(payload):
         payload['content'] = deepcopy(content)
@@ -26,4 +26,6 @@ def result_payload(tool, call_id, result, *, content=None, status='success', dur
         payload['duration_ms'] = duration_ms
     if resource is not None:
         payload['resource'] = deepcopy(resource)
+    if context is not None:
+        payload['context'] = deepcopy(context)
     return payload

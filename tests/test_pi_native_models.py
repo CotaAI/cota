@@ -121,7 +121,6 @@ async def test_native_response_is_staged_and_debug_request_is_optional(tmp_path,
         store.enable_debug_log(tmp_path / 'debug.log')
     dst.append_event(Event('run_started', {}, run_id='r'))
     trace = PiTraceRecorder(dst, store)
-    trace.policy = {'policies': [{'name': 'greeting'}]}
     checkpoint = AsyncMock(side_effect=lambda: store.save(dst))
     # AsyncMock does not await a coroutine returned by a lambda.
     async def save():
@@ -137,7 +136,7 @@ async def test_native_response_is_staged_and_debug_request_is_optional(tmp_path,
     event = trace.observe_assistant(message())
     await save()
     await trace.link_model_debug(event)
-    assert event.payload['llm']['policy'] == trace.policy
+    assert 'policy' not in event.payload['llm']
     assert event.payload['llm']['usage']['totalTokens'] == 7
     assert [e.type for e in dst.events] == ['run_started', 'bot_utter']
     record = await store.model_debug('s', began['request_id'])
@@ -342,7 +341,7 @@ async def test_native_reasoning_continuation_survives_store_without_being_public
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('fail_commit', [False, True])
-async def test_native_tool_batch_commits_commentary_before_effect_and_refreshes_policy(mock_agent, tmp_path, fail_commit):
+async def test_native_tool_batch_commits_commentary_before_effect(mock_agent, tmp_path, fail_commit):
     import json
     from cota.events import UserUtterEvent
     from cota.executor.tools.base import FunctionTool
@@ -361,12 +360,6 @@ async def test_native_tool_batch_commits_commentary_before_effect_and_refreshes_
         effects.append(city)
         return {'weather': 'sunny'}
     mock_agent._tool_registry.register(FunctionTool(name='lookup', description='lookup', parameters={'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']}, handler=lookup))
-    original_guidance = mock_agent.policy.guidance
-    async def guidance(context, services):
-        result = await original_guidance(context, services)
-        result['text'] = 'results_seen=' + str(sum(o['role'] == 'tool' for o in context.observations))
-        return result
-    mock_agent.policy.guidance = guidance
 
     async def serve(reader, writer):
         task = asyncio.current_task()
@@ -423,9 +416,7 @@ async def test_native_tool_batch_commits_commentary_before_effect_and_refreshes_
             assert 'lookup' in [tool['function']['name'] for tool in requests[0].get('tools', [])]
             assert 'lookup' in [tool['function']['name'] for tool in requests[1].get('tools', [])]
             assert requests[0]['messages'][0] == requests[1]['messages'][0]
-            assert 'results_seen=0' in str(requests[0]['messages'][-1]['content'])
-            assert 'results_seen=1' in str(requests[1]['messages'][-1]['content'])
-            assert [m['role'] for m in requests[1]['messages']] == ['system', 'user', 'assistant', 'tool', 'user']
+            assert [m['role'] for m in requests[1]['messages']] == ['system', 'user', 'assistant', 'tool']
             assert requests[1]['messages'][2]['content'] == 'Checking now.'
             assert DST.from_events('s', dst.events, mock_agent).state_dict() == dst.state_dict()
             records = await store.model_debug_headers('s')

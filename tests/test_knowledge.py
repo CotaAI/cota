@@ -156,3 +156,30 @@ class TestRerank:
         llm = SimpleNamespace(generate_chat=AsyncMock(return_value={'content': '0'}))
         result = await index.search_with_rerank('退款', llm)
         assert result  # should return the first candidate
+
+    @pytest.mark.asyncio
+    async def test_rerank_preserves_heading_chain(self, kb_dir):
+        _write(os.path.join(kb_dir, 'KNOWLEDGE.md'),
+               '---\nname: t\ndescription: d\nrerank: true\n---\n')
+        index = KnowledgeIndex.build(kb_dir)
+        llm = SimpleNamespace(generate_chat=AsyncMock(return_value={'content': '0'}))
+        result = await index.search_with_rerank('退款', llm)
+        assert '[' in result and ']' in result
+
+
+class TestIndexQuality:
+    def test_tags_extracted_from_frontmatter(self, kb_dir):
+        index = KnowledgeIndex.build(kb_dir)
+        result = index.search('售后')
+        assert '退款' in result
+
+    def test_result_size_bounded(self, tmp_path):
+        d = tmp_path / 'knowledge'
+        d.mkdir()
+        _write(str(d / 'KNOWLEDGE.md'), '---\nname: t\ndescription: d\ntop_k: 10\n---\n')
+        for i in range(10):
+            _write(str(d / f'doc{i}.md'), f'# Doc {i}\n\n' + f'搜索关键词 内容块{i} ' * 200)
+        index = KnowledgeIndex.build(str(d))
+        result = index.search('搜索关键词')
+        from cota.knowledge.index import _MAX_RESULT_CHARS
+        assert len(result) <= _MAX_RESULT_CHARS + 500  # allow margin for last chunk

@@ -541,8 +541,6 @@ def create_argument_parser() -> argparse.ArgumentParser:
 
     from cota.annotation_cli import add_annotation_parser
     add_annotation_parser(subparsers)
-    from cota.policy.training import add_train_parser
-    add_train_parser(subparsers)
 
     from cota.evaluation.cli import add_eval_parser
     add_eval_parser(subparsers)

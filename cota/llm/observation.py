@@ -44,7 +44,6 @@ async def observe_model_call(callback, request, *, llm=None):
     ordinal = recorder.next_request_sequence()
     metadata = {'request_id': uuid4().hex, 'request_sequence': ordinal, 'purpose': _purpose.get(), 'model': llm}
     if metadata['purpose'] == 'dialogue':
-        metadata['policy'] = deepcopy(recorder.policy)
         if recorder.image_projection:
             metadata['image_projection'] = recorder.image_projection
     # Core state must be committed before invoking a provider; full request bodies

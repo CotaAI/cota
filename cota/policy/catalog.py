@@ -6,10 +6,13 @@ observations, never actual tool evidence. No generated phase schema or
 synthetic assistant reasoning is introduced. Entire examples are budgeted and
 presented as examples; the model judges relevance against the real conversation.
 """
+import re
 from copy import deepcopy
 from pathlib import Path
 
 import yaml
+
+from cota.retrieval.chunker import parse_frontmatter
 
 
 class _StrictLoader(yaml.SafeLoader):
@@ -24,6 +27,95 @@ class _StrictLoader(yaml.SafeLoader):
                 raise ValueError(f'Duplicate YAML key: {key}; use separate ordered list items')
             seen.add(key)
         return super().construct_mapping(node, deep=deep)
+
+
+_H2 = re.compile(r'^##\s+(.+)$', re.MULTILINE)
+_TOP_ITEM = re.compile(r'^- (User|Bot):\s*(.*)', re.IGNORECASE)
+_BOT_ITEM = re.compile(r'^\s{2,}- (Thought|Skills|Result|Reply):\s*(.*)', re.IGNORECASE)
+
+
+def _parse_policies_from_markdown(body):
+    sections = []
+    current = None
+    for line in body.split('\n'):
+        m = _H2.match(line)
+        if m:
+            current = {'name': m.group(1).strip(), 'lines': []}
+            sections.append(current)
+        elif current is not None:
+            current['lines'].append(line)
+
+    policies = []
+    for section in sections:
+        steps = _parse_steps(section['lines'])
+        if steps:
+            policies.append({'name': section['name'], 'steps': steps})
+    return policies
+
+
+def _flush_item(kind, parts, items):
+    if kind is None:
+        return
+    text = ' '.join(parts).strip()
+    if kind == 'skills':
+        items.append({'skills': [s.strip() for s in text.split(',') if s.strip()]})
+    else:
+        items.append({kind: text})
+
+
+def _flush_bot(bot_items, steps):
+    if bot_items:
+        steps.append({'bot': list(bot_items)})
+        bot_items.clear()
+
+
+def _parse_steps(lines):
+    steps = []
+    bot_items = []
+    cur_kind = None
+    cur_parts = []
+    in_bot = False
+    user_parts = []
+    in_user = False
+
+    for line in lines:
+        top = _TOP_ITEM.match(line)
+        if top:
+            if in_user and user_parts:
+                steps.append({'user': ' '.join(user_parts).strip()})
+                user_parts.clear()
+            if in_bot:
+                _flush_item(cur_kind, cur_parts, bot_items)
+                cur_kind, cur_parts = None, []
+                _flush_bot(bot_items, steps)
+            tag = top.group(1).lower()
+            rest = top.group(2).strip()
+            if tag == 'user':
+                in_user, in_bot = True, False
+                user_parts = [rest] if rest else []
+            else:
+                in_user, in_bot = False, True
+            continue
+
+        if in_bot:
+            sub = _BOT_ITEM.match(line)
+            if sub:
+                _flush_item(cur_kind, cur_parts, bot_items)
+                cur_kind = sub.group(1).lower()
+                cur_parts = [sub.group(2).strip()] if sub.group(2).strip() else []
+            elif cur_kind is not None and line.strip():
+                cur_parts.append(line.strip())
+            continue
+
+        if in_user and line.strip():
+            user_parts.append(line.strip())
+
+    if in_user and user_parts:
+        steps.append({'user': ' '.join(user_parts).strip()})
+    if in_bot:
+        _flush_item(cur_kind, cur_parts, bot_items)
+        _flush_bot(bot_items, steps)
+    return steps
 
 
 def _text(value):
@@ -161,16 +253,27 @@ class PolicyCatalog:
         if path is None or not Path(path).exists():
             return cls(**budgets)
         path = Path(path)
-        # Only direct files are runtime guidance. policy/eval/ is held-out authoring data.
-        files = sorted((p for p in path.iterdir() if p.is_file() and p.suffix.lower() in ('.yaml', '.yml')),
-                       key=lambda p: p.name) if path.is_dir() else [path]
+        if path.is_dir():
+            files = sorted((p for p in path.iterdir()
+                            if p.is_file() and p.suffix.lower() in ('.md', '.yaml', '.yml')
+                            and p.name.lower() != 'readme.md'),
+                           key=lambda p: p.name)
+        else:
+            files = [path]
         policies = []
         for source in files:
-            try:
-                doc = yaml.load(source.read_text(encoding='utf-8'), Loader=_StrictLoader)
-            except yaml.YAMLError as exc:
-                raise ValueError(f'Invalid Policy YAML: {source}') from exc
-            policies.extend(cls.from_document(doc, **budgets).policies)
+            text = source.read_text(encoding='utf-8')
+            if source.suffix.lower() == '.md':
+                _, body = parse_frontmatter(text)
+                parsed = _parse_policies_from_markdown(body)
+                if parsed:
+                    policies.extend(cls.from_document({'policies': parsed}, **budgets).policies)
+            else:
+                try:
+                    doc = yaml.load(text, Loader=_StrictLoader)
+                except yaml.YAMLError as exc:
+                    raise ValueError(f'Invalid Policy YAML: {source}') from exc
+                policies.extend(cls.from_document(doc, **budgets).policies)
         return cls(policies, **budgets)
 
     def validate_skills(self, names):

@@ -22,7 +22,6 @@ class PiTraceRecorder:
         self.dst = dst
         self.store = store
         self.preparation = {}
-        self.policy = {}
         self.image_projection = None
         self._request_sequence = 0
         self._request_run_id = None
@@ -111,7 +110,7 @@ class PiTraceRecorder:
         self.dst.append_event(event)
         return event
 
-    def result(self, call_id, tool, arguments, raw_result, model_result, *, source='cota', executed=True, resource=None):
+    def result(self, call_id, tool, arguments, raw_result, model_result, *, source='cota', executed=True, resource=None, context=None):
         started_at = self._tool_started_at.get(call_id)
         # From receipt of Pi's start notification to the prepared result, before
         # its checkpoint. Includes bridging/start persistence, not result saving.
@@ -120,7 +119,7 @@ class PiTraceRecorder:
         status = 'blocked' if not executed else 'error' if model_result.get('isError') else 'success'
         result = self.record('tool_result', result_payload(
             tool, call_id, raw_result, content=model_result['content'], status=status,
-            duration_ms=duration_ms, resource=resource), source=source)
+            duration_ms=duration_ms, resource=resource, context=context), source=source)
         # Pi's details are protocol acknowledgement data, not another persisted
         # copy of the business result. A digest also validates repeated end callbacks.
         self._tool_reply_hashes[call_id] = reply_digest(model_result)

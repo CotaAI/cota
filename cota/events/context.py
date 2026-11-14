@@ -102,6 +102,9 @@ def apply_context(messages, event, *, active_run, trigger_event=None, deferred_i
         message = {'role': 'toolResult', 'toolCallId': p['tool_call_id'], 'toolName': p['tool'],
                    'content': result_content(p), 'isError': p['status'] != 'success'}
         message['cotaResultEventId'] = event.event_id
+        ctx = p.get('context')
+        if ctx and ctx.get('mode') == 'summary':
+            message['cotaContextSummary'] = ctx['summary']
     elif kind == 'run_finished':
         return [{k: v for k, v in m.items() if k != 'cotaDeferred'}
                 for m in finish_context(messages, event)]

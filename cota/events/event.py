@@ -176,12 +176,17 @@ class Event:
                 raise ValueError('tool_result requires result')
             if self.payload.get('status') not in ('success', 'error', 'blocked'):
                 raise ValueError('Invalid tool_result status')
-            if set(self.payload) - {'tool_call_id', 'tool', 'status', 'result', 'content', 'duration_ms', 'resource'}:
+            if set(self.payload) - {'tool_call_id', 'tool', 'status', 'result', 'content', 'duration_ms', 'resource', 'context'}:
                 raise ValueError('Unexpected tool_result fields; arguments belong on tool_started')
             if 'content' in self.payload:
                 blocks = self.payload['content']
                 if not isinstance(blocks, list) or any(not isinstance(b, dict) or not isinstance(b.get('type'), str) for b in blocks):
                     raise ValueError('content must contain Pi content blocks')
+            if 'context' in self.payload:
+                ctx = self.payload['context']
+                if (not isinstance(ctx, dict) or ctx.get('mode') not in ('summary',)
+                        or not isinstance(ctx.get('summary'), str) or not ctx['summary']):
+                    raise ValueError('context requires mode and a nonempty summary')
         elif self.type == EventType.RUN_FINISHED:
             required = {'status': str}
             if self.payload.get('status') not in ('limited', 'completed', 'failed', 'interrupted'):
@@ -285,11 +290,11 @@ class BotUtterEvent(Event):
 class ToolResultEvent(Event):
     """Observed outcome; arguments and model origin belong to tool_started."""
     def __init__(self, tool: str, result=None, *, tool_call_id=None, content=None,
-                 status='success', duration_ms=None, resource=None, **kw):
+                 status='success', duration_ms=None, resource=None, context=None, **kw):
         from cota.events.tool import result_payload
         super().__init__(EventType.TOOL_RESULT, result_payload(
             tool, tool_call_id or uuid4().hex, result, content=content, status=status,
-            duration_ms=duration_ms, resource=resource), **kw)
+            duration_ms=duration_ms, resource=resource, context=context), **kw)
 
 
 _TYPE_TO_CLASS = {

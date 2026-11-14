@@ -24,7 +24,6 @@ from .pi_context import to_openai
 from .pi_images import ContextImages
 from .pi_trace import PiTraceRecorder
 from .pi_models import PiModelObserver, public_message
-from cota.policy import PolicyContext, PolicyServices
 from cota.llm.observation import model_trace, model_purpose, observe_model_call
 
 logger = logging.getLogger(__name__)
@@ -271,45 +270,21 @@ class PiAgentRuntime:
     async def _initial_context(self):
         return self._working_context()
 
-    async def _policy_guidance(self, messages):
-        # Only successful reads whose results remain in the model context count.
-        # active_skill and historical reads removed by compaction are not routing state.
-        retained = {m.get('cotaResultEventId'): m for m in messages
-                    if m.get('role') == 'toolResult' and m.get('toolName') == 'read'
-                    and not m.get('isError') and m.get('cotaResultEventId')}
-        from cota.events.resources import skill_read_name
-        events = list(self.dst.events)
-        read_skills = []
-        for result in events:
-            skill = skill_read_name(result)
-            if not skill:
-                continue
-            message = retained.get(result.event_id)
-            if (message is not None
-                    and message.get('toolCallId') == result.payload['tool_call_id']
-                    and message.get('content') == result_content(result.payload)
-                    and skill not in read_skills):
-                read_skills.append(skill)
-        context = PolicyContext.from_runtime(messages, self.dst, self._available_skills, read_skills,
-                                             max_chars=self.agent.policy.context_chars, events=events)
-        services = getattr(self.agent, 'policy_services', None) or PolicyServices(model=self.agent.llm_instance)
-        with model_purpose('policy'):
-            guidance = await self.agent.policy.guidance(context, services)
-        if self._checkpoint_failed:
-            raise RuntimeError('Policy model checkpoint failed; execution stopped')
-        return guidance, read_skills
-
     async def _prepare(self, payload):
         native = payload.get('native') is True
         source = self.dst.context_messages
-        messages = [m for m in source if m['role'] != 'system' and not m.get('cotaDeferred')]
+        current_run = self.dst.execution.get('run_id')
+        messages = []
+        for m in source:
+            if m['role'] == 'system' or m.get('cotaDeferred'):
+                continue
+            if (m.get('cotaContextSummary') and m['role'] == 'toolResult'
+                    and m.get('cotaRunId') != current_run):
+                m = {**m, 'content': [{'type': 'text', 'text': m['cotaContextSummary']}]}
+            messages.append(m)
         base = self._system_prompt + payload.get('skillPrompt', '') + payload.get('toolPrompt', '')
 
-        guidance, reads = await self._policy_guidance(messages)
-        runtime_context = '\n\n'.join(value for value in (
-            self._runtime_context,
-            '<business_guidance>\n' + guidance['text'] + '\n</business_guidance>' if guidance['text'] else '',
-        ) if value)
+        runtime_context = self._runtime_context
         messages = [{'role': 'system', 'content': base, 'timestamp': 0}] + messages
         tools = self._get_tools_schema()
         native_tools = payload.get('nativeTools', [])
@@ -327,20 +302,9 @@ class PiAgentRuntime:
                   or tool['function']['name'] == 'send_files' and self._files_allowed()]
         tools += native_tools
         tools.sort(key=lambda tool: tool['function']['name'])
-        from cota.policy.base import digest
-        self._trace.policy = {
-            'method': guidance['method'], 'version': self.agent.policy.version,
-            'catalog_hash': digest(self.agent.policy.policies),
-            'strategy_hash': digest({'options': self.agent.policy.options, 'state': self.agent.policy.state}),
-            'policies': [{'name': p['name'], 'hash': digest(p)} for p in guidance['policies']], 'read_skills': reads,
-            'decisions': [{k: decision[k] for k in ('name', 'status', 'step', 'evidence')}
-                          for decision in guidance['decisions']],
-        }
         if self._trace.debug_enabled:
-            self._trace.preparation = {key: guidance[key] for key in
-                ('method', 'decisions', 'diagnostics', 'cache_hit', 'duration_ms', 'thoughts', 'omitted_policies')}
             if payload.get('executionBudget'):
-                self._trace.preparation['execution_budget'] = payload['executionBudget']
+                self._trace.preparation = {'execution_budget': payload['executionBudget']}
         await self._checkpoint()
         resources = self._images.catalog()
         if native:
@@ -393,7 +357,6 @@ class PiAgentRuntime:
                                        discovery={**payload, 'tools': tools} if self._trace.debug_enabled else None,
                                        deploy=self._deploy, environment=self._environment.to_dict(), native_tools=inventory)
             await self._checkpoint()
-            self.agent.policy.validate_skills(self._available_skills)
             return {}
         if method == 'authorize_tool':
             self._trace.require_started(payload['toolCallId'], payload['name'], payload['args'])
@@ -528,10 +491,25 @@ class PiAgentRuntime:
         else:
             model_result = {'content': [{'type': 'text', 'text': json.dumps(raw_result, ensure_ascii=False)}],
                             'details': {}, 'isError': False}
-        # Persist the standard Pi result before letting the loop continue.
-        self._trace.result(call_id, name, args, raw_result, model_result)
+        context = self._tool_context_hint(name, args, model_result)
+        self._trace.result(call_id, name, args, raw_result, model_result, context=context)
         await self._checkpoint()
         return model_result
+
+    @staticmethod
+    def _tool_context_hint(name, args, model_result):
+        if name == 'search_knowledge':
+            label, query_key = '知识库检索', 'query'
+        elif name == 'policy_guidance':
+            label, query_key = '策略检索', 'scenario'
+        else:
+            return None
+        if model_result.get('isError'):
+            return None
+        query = args.get(query_key, '')
+        text = '\n'.join(b.get('text', '') for b in model_result.get('content', []) if b.get('type') == 'text')
+        n = text.count('\n\nPolicy: ') + (1 if text.strip() and 'Policy: ' in text else 0)
+        return {'mode': 'summary', 'summary': f'[{label}: "{query}" → {n}条结果]'}
 
     async def run(self):
         with model_trace(self._trace, self._checkpoint):

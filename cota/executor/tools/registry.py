@@ -81,6 +81,8 @@ class ToolPolicy:
         Args:
             tool: Python tool instance or the name of a Pi tool
         """
+        if not isinstance(tool, str) and getattr(tool, 'internal', False):
+            return True
         tool_name = tool if isinstance(tool, str) else tool.name
 
         # Deny wins

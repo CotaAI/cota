@@ -4,14 +4,14 @@ from pathlib import Path
 import sys
 
 from cota.annotation_files import export_worksheet, read_worksheet, write_worksheet
-from cota.policy import catalog_budgets
 from cota.store import Store
 from cota.utils.io import read_yaml_from_path
 
 
 def _budgets(config):
     config_data = read_yaml_from_path(str(Path(config) / "agent.yml")) or {}
-    return catalog_budgets(config_data.get("policy", {}))
+    policy = config_data.get("policy", {})
+    return {key: policy[key] for key in ('max_policies', 'max_chars') if key in policy}
 
 
 def _store(config):
@@ -47,7 +47,7 @@ async def _run(args):
             document = read_worksheet(args.input, **_budgets(args.config))
             write_worksheet(args.output, document)
             print(f'已生成 Policy 文件：{args.output}\n'
-                  '将文件放入 Bot 的 policy/ 目录；训练型策略先执行 cota train，再重新加载 Agent。')
+                  '将文件放入 Bot 的 policy/ 目录，重新加载 Agent 即可生效。')
     finally:
         engine = getattr(store, 'engine', None)
         if engine is not None:

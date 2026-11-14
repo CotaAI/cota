@@ -13,9 +13,10 @@ from cota.utils.io import read_yaml_from_path
 from cota.processor import Processor
 from cota.store import Store
 from cota.llm import LLM
-from cota.policy import Policy, AllPolicy, PolicyServices, load_policy
 from cota.config import validate_bot_config
 from cota.knowledge import KnowledgeIndex, KnowledgeTool
+from cota.policy.index import PolicyIndex
+from cota.policy.tool import PolicyTool
 from cota.utils.common import merge_dicts
 
 from cota.executor.tools import ToolRegistry
@@ -33,7 +34,6 @@ class Agent:
         name: Optional[Text] = None,
         description: Optional[Text] = None,
         llms: Optional[Dict[Text, LLM]] = None,
-        policy: Optional[Policy] = None,
         store: Optional[Store] = None,
         dialogue: Optional[Dict] = None,
         user_proxy: Optional[Dict] = None,
@@ -45,8 +45,6 @@ class Agent:
         self.description = description
         self.skill_paths = []
         self.llms = llms
-        self.policy = policy or AllPolicy()
-        self.policy_services = PolicyServices(model=self.llm_instance)
         self.store = store
         self.dialogue = dialogue or {}
         validate_runtime_selection(self.dialogue)
@@ -96,7 +94,8 @@ class Agent:
         user_proxy = agent_config.get("user_proxy", {})
 
         # Skill-based business cases
-        policy = load_policy(path, agent_config.get("policy", {}))
+        policy_dir = os.path.join(path, 'policy')
+        policy_index = PolicyIndex.build(policy_dir) if os.path.isdir(policy_dir) else None
 
         # Resolve file-backed SQLite paths relative to this Bot, not the CLI's
         # working directory. Store and user memory must use the same path.
@@ -149,7 +148,6 @@ class Agent:
             description=description,
             store=store,
             llms=llms,
-            policy=policy,
             dialogue=dialogue,
             user_proxy=user_proxy,
             deploy=agent_config.get('deploy', DEFAULT_DEPLOY),
@@ -158,12 +156,12 @@ class Agent:
         )
 
         agent.config_path = path
-        from cota.policy.resources import PolicyResources
-        agent.policy_services = PolicyResources(endpoints_config, model=agent.llm_instance).services()
         agent.workspace_path = workspace_path
         agent._tool_registry = tool_registry
         if knowledge_index:
             tool_registry.register(KnowledgeTool(knowledge_index, agent))
+        if policy_index:
+            tool_registry.register(PolicyTool(policy_index))
         skill_dir = os.path.abspath(os.path.join(path, 'skills'))
         agent.skill_paths = [skill_dir] if os.path.isdir(skill_dir) else []
         agent.user_memory = user_memory

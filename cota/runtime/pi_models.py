@@ -51,7 +51,6 @@ class PiModelObserver:
         metadata = {'request_id': uuid4().hex, 'request_sequence': self.recorder.next_request_sequence(),
                     'purpose': purpose, 'model': payload['model']}
         if purpose == 'dialogue':
-            metadata['policy'] = deepcopy(self.recorder.policy)
             projection = payload.get('contextBudget', {}).get('image_projection')
             if projection:
                 metadata['image_projection'] = projection

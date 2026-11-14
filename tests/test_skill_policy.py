@@ -184,17 +184,6 @@ def test_character_budget_reports_omission_without_truncating_and_considers_late
     assert len(result['text']) <= limit
 
 
-@pytest.mark.asyncio
-async def test_exact_catalog_budget_remains_usable_through_runtime_policy():
-    from cota.policy import AllPolicy, PolicyContext
-    value = policy()
-    size = len(PolicyCatalog([value]).guidance(['weather'], [])['text'])
-    catalog = PolicyCatalog([value], max_chars=size)
-    guidance = await AllPolicy(catalog).guidance(PolicyContext('session', available_skills=('weather',)))
-    assert guidance['policies'] == [value]
-    assert len(guidance['text']) <= size
-
-
 def test_selected_policy_rendering_ignores_rank_only_reordering():
     first = policy(); first['name'] = 'a'
     second = deepcopy(first); second['name'] = 'b'

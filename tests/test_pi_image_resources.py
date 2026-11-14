@@ -195,20 +195,6 @@ async def test_group_start_does_not_authorize_inputs_after_its_cutoff(mock_agent
     assert 'later private input' not in json.dumps(options)
 
 
-@pytest.mark.asyncio
-async def test_runtime_guidance_is_separate_from_stable_system(mock_agent):
-    from cota.runtime.pi_runtime import PiAgentRuntime
-    from cota.policy import AllPolicy, PolicyCatalog
-    mock_agent.policy = AllPolicy(PolicyCatalog([{'name': 'guide', 'steps': [{'bot': [{'thought': 'CURRENT_BUSINESS_GUIDANCE'}]}]}]))
-    dst = DST('guidance', mock_agent)
-    dst.append_event(UserUtterEvent('real request'))
-    runtime = PiAgentRuntime(mock_agent, dst, dst.session_id)
-    prepared = await runtime._prepare({'native': True, 'nativeTools': [], 'extensionTools': []})
-    assert 'CURRENT_BUSINESS_GUIDANCE' not in prepared['systemPrompt']
-    assert 'CURRENT_BUSINESS_GUIDANCE' in prepared['runtimeContext']
-    assert 'CURRENT_BUSINESS_GUIDANCE' not in str(dst.as_dict())
-
-
 def test_historical_image_projection_matches_node_and_wrap_up():
     import shutil
     import subprocess

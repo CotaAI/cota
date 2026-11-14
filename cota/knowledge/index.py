@@ -9,6 +9,8 @@ from .loader import KnowledgeManifest, discover_files
 logger = logging.getLogger(__name__)
 
 _BM25_CANDIDATE_MULTIPLIER = 4
+_MAX_CHUNK_CHARS = 800
+_MAX_RESULT_CHARS = 4000
 
 
 class KnowledgeIndex:
@@ -26,6 +28,7 @@ class KnowledgeIndex:
             return None
 
         chunks = []
+        file_tags = {}
         for rel_path, abs_path in discover_files(knowledge_dir):
             try:
                 with open(abs_path, 'r', encoding='utf-8') as f:
@@ -33,6 +36,9 @@ class KnowledgeIndex:
             except Exception as e:
                 logger.warning(f'Cannot read knowledge file {rel_path}: {e}')
                 continue
+            meta, _ = parse_frontmatter(text)
+            tags = meta.get('tags', [])
+            file_tags[rel_path] = ' '.join(tags) if tags else ''
             file_chunks = chunk_markdown(text, source=rel_path)
             chunks.extend(file_chunks)
 
@@ -42,22 +48,12 @@ class KnowledgeIndex:
 
         documents = []
         for chunk in chunks:
-            meta, _ = parse_frontmatter('')
-            tags = ''
-            if chunk['source']:
-                try:
-                    with open(f'{knowledge_dir}/{chunk["source"]}', 'r', encoding='utf-8') as f:
-                        file_meta, _ = parse_frontmatter(f.read())
-                        tags = ' '.join(file_meta.get('tags', []) or [])
-                except Exception:
-                    pass
             title_text = ' '.join(chunk['heading_chain'])
             documents.append({
                 'id': chunk['id'],
-                'text': chunk['text'],
                 'fields': {
                     'title': (title_text, 3),
-                    'tags': (tags, 2),
+                    'tags': (file_tags.get(chunk['source'], ''), 2),
                     'body': (chunk['text'], 1),
                 },
             })
@@ -143,17 +139,26 @@ class KnowledgeIndex:
         if not results:
             return ''
         parts = []
+        total = 0
         for r in results:
             chunk = self._chunks.get(r['id'])
             if not chunk:
                 continue
             header = ' > '.join(chunk['heading_chain']) if chunk['heading_chain'] else chunk['source']
-            parts.append(f'[{header}]\n{chunk["text"]}')
+            text = chunk['text']
+            if len(text) > _MAX_CHUNK_CHARS:
+                text = text[:_MAX_CHUNK_CHARS] + '...'
+            part = f'[{header}]\n{text}'
+            if total + len(part) > _MAX_RESULT_CHARS and parts:
+                break
+            parts.append(part)
+            total += len(part)
         return '\n\n---\n\n'.join(parts)
 
-    @staticmethod
-    def _build_rerank_prompt(query, candidates):
-        numbered = '\n\n'.join(f'[{i}] {c["text"][:500]}' for i, c in enumerate(candidates))
+    def _build_rerank_prompt(self, query, candidates):
+        numbered = '\n\n'.join(
+            f'[{i}] {self._chunks[c["id"]]["text"][:500]}'
+            for i, c in enumerate(candidates) if c['id'] in self._chunks)
         return (
             f'用户问题：{query}\n\n'
             f'以下是候选知识片段，请判断每段与问题的相关性。\n'
@@ -161,8 +166,7 @@ class KnowledgeIndex:
             f'如果没有相关片段，输出"无"。\n\n{numbered}'
         )
 
-    @staticmethod
-    def _parse_rerank_response(response, candidates, top_k):
+    def _parse_rerank_response(self, response, candidates, top_k):
         """Parse LLM rerank response: extract indices, return formatted results."""
         import re
         indices = [int(x) for x in re.findall(r'\d+', response) if int(x) < len(candidates)]
@@ -174,11 +178,7 @@ class KnowledgeIndex:
             if idx not in seen:
                 seen.add(idx)
                 unique.append(idx)
-        selected = [candidates[i] for i in unique[:top_k]]
-        parts = []
-        for r in selected:
-            parts.append(r['text'])
-        return '\n\n---\n\n'.join(parts)
+        return self._format_results([candidates[i] for i in unique[:top_k]])
 
     def _parse_nav_response(self, response):
         """Parse LLM navigation response: extract file paths."""

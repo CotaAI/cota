@@ -248,31 +248,3 @@ async def test_invalid_provider_response_is_retained_on_parse_failure(tmp_path):
     assert record['provider_response']['choices'] == []
     assert record['status'] == 'failed' and record['error_type'] == 'ValueError'
 
-
-@pytest.mark.asyncio
-async def test_auxiliary_model_failure_can_fall_back_without_execution_event(tmp_path, caplog):
-    from types import SimpleNamespace
-    from cota.llm.observation import model_trace, model_purpose, observe_model_call
-    from cota.runtime.pi_trace import PiTraceRecorder
-    from cota.policy import train_policy, load_policy, PolicyServices
-    from tests.test_trainable_policy import setup_bot, context
-    config = setup_bot(tmp_path, 'model', {'llm': 'judge'})
-    await train_policy(tmp_path, config)
-    policy = load_policy(tmp_path, config)
-    dst, store = DST('fallback', None), MemoryStore()
-    dst.append_event(Event('run_started', {}, run_id='r'))
-    async def checkpoint():
-        await store.save(dst)
-    async def failing_model(**request):
-        return await observe_model_call(AsyncMock(side_effect=ConnectionError('network unavailable')), request, llm='judge')
-    with model_trace(PiTraceRecorder(dst, store), checkpoint), model_purpose('policy'):
-        result = await policy.guidance(context(), PolicyServices(model=lambda name: SimpleNamespace(generate_chat=failing_model)))
-    assert result['diagnostics'][0]['code'] == 'policy_fallback'
-    assert result['policies']
-    assert 'purpose=policy' in caplog.text and 'error_type=ConnectionError' in caplog.text
-    assert 'network unavailable' not in caplog.text
-    assert [e.type for e in dst.events] == ['run_started']
-    dst.append_event(Event('run_finished', {'status': 'completed'}))
-    await store.save(dst)
-    assert (await store.load(dst.session_id)).execution['status'] == 'completed'
-    assert await store.model_debug_headers(dst.session_id) == []

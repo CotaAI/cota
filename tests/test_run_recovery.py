@@ -8,7 +8,6 @@ import pytest
 from cota.dst import DST
 from cota.events import Event, UserUtterEvent, ToolResultEvent
 from cota.events.resources import skill_read_name
-from cota.policy import PolicyContext
 from cota.runtime.pi_runtime import PiAgentRuntime
 from cota.executor.tools.base import FunctionTool, create_tool_schema
 from cota.snapshots import make_snapshot
@@ -65,10 +64,6 @@ def test_terminal_projection_keeps_results_and_closes_entire_batch(status, input
     assert dst.as_dict()['events'][:len(original)] == original
     for cache in (None, snapshot, make_snapshot(dst)):
         assert DST.from_events(dst.session_id, dst.events, snapshot=cache).state_dict() == dst.state_dict()
-    context = PolicyContext.from_runtime(messages, dst, ['weather'], [], max_chars=16000)
-    inferred = [o for o in context.observations if o.get('source') == 'runtime']
-    assert len(inferred) == 2
-    assert all(o['outcome'] == 'unknown' and 'event_id' not in o for o in inferred)
     assert not any(skill_read_name(e) for e in dst.events)
 
 

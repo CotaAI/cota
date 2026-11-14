@@ -58,7 +58,7 @@ def test_picture_book_is_portable_and_has_policy_eval():
     paths = set(template_files(BOT))
     assert skill / 'assets/project-template/book.json' in paths
     assert BOT / 'bookbot/models.py' in paths
-    PolicyCatalog.from_document(yaml.safe_load((BOT / 'policy/data.yml').read_text()))
+    PolicyCatalog.load(BOT / 'policy/POLICY.md')
     assert len(load_cases(BOT / 'policy/eval')) >= 8
 
 
@@ -376,8 +376,6 @@ async def test_real_pi_long_tool_chain_and_sqlite_resume(book_modules, tmp_path)
         {'content': '前面保存的是小兔看云的故事。'},
     ])
     async def open_agent():
-        from cota.policy import train_policy
-        await train_policy(root, yaml.safe_load((root / 'agent.yml').read_text())['policy'])
         agent = Agent.load_from_path(str(root))
         adapter = agent.llm_instance('default').client
         # Controlled Python SDK boundary; native streaming is tested separately.
@@ -405,9 +403,6 @@ async def test_real_pi_long_tool_chain_and_sqlite_resume(book_modules, tmp_path)
         assert 'Cota 运行与配套命令' in capability_help
         assert 'image_understand' in capability_help
         assert (root / 'workspace/books/long-story/故事与分镜.md').read_text() == '小兔抬头，看见一片云。'
-        guidance = str(model.requests[0]['messages'][-1]['content'])
-        assert 'Policy: text-only' in guidance
-        assert guidance.count('Policy: ') <= 3
         assert 'Policy:' not in model.requests[0]['messages'][0]['content']
         system_prompt = model.requests[0]['messages'][0]['content']
         assert 'Bot directory: ' + json.dumps(str(root)) in system_prompt
@@ -625,8 +620,6 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
     ]
     agent = None
     try:
-        from cota.policy import train_policy
-        await train_policy(root, yaml.safe_load((root / 'agent.yml').read_text())['policy'])
         agent = Agent.load_from_path(str(root))
         await agent.create_processor().handle_message(Message(text='制作并发布一个审阅稿', session_id='production', sender_id='reader', receiver='bot'))
         assert observed == ['generate', 'edit', 'vision']

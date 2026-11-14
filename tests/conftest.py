@@ -24,8 +24,6 @@ class MockAgent:
         self.llms = {
             "default": {"model": "test-model", "type": "openai", "key": "sk-test"}
         }
-        from cota.policy import PolicyCatalog, AllPolicy
-        self.policy = AllPolicy(PolicyCatalog())
         self.is_team = False
         self.agents = {}
         self.store = None

@@ -22,6 +22,10 @@ class KnowledgeTool(Tool):
         return 'search_knowledge'
 
     @property
+    def internal(self):
+        return True
+
+    @property
     def description(self):
         return f'搜索知识库。{self._index.manifest.description}'
 

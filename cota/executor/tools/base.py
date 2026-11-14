@@ -93,6 +93,11 @@ class Tool(ABC):
         """Whether this tool is enabled by default."""
         return True
 
+    @property
+    def internal(self) -> bool:
+        """Internal tools bypass the user-configured allow/deny policy."""
+        return False
+
     def for_execution(self, user_id: Optional[str]) -> "Tool":
         """Bind a private tool view; clients and resource ownership stay shared."""
         bound = copy(self)

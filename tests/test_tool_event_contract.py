@@ -5,7 +5,6 @@ import pytest
 from cota.dst import DST
 from cota.events import Event, UserUtterEvent, BotUtterEvent, ToolResultEvent
 from cota.events.tool import result_content, text_result
-from cota.policy import PolicyContext
 from cota.snapshots import make_snapshot
 
 
@@ -37,12 +36,6 @@ def test_compact_result_replay_snapshot_and_policy_join(status, content):
     assert dst.trace('r')['calls'][0]['arguments'] == {'order_id': '123'}
     for cache in (None, snapshot, make_snapshot(dst)):
         assert DST.from_events(dst.session_id, dst.events, snapshot=cache).state_dict() == dst.state_dict()
-    if content is None:
-        context = PolicyContext.from_runtime(dst.context_messages, dst, [], [])
-        tool = next(o for o in context.observations if o['role'] == 'tool')
-        assert tool['status'] == status
-        assert '123' in tool['text'] and 'found' in tool['text']
-        assert tool['event_id'] == event.event_id
 
 
 def test_exact_content_override_is_detached_and_deduplicated():
@@ -72,3 +65,48 @@ def test_pi_result_preserves_empty_text_and_stores_images_once(blocks, value):
 def test_old_utterance_types_are_not_accepted(kind):
     with pytest.raises(ValueError, match='Unknown event type'):
         Event(kind, {'text': 'old'})
+
+
+class TestContextField:
+    def test_valid_context_on_tool_result(self):
+        event = ToolResultEvent('search_knowledge', result='text',
+                                tool_call_id='c',
+                                context={'mode': 'summary', 'summary': '[检索: "退款" → 2条]'})
+        assert event.payload['context'] == {'mode': 'summary', 'summary': '[检索: "退款" → 2条]'}
+
+    def test_context_not_required(self):
+        event = ToolResultEvent('lookup', result='ok', tool_call_id='c')
+        assert 'context' not in event.payload
+
+    def test_invalid_context_mode_raises(self):
+        with pytest.raises(ValueError, match='context'):
+            ToolResultEvent('lookup', result='ok', tool_call_id='c',
+                            context={'mode': 'invalid', 'summary': 'x'})
+
+    def test_empty_summary_raises(self):
+        with pytest.raises(ValueError, match='context'):
+            ToolResultEvent('lookup', result='ok', tool_call_id='c',
+                            context={'mode': 'summary', 'summary': ''})
+
+    def test_context_projected_to_message(self):
+        dst = DST('ctx', None)
+        dst.append_event(UserUtterEvent('q'))
+        dst.append_event(Event('run_started', {'input_event_id': dst.latest_user_event.event_id}, run_id='r'))
+        dst.append_event(Event('tool_started', {'tool_call_id': 'c', 'tool': 'search_knowledge',
+                                                 'arguments': {'query': '退款'}}, run_id='r'))
+        dst.append_event(ToolResultEvent('search_knowledge', result='full text',
+                                         tool_call_id='c',
+                                         context={'mode': 'summary', 'summary': '[检索: "退款"]'}))
+        msg = next(m for m in dst.context_messages if m['role'] == 'toolResult')
+        assert msg['cotaContextSummary'] == '[检索: "退款"]'
+        assert msg['content'][0]['text'] == 'full text'
+
+    def test_no_context_means_no_summary(self):
+        dst = DST('ctx2', None)
+        dst.append_event(UserUtterEvent('q'))
+        dst.append_event(Event('run_started', {'input_event_id': dst.latest_user_event.event_id}, run_id='r'))
+        dst.append_event(Event('tool_started', {'tool_call_id': 'c', 'tool': 'bash',
+                                                 'arguments': {'command': 'ls'}}, run_id='r'))
+        dst.append_event(ToolResultEvent('bash', result='file.txt', tool_call_id='c'))
+        msg = next(m for m in dst.context_messages if m['role'] == 'toolResult')
+        assert 'cotaContextSummary' not in msg
