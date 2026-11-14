@@ -1,6 +1,5 @@
 """Markdown heading-aware chunker for knowledge files."""
 import re
-from typing import Dict, List, Optional
 
 _FRONTMATTER = re.compile(r'\A---\n(.*?\n)---\n', re.DOTALL)
 _HEADING = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)

@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from cota.events import EventType, BotUtterEvent
 from cota.files import FileStorage
-from cota.events.utils.tool import result_content, text_result
+from cota.events.utils.tool import text_result
 from cota.executor.tools.base import ToolWrapper
 from cota.executor.environment import DEFAULT_DEPLOY, ExecutionEnvironment, NATIVE_TOOLS
 from cota.constant import DEFAULT_AGENT_LOOP_PROMPT, DEFAULT_DIALOGUE_MAX_TOKENS

@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from cota.llm.custom import CustomHttpClient
-from cota.llm.llm import LLM
 from cota.llm.openai import OpenAIClient, OpenAIRAGClient
 
 
