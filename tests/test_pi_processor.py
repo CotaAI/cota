@@ -6,7 +6,7 @@ from cota.store import MemoryStore
 from cota.events import Event, BotUtterEvent, UserUtterEvent
 from tests.resource_fixtures import skill_result
 from cota.dst import DST
-from cota.message.message import Message
+from cota.message import Message
 from cota.channels.events import InboundMessage
 from cota.channels.queue import MessageBus
 

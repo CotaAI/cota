@@ -9,7 +9,8 @@ import logging
 import asyncio
 from typing import Text, Optional, Dict
 
-from cota.utils.io import read_yaml_from_path
+import yaml
+
 from cota.processor import Processor
 from cota.store import Store
 from cota.llm import LLM
@@ -17,7 +18,6 @@ from cota.config import validate_bot_config
 from cota.knowledge import KnowledgeIndex, KnowledgeTool
 from cota.policy.index import PolicyIndex
 from cota.policy.tool import PolicyTool
-from cota.utils.common import merge_dicts
 
 from cota.executor.tools import ToolRegistry
 from cota.executor.user_memory import create_user_memory
@@ -80,10 +80,10 @@ class Agent:
     ) -> "Agent":
         logger.debug(f"Loading agent config from path: {path}")
 
-        agent_config = read_yaml_from_path(os.path.join(path, "agent.yml"))
-        endpoints_config = read_yaml_from_path(
-            os.path.join(path, "endpoints.yml")
-        )
+        with open(os.path.join(path, "agent.yml"), encoding="utf-8") as f:
+            agent_config = yaml.safe_load(f)
+        with open(os.path.join(path, "endpoints.yml"), encoding="utf-8") as f:
+            endpoints_config = yaml.safe_load(f)
         agent_config = cls.merge_agent_config(agent_config)
 
         system_config = agent_config.get("system", {})
@@ -207,5 +207,11 @@ class Agent:
         import copy
         validate_bot_config(config)
         default_config = copy.deepcopy(DEFAULT_CONFIG)
-        updated_dict = merge_dicts(default_config, config)
-        return updated_dict
+        def _merge(base, update):
+            for key in update:
+                if key in base and isinstance(base[key], dict) and isinstance(update[key], dict):
+                    _merge(base[key], update[key])
+                else:
+                    base[key] = update[key]
+            return base
+        return _merge(default_config, config)

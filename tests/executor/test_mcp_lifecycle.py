@@ -5,15 +5,15 @@ from types import SimpleNamespace
 import anyio
 import pytest
 
-from cota.executor.mcp import MCPClientWrapper
-from cota.executor.mcp_pool import MCPConnectionPool
-from cota.executor.mcp_remote import RemoteMCPClient
+from cota.executor.mcp.client import MCPClientWrapper
+from cota.executor.mcp.pool import MCPConnectionPool
+from cota.executor.mcp.remote import RemoteMCPClient
 
 
 @pytest.fixture(params=["stdio", "remote"])
 def client(request, monkeypatch):
     module = (
-        "cota.executor.mcp" if request.param == "stdio" else "cota.executor.mcp_remote"
+        "cota.executor.mcp.client" if request.param == "stdio" else "cota.executor.mcp.remote"
     )
     state = SimpleNamespace(
         entered=False, closed=False, transport_closed=False, fail=False, block=False
@@ -125,7 +125,7 @@ async def test_pool_reconnects_when_credentials_rotate(monkeypatch):
         async def close(self):
             self.connected = False
 
-    monkeypatch.setattr("cota.executor.mcp_pool.RemoteMCPClient", Client)
+    monkeypatch.setattr("cota.executor.mcp.pool.RemoteMCPClient", Client)
     pool = MCPConnectionPool()
     first = await pool.get_or_create("alice", "http://device", "old")
     second = await pool.get_or_create("alice", "http://device", "new")

@@ -351,7 +351,7 @@ async def test_real_pi_long_tool_chain_and_sqlite_resume(book_modules, tmp_path)
     import sys
     from cota.agent import Agent
     from cota.templates import TEMPLATE_IGNORE
-    from cota.message.message import Message
+    from cota.message import Message
     from tests.test_pi_runtime import call
     from tests.integration.test_example_bots import ModelHTTP
     from openai import AsyncOpenAI
@@ -536,7 +536,7 @@ async def test_pi_calls_image_and_vision_services_builds_pdf_and_publishes(book_
     import sys
     from aiohttp import web
     from cota.agent import Agent
-    from cota.message.message import Message
+    from cota.message import Message
     from cota.templates import TEMPLATE_IGNORE
     from tests.test_pi_runtime import call
     pytest.importorskip('reportlab')

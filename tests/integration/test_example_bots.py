@@ -17,7 +17,7 @@ import pytest_asyncio
 from cota.agent import Agent
 from cota.executor.tools.base import FunctionTool
 from cota.executor.tools.registry import ToolPolicy
-from cota.message.message import Message
+from cota.message import Message
 from cota.templates import TEMPLATE_IGNORE
 from tests.test_pi_runtime import call
 

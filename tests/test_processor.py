@@ -3,7 +3,7 @@
 import pytest
 from cota.processor import Processor
 from cota.store import MemoryStore
-from cota.message.message import Message
+from cota.message import Message
 from cota.dst import DST
 from cota.events import UserUtterEvent
 

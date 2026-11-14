@@ -13,7 +13,7 @@ from uuid import uuid4
 from cota import __version__
 from cota.agent import Agent
 from cota.llm import LLM
-from cota.message.message import Message
+from cota.message import Message
 from cota.templates import TEMPLATE_IGNORE
 
 from .artifacts import read_results, write_json, write_results

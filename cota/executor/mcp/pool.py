@@ -10,7 +10,7 @@ import logging
 import time
 from typing import Dict, Optional
 
-from .mcp_remote import RemoteMCPClient
+from .remote import RemoteMCPClient
 
 logger = logging.getLogger(__name__)
 

@@ -16,7 +16,7 @@ from typing import Optional, Text, Callable, Any, TYPE_CHECKING
 
 from cota.channels.events import InboundMessage, OutboundMessage
 from cota.channels.queue import MessageBus
-from cota.message.message import Message
+from cota.message import Message
 from cota.store import Store
 from cota.dst import DST
 from cota.events import UserUtterEvent

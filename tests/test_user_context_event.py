@@ -5,7 +5,7 @@ from cota.dst import DST
 from cota.events import Event
 from cota.processor import Processor
 from cota.store import MemoryStore
-from cota.message.message import Message
+from cota.message import Message
 
 
 def test_user_update_is_atomic_detached_and_deduplicated():

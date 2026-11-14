@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from cota.executor.mcp_lifecycle import MCPSessionOwner
+from cota.executor.mcp.lifecycle import MCPSessionOwner
 
 
 @pytest.fixture

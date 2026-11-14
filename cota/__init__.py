@@ -27,7 +27,7 @@ except Exception:
 # Core classes for library usage
 from cota.agent import Agent
 from cota.application import Application, Submission
-from cota.message.message import Message
+from cota.message import Message
 from cota.events import (
     Event,
     EventType,

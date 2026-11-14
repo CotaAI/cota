@@ -5,7 +5,7 @@ import pytest
 
 from cota.channels.events import InboundMessage
 from cota.channels.runner import ChannelRunner
-from cota.message.message import Message
+from cota.message import Message
 from cota.processor import Processor
 from cota.store import MemoryStore, SQLStore
 

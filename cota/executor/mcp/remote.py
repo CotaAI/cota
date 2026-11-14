@@ -11,7 +11,7 @@ Key differences from mcp.py MCPClientWrapper:
 
 import logging
 
-from .mcp_lifecycle import MCPSessionOwner
+from .lifecycle import MCPSessionOwner
 import time
 from typing import Any, Dict, List, Optional
 

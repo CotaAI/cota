@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 
 from cota.processor import Processor
 from cota.store import MemoryStore
-from cota.message.message import Message
+from cota.message import Message
 from cota.dst import DST
 from cota.channels.events import InboundMessage, OutboundMessage
 from cota.channels.queue import MessageBus

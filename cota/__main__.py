@@ -12,7 +12,6 @@ from cota import server
 from cota.agent import Agent
 from cota.channels import cmdline
 from cota.channels.queue import MessageBus
-from cota.utils.common import list_routes
 from cota import __version__
 from cota.templates import bot_templates_dir, TEMPLATE_IGNORE
 
@@ -243,7 +242,10 @@ def run(args):
     tunnel_type = getattr(args, 'tunnel', None)
     if tunnel_type:
         _register_tunnel_listener(app, args.port, tunnel_type)
-    list_routes(app)
+    for route in app.router.routes:
+        path = '/' + route.path.lstrip('/')
+        methods = ', '.join(sorted(route.methods))
+        logger.debug('%s %s %s', f'{path:50s}', f'{methods:30s}', route.name)
     app.run(**create_server_config(args))
 
 

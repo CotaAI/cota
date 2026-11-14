@@ -65,7 +65,7 @@ async def smoke_examples(root):
     """Exercise the actual installed templates with an offline model callback."""
     from cota.agent import Agent
     from cota.dst import DST
-    from cota.message.message import Message
+    from cota.message import Message
 
     for name in ('weather',):
         agent = Agent.load_from_path(str(root / 'cota_projects' / name))

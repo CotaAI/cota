@@ -2,21 +2,23 @@
 import asyncio
 from pathlib import Path
 import sys
+import yaml
 
 from cota.annotation_files import export_worksheet, read_worksheet, write_worksheet
 from cota.store import Store
-from cota.utils.io import read_yaml_from_path
 
 
 def _budgets(config):
-    config_data = read_yaml_from_path(str(Path(config) / "agent.yml")) or {}
+    with open(Path(config) / "agent.yml", encoding="utf-8") as f:
+        config_data = yaml.safe_load(f) or {}
     policy = config_data.get("policy", {})
     return {key: policy[key] for key in ('max_policies', 'max_chars') if key in policy}
 
 
 def _store(config):
     path = Path(config).resolve()
-    endpoints = read_yaml_from_path(str(path / 'endpoints.yml')) or {}
+    with open(path / 'endpoints.yml', encoding="utf-8") as f:
+        endpoints = yaml.safe_load(f) or {}
     settings = dict(endpoints.get('base_store', {}))
     if settings.get('type', 'memory').lower() != 'sql':
         raise ValueError('独立导出命令需要 SQL Store。内存会话请在 Bot 进程内使用 export_worksheet。')

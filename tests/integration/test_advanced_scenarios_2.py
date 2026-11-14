@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 
 from cota.processor import Processor
 from cota.store import MemoryStore
-from cota.message.message import Message
+from cota.message import Message
 from cota.events import Event
 from tests.resource_fixtures import skill_result
 from cota.dst import DST

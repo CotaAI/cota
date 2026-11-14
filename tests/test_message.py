@@ -1,6 +1,6 @@
 """Tests for cota.message.message.Message"""
 
-from cota.message.message import Message
+from cota.message import Message
 
 
 class TestMessage:

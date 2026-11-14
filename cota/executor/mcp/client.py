@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from .mcp_lifecycle import MCPSessionOwner
+from .lifecycle import MCPSessionOwner
 from typing import Dict, Optional, List
 
 logger = logging.getLogger(__name__)
