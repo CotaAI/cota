@@ -1,7 +1,7 @@
 """User-visible behaviors migrated from the removed Python loop tests."""
 
 import pytest
-from cota.events.resources import skill_read_name
+from cota.events.utils.resources import skill_read_name
 
 from cota.events import Event, UserUtterEvent, BotUtterEvent
 from tests.resource_fixtures import skill_result

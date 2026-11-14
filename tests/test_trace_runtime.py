@@ -1,10 +1,10 @@
-from cota.events.tool import result_content
+from cota.events.utils.tool import result_content
 """Trace facts must match the real Pi loop and survive its failure boundaries."""
 import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
-from cota.events.resources import skill_read_name
+from cota.events.utils.resources import skill_read_name
 
 from cota.dst import DST
 from cota.events import UserUtterEvent

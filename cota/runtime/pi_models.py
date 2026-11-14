@@ -7,7 +7,7 @@ import time
 from uuid import uuid4
 
 from cota.llm.metrics import request_metrics
-from cota.events.assistant import public_content
+from cota.events.utils.assistant import public_content
 
 logger = logging.getLogger(__name__)
 

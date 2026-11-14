@@ -250,7 +250,7 @@ async def test_bot_role_reaches_model(load_bot, name):
 @pytest.mark.parametrize('weather_status', [200, 503])
 async def test_weather_outing_resources_policy_and_replay(load_bot, weather_status):
     """Real Pi resource reads and policy injection; model decisions are scripted."""
-    from cota.events.resources import skill_read_name
+    from cota.events.utils.resources import skill_read_name
     agent, model = await load_bot('weather', [
         {'tool_calls': [call('read', {'path': f'skills/{skill}/SKILL.md'}, skill)
                         for skill in ('weather', 'activity-search', 'outing-plan')]},

@@ -4,7 +4,7 @@ import pytest
 
 from cota.dst import DST
 from cota.events import Event, UserUtterEvent, BotUtterEvent, ToolResultEvent
-from cota.events.tool import result_content, text_result
+from cota.events.utils.tool import result_content, text_result
 from cota.snapshots import make_snapshot
 
 

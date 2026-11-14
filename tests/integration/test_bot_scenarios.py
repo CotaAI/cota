@@ -9,7 +9,7 @@ No real LLM API keys needed.
 import json
 import asyncio
 import pytest
-from cota.events.resources import skill_read_name
+from cota.events.utils.resources import skill_read_name
 from unittest.mock import AsyncMock
 
 from cota.processor import Processor

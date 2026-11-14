@@ -7,7 +7,7 @@ import pytest
 
 from cota.dst import DST
 from cota.events import Event, UserUtterEvent, ToolResultEvent
-from cota.events.resources import skill_read_name
+from cota.events.utils.resources import skill_read_name
 from cota.runtime.pi_runtime import PiAgentRuntime
 from cota.executor.tools.base import FunctionTool, create_tool_schema
 from cota.snapshots import make_snapshot

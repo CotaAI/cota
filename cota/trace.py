@@ -6,7 +6,7 @@ Policy authoring is independent of execution history.
 from copy import deepcopy
 
 from cota.events import Event, EventType
-from cota.events.resources import skill_read_name
+from cota.events.utils.resources import skill_read_name
 
 _CALL_TYPES = {EventType.TOOL_STARTED, EventType.TOOL_RESULT}
 
@@ -14,7 +14,7 @@ _CALL_TYPES = {EventType.TOOL_STARTED, EventType.TOOL_RESULT}
 def validate_event_references(event, events, *, event_map=None):
     """Validate append order and references without inferring missing facts."""
     payload = event.payload
-    from cota.events.assistant import validate_carrier_references
+    from cota.events.utils.assistant import validate_carrier_references
     validate_carrier_references(event, events, event_map=event_map)
     if event.type in _CALL_TYPES:
         phases = [e for e in events if e.type in _CALL_TYPES and e.run_id == event.run_id

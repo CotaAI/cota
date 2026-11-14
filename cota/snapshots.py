@@ -49,9 +49,9 @@ def usable_snapshot(snapshot, session_id, facts):
             last = next((e.event_id for e in reversed(facts[:seq]) if e.type == kind + '_utter'), None)
             if state['latest_' + kind + '_event_id'] != last:
                 raise ValueError('invalid message cursor')
-        from cota.events.context import validate_context
+        from cota.events.utils.context import validate_context
         validate_context(state['context_messages'])
-        from cota.events.common import validate_execution
+        from cota.events.event import validate_execution
         validate_execution(state['execution'])
         return True
     except (KeyError, TypeError, ValueError, AttributeError):

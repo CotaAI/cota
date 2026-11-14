@@ -88,17 +88,17 @@ def apply_context(messages, event, *, active_run, trigger_event=None, deferred_i
         if active_run:
             message['cotaDeferred'] = True
     elif kind == 'bot_utter':
-        from cota.events.assistant import assistant_from_event
+        from cota.events.utils.assistant import assistant_from_event
         message = assistant_from_event(event)
         if message is None:
             return messages
     elif event.run_id != active_run or active_run is None:
         return messages
     elif kind == 'tool_started' and p.get('llm'):
-        from cota.events.assistant import assistant_from_event
+        from cota.events.utils.assistant import assistant_from_event
         message = assistant_from_event(event)
     elif kind == 'tool_result':
-        from cota.events.tool import result_content
+        from cota.events.utils.tool import result_content
         message = {'role': 'toolResult', 'toolCallId': p['tool_call_id'], 'toolName': p['tool'],
                    'content': result_content(p), 'isError': p['status'] != 'success'}
         message['cotaResultEventId'] = event.event_id

@@ -316,7 +316,7 @@ async def test_native_listing_inventory_and_result_survive_store(mock_agent, tmp
     result = next(e for e in dst.events if e.type == 'tool_result')
     assert result.payload['status'] == 'success'
     assert result.payload['result']['entryLimitReached'] == 1
-    from cota.events.tool import result_content
+    from cota.events.utils.tool import result_content
     assert 'note.txt' in str(result_content(result.payload))
     inventory = dst.run_metadata[dst.execution['run_id']]['native_tools']
     assert {'read', 'write', 'edit', 'ls'} <= set(inventory['available'])
@@ -377,7 +377,7 @@ async def test_real_native_search_trace_and_checkpoint(mock_agent, tmp_path, too
         pytest.skip(inventory['unavailable'][tool])
     result = next(e for e in dst.events if e.type == 'tool_result')
     assert result.payload['status'] == 'success'
-    from cota.events.tool import result_content
+    from cota.events.utils.tool import result_content
     assert 'match.txt' in str(result_content(result.payload))
     assert 'resource' not in result.payload
     restored = await store.load(dst.session_id)

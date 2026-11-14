@@ -1,5 +1,5 @@
 """User utterance event."""
-from cota.events.common import EventType
+from cota.events.event import EventType
 from cota.events.event import Event
 
 

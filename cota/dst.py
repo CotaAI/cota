@@ -13,7 +13,7 @@ from copy import deepcopy
 from typing import Text, List, Dict, Any, Optional, TYPE_CHECKING
 
 from cota.events import Event, EventType
-from cota.events.immutable import freeze_json
+from cota.events.utils.immutable import freeze_json
 
 if TYPE_CHECKING:
     from cota.agent import Agent
@@ -64,7 +64,7 @@ class DST:
 
     @property
     def events(self):
-        from cota.events.history import EventHistory
+        from cota.events.utils.history import EventHistory
         return EventHistory(self._events)
 
     @property
@@ -172,7 +172,7 @@ class DST:
         projects_execution = current_run is not None and fact.run_id == current_run
         running = self._execution.get('status') in (None, 'running')
         projects_tool = projects_execution and running
-        from cota.events.context import apply_context
+        from cota.events.utils.context import apply_context
         trigger_event = self._event_map.get(p.get('input_event_id')) if kind == EventType.RUN_STARTED else None
         deferred_ids = set()
         if kind == EventType.RUN_STARTED and (p.get('mode') == 'group' or p.get('context_input_id')):
@@ -203,7 +203,7 @@ class DST:
                 'name': p['tool'], 'arguments': deepcopy(p['arguments'])}
         elif kind == EventType.TOOL_RESULT and projects_tool:
             self._execution.setdefault('pending_tools', {}).pop(p['tool_call_id'], None)
-            from cota.events.resources import skill_read_name
+            from cota.events.utils.resources import skill_read_name
             skill = skill_read_name(fact)
             if skill:
                 self._active_skill = skill
@@ -408,7 +408,7 @@ class DST:
 
     @staticmethod
     def _user_content(event):
-        from cota.events.context import user_content
+        from cota.events.utils.context import user_content
         return user_content(event) if event.type == EventType.USER_UTTER else event.text
 
     def build_history_messages(self) -> List[Dict[str, Any]]:

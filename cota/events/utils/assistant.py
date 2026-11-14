@@ -150,7 +150,7 @@ def validate_carrier_references(event, events, *, event_map=None):
 
 def assistant_from_event(event):
     """Project one owner only. Followers and tool-generated utterances add nothing."""
-    from cota.events.context import assistant_message
+    from cota.events.utils.context import assistant_message
     p = event.payload
     projection = p.get('llm', {}).get('image_projection')
 

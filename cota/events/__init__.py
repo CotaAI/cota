@@ -5,7 +5,7 @@ Channel-layer messages (InboundMessage, OutboundMessage) live
 in cota.channels.events — they are transport DTOs, not agent events.
 """
 
-from cota.events.common import EventType
+from cota.events.event import EventType
 from cota.events.event import Event
 from cota.events.user_utter import UserUtterEvent
 from cota.events.bot_utter import BotUtterEvent

@@ -7,7 +7,7 @@ from copy import deepcopy
 import time
 from uuid import uuid4
 
-from cota.events.context import assistant_message
+from cota.events.utils.context import assistant_message
 from .metrics import request_metrics, usage_metrics
 
 logger = logging.getLogger(__name__)

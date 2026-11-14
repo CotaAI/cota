@@ -3,7 +3,7 @@ from copy import deepcopy
 from unittest.mock import Mock
 
 import pytest
-from cota.events.resources import skill_read_name
+from cota.events.utils.resources import skill_read_name
 import sqlalchemy as sa
 
 from cota.dst import DST

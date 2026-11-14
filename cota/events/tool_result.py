@@ -1,7 +1,7 @@
 """Tool result event."""
 from uuid import uuid4
 
-from cota.events.common import EventType
+from cota.events.event import EventType
 from cota.events.event import Event
 
 
@@ -9,7 +9,7 @@ class ToolResultEvent(Event):
     """Observed outcome; arguments and model origin belong to tool_started."""
     def __init__(self, tool: str, result=None, *, tool_call_id=None, content=None,
                  status='success', duration_ms=None, resource=None, context=None, **kw):
-        from cota.events.tool import result_payload
+        from cota.events.utils.tool import result_payload
         super().__init__(EventType.TOOL_RESULT, result_payload(
             tool, tool_call_id or uuid4().hex, result, content=content, status=status,
             duration_ms=duration_ms, resource=resource, context=context), **kw)

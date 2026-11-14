@@ -1,10 +1,10 @@
-from cota.events.tool import result_content
+from cota.events.utils.tool import result_content
 """Real Node/Pi loop with deterministic Python model and tool callbacks."""
 import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
-from cota.events.resources import skill_read_name
+from cota.events.utils.resources import skill_read_name
 
 from cota.events import Event, UserUtterEvent
 from tests.resource_fixtures import skill_result

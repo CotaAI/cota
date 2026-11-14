@@ -77,7 +77,7 @@ def test_resource_contract_keeps_only_core_typed_fields(changes):
 
 def test_tool_output_alone_cannot_claim_skill_read():
     from cota.events import ToolResultEvent
-    from cota.events.resources import skill_read_name
+    from cota.events.utils.resources import skill_read_name
     event = ToolResultEvent('exec', result={'resource': {'kind': 'skill', 'skill': 'weather'}})
     assert 'resource' not in event.payload
     assert skill_read_name(event) is None

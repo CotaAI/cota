@@ -2,7 +2,7 @@
 from unittest.mock import AsyncMock
 
 import pytest
-from cota.events.resources import skill_read_name
+from cota.events.utils.resources import skill_read_name
 
 from cota.events import Event, UserUtterEvent
 from tests.resource_fixtures import skill_result
