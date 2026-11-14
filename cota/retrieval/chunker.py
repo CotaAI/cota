@@ -34,13 +34,23 @@ def chunk_markdown(text, source=""):
     splits = _split_by_headings(body, fenced_ranges)
 
     if not splits:
-        chunk_id = f"{source}" if source else "chunk-0"
-        return [{'id': chunk_id, 'heading_chain': [doc_title] if doc_title else [],
-                 'title': doc_title or source, 'text': body.strip(), 'source': source}]
+        text = body.strip()
+        heading_chain = [doc_title] if doc_title else []
+        title = doc_title or source
+        parts = _split_oversized(text, _MAX_CHUNK_CHARS)
+        base_id = f"{source}" if source else "chunk-0"
+        if len(parts) == 1:
+            return [{'id': base_id, 'heading_chain': heading_chain,
+                     'title': title, 'text': text, 'source': source}]
+        return [{'id': base_id if i == 0 else f"{base_id}|{i}",
+                 'heading_chain': list(heading_chain), 'title': title,
+                 'text': part, 'source': source}
+                for i, part in enumerate(parts)]
 
     chunks = []
     heading_stack = []
-    id_counts = {}
+    all_ids = set()
+    seq = 0
     for level, title, content in splits:
         if level is not None:
             while heading_stack and heading_stack[-1][0] >= level:
@@ -58,9 +68,11 @@ def chunk_markdown(text, source=""):
         base_id = f"{source}#{chunk_title}" if source else chunk_title
 
         for sub_text in _split_oversized(chunk_text, _MAX_CHUNK_CHARS):
-            n = id_counts.get(base_id, 0)
-            id_counts[base_id] = n + 1
-            chunk_id = base_id if n == 0 else f"{base_id}:{n}"
+            chunk_id = base_id
+            if chunk_id in all_ids:
+                seq += 1
+                chunk_id = f"{base_id}|{seq}"
+            all_ids.add(chunk_id)
             chunks.append({'id': chunk_id, 'heading_chain': list(chain),
                            'title': chunk_title, 'text': sub_text, 'source': source})
     return chunks or [{'id': source, 'heading_chain': [], 'title': source,

@@ -1,6 +1,7 @@
 """Shared retrieval infrastructure: tokenizer, BM25 index, Markdown chunker."""
 import pytest
 from cota.retrieval import tokens, BM25Index, chunk_markdown
+from cota.knowledge.index import _extract_window
 
 
 class TestTokenizer:
@@ -90,7 +91,51 @@ class TestChunker:
         headings = [c['title'] for c in chunks]
         assert not any('Not a heading' in h for h in headings)
 
+    def test_duplicate_heading_ids_unique(self):
+        text = '## A\nFirst\n\n## A\nSecond\n\n## A:1\nThird'
+        chunks = chunk_markdown(text, source='test.md')
+        ids = [c['id'] for c in chunks]
+        assert len(ids) == len(set(ids)), f'Duplicate IDs: {ids}'
+        first = next(c for c in chunks if c['text'] == 'First')
+        second = next(c for c in chunks if c['text'] == 'Second')
+        third = next(c for c in chunks if c['text'] == 'Third')
+        assert first['id'] != second['id']
+        assert second['id'] != third['id']
+        assert first['id'] != third['id']
+
+    def test_no_heading_long_text_split(self):
+        para = 'A' * 600
+        text = f'{para}\n\n{para}\n\n{para}'
+        chunks = chunk_markdown(text, source='test.txt')
+        assert len(chunks) > 1
+        assert all(len(c['text']) <= 1200 for c in chunks)
+        ids = [c['id'] for c in chunks]
+        assert len(ids) == len(set(ids))
+
     def test_empty_sections_skipped(self):
         text = '## A\n\n## B\nContent B'
         chunks = chunk_markdown(text, source='test.md')
         assert all(c['text'].strip() for c in chunks)
+
+
+class TestExtractWindow:
+    def test_short_text_unchanged(self):
+        assert _extract_window('short text', ['short'], 100) == 'short text'
+
+    def test_window_covers_densest_cluster(self):
+        parts = ['退款办理提示' + 'X' * 400, '退款期限是30天，退款金额按原价计算']
+        text = '。'.join(parts)
+        result = _extract_window(text, ['退款', '期限'], 200)
+        assert '退款期限' in result
+        assert '30天' in result
+
+    def test_no_match_returns_head(self):
+        text = 'A' * 500
+        result = _extract_window(text, ['zzz'], 100)
+        assert len(result) <= 104  # 100 + '...'
+        assert result.startswith('A')
+
+    def test_matched_terms_returns_matched(self):
+        results = BM25Index([{'id': 'a', 'text': 'hello world'}]).search('hello')
+        assert 'matched_terms' in results[0]
+        assert 'hello' in results[0]['matched_terms']

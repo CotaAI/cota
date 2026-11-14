@@ -134,7 +134,7 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
           toolPrompt: native.prompt, nativeTools: native.schemas, extensionTools, executionBudget: budget});
         native.imageResources.register(prepared.imageResources);
         if (budget.phase === 'wrap_up') {wrappingUp = true; limited = true;}
-        const source = options.provider ? messages : prepared.messages;
+        const source = prepared.messages ?? messages;
         const systemPrompt = prepared.systemPrompt ?? getCurrentSystemPrompt(source);
         let history = [...(systemPrompt ? [{role: 'system', content: systemPrompt, timestamp: 0}] : []),
           ...source.filter(message => message.role !== 'system')];

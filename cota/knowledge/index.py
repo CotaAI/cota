@@ -15,27 +15,38 @@ _MAX_RESULT_CHARS = 4000
 
 
 def _extract_window(text, matched_terms, max_chars):
-    """Extract a window around the first matched term instead of head-truncating."""
+    """Extract a window covering the densest cluster of matched terms."""
     if len(text) <= max_chars:
         return text
-    best = -1
     text_lower = text.lower()
+    positions = []
     for term in matched_terms:
-        pos = text_lower.find(term.lower())
-        if pos != -1:
-            best = pos
-            break
-    if best == -1:
-        best = 0
-    half = max_chars // 2
-    start = max(0, best - half)
-    end = start + max_chars
-    if end > len(text):
-        end = len(text)
-        start = max(0, end - max_chars)
-    prefix = '...' if start > 0 else ''
+        term_lower = term.lower()
+        start = 0
+        while True:
+            pos = text_lower.find(term_lower, start)
+            if pos == -1:
+                break
+            positions.append(pos)
+            start = pos + 1
+    if not positions:
+        return text[:max_chars] + '...'
+    positions.sort()
+    best_start = max(0, positions[0] - max_chars // 4)
+    best_count = 0
+    for pos in positions:
+        win_start = max(0, pos - max_chars // 4)
+        win_end = win_start + max_chars
+        count = sum(1 for p in positions if win_start <= p < win_end)
+        if count > best_count:
+            best_count = count
+            best_start = win_start
+    end = min(len(text), best_start + max_chars)
+    if end == len(text):
+        best_start = max(0, end - max_chars)
+    prefix = '...' if best_start > 0 else ''
     suffix = '...' if end < len(text) else ''
-    return prefix + text[start:end] + suffix
+    return prefix + text[best_start:end] + suffix
 
 
 class KnowledgeIndex:
