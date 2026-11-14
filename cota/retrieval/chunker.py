@@ -42,7 +42,7 @@ def chunk_markdown(text, source=""):
         if len(parts) == 1:
             return [{'id': base_id, 'heading_chain': heading_chain,
                      'title': title, 'text': text, 'source': source}]
-        return [{'id': base_id if i == 0 else f"{base_id}|{i}",
+        return [{'id': base_id if i == 0 else f"{base_id}~{i}",
                  'heading_chain': list(heading_chain), 'title': title,
                  'text': part, 'source': source}
                 for i, part in enumerate(parts)]
@@ -69,9 +69,9 @@ def chunk_markdown(text, source=""):
 
         for sub_text in _split_oversized(chunk_text, _MAX_CHUNK_CHARS):
             chunk_id = base_id
-            if chunk_id in all_ids:
+            while chunk_id in all_ids:
                 seq += 1
-                chunk_id = f"{base_id}|{seq}"
+                chunk_id = f"{base_id}~{seq}"
             all_ids.add(chunk_id)
             chunks.append({'id': chunk_id, 'heading_chain': list(chain),
                            'title': chunk_title, 'text': sub_text, 'source': source})
@@ -106,7 +106,7 @@ def _in_fence(pos, ranges):
 
 
 def _split_oversized(text, max_chars):
-    """Split text exceeding max_chars at paragraph boundaries."""
+    """Split text exceeding max_chars at paragraph boundaries, then hard-wrap."""
     if len(text) <= max_chars:
         return [text]
     paragraphs = re.split(r'\n\n+', text)
@@ -114,17 +114,50 @@ def _split_oversized(text, max_chars):
     current = []
     current_len = 0
     for para in paragraphs:
-        added = len(para) + (2 if current else 0)
-        if current and current_len + added > max_chars:
-            parts.append('\n\n'.join(current))
-            current = [para]
-            current_len = len(para)
-        else:
-            current.append(para)
-            current_len += added
+        for segment in _hard_split(para, max_chars):
+            added = len(segment) + (2 if current else 0)
+            if current and current_len + added > max_chars:
+                parts.append('\n\n'.join(current))
+                current = [segment]
+                current_len = len(segment)
+            else:
+                current.append(segment)
+                current_len += added
     if current:
         parts.append('\n\n'.join(current))
     return parts or [text]
+
+
+def _hard_split(text, max_chars):
+    """Split a single paragraph that exceeds max_chars at sentence boundaries."""
+    if len(text) <= max_chars:
+        return [text]
+    parts = []
+    sentences = re.split(r'(?<=[。！？.!?\n])', text)
+    current = []
+    current_len = 0
+    for sent in sentences:
+        if not sent:
+            continue
+        if current and current_len + len(sent) > max_chars:
+            parts.append(''.join(current))
+            current = [sent]
+            current_len = len(sent)
+        else:
+            current.append(sent)
+            current_len += len(sent)
+    if current:
+        parts.append(''.join(current))
+    if any(len(p) > max_chars for p in parts):
+        final = []
+        for p in parts:
+            while len(p) > max_chars:
+                final.append(p[:max_chars])
+                p = p[max_chars:]
+            if p:
+                final.append(p)
+        parts = final
+    return parts
 
 
 def _split_by_headings(text, fenced_ranges):
