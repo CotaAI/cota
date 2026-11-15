@@ -107,8 +107,8 @@ comes first; completed generation journals allow reuse without another paid call
 Always keep --asset stable across revision filenames. Each asset allows one initial
 image and two revisions; renamed files/session restarts do not reset that budget.
 retryable=false means stop retrying that asset and continue independent work.
-Rendered PDF faces also have one baseline plus two visual revisions, including
-local image edits. Read status.rendering; accepted versions stay frozen.
+Use preview for single-page layout experiments without modifying the book.
+Local render versions are an audit trail, not a paid-image budget.
 Normal stdout is complete compact JSON; use --full only for detailed saved fields.
 Do not change asset/project/criteria to bypass limits; report unresolved work.''')
     parser.add_argument('--project', help='Name inside workspace/books, or an absolute path inside it; required except for doctor/init')
@@ -117,6 +117,12 @@ Do not change asset/project/criteria to bypass limits; report unresolved work.''
     init = commands.add_parser('init', help='Create a project from the generic Skill template; does not write a story')
     init.add_argument('name', help='New project name inside workspace/books')
     commands.add_parser('status', help='Inspect saved project, review flags and generation journals before continuing')
+    preview = commands.add_parser('preview', help='Render one proposed page and text crops without publishing the book',
+        description='Inspect a page before committing its layout. Other pages may be unfinished. '
+                    'Optional --layout supplies a candidate JSON object using exactly the existing page schema. '
+                    'Returns PNG paths and measured wrapping; does not approve readability or change book.json/PDF/QA.')
+    preview.add_argument('--page', type=int, required=True, help='Original PDF page number')
+    preview.add_argument('--layout', help='Optional candidate page JSON inside the project; never applied automatically')
     generate = commands.add_parser('generate', help='Generate one PNG, or edit using actual reference images',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''Paths are relative to the project; absolute in-project paths also work.
@@ -204,7 +210,7 @@ This renderer uses explicit page layout (millimetres from the top-left; fonts in
   "image_fit": "contain",
   "text_elements": [
     {"text": "小兔抬头，云朵轻轻飘过。", "box": [10, 110, 190, 25], "font_size": 18,
-     "align": "left", "fill": "#1f1f29", "background": "#fffaf0", "padding": 1}
+     "align": "left", "fill": "#1f1f29"}
   ]
 }
 
@@ -212,10 +218,12 @@ Each box is [left, top, width, height] within the page. Asset paths are relative
 the project. Place all visible text in text_elements, not the legacy page text field.
 Text supports only text, box, font_size (8-72 pt), align (left/center/right) and
 fill (#RRGGBB), background (#RRGGBB or null), padding (nonnegative mm).
-Defaults: 18 pt, left, dark #1f1f29 on solid ivory #fffaf0, padding 1 mm.
+Defaults: 18 pt, left, dark #1f1f29, transparent background, padding 0 mm.
 box includes padding; panel height follows actual wrapped lines, not unused box height.
-Foreground/panel contrast must be at least 4.5. Use background:null explicitly only
-over known clear artwork; visual review still checks readability and subject overlap.
+Choose colour and position from the composition; there is no hard contrast score.
+Optional backgrounds are explicit design choices, never automatically added.
+Use preview --page N [--layout candidate.json] for whole-page and text-region images
+before building. Visual review checks readability, balance and subject overlap.
 Bold/weight, custom line spacing and image_path are unsupported and rejected.
 Page fields: page, role, title, text, blank, blank_reason, layout, asset, image_box, image_fit,
 text_elements, context_asset, detail_asset, arrow_count, notes. title/role/layout/
@@ -241,9 +249,8 @@ not approve a book. Physical proof remains print_tested=false until really teste
 Successful build returns input_hash and manifest. Unchanged inputs with intact PDF,
 previews and instructions return reused=true without rendering again; damaged or
 missing outputs are repaired without charging a visual revision; affected PDF QA is cleared.
-Each PDF face allows one baseline plus two visual revisions, including local image,
-text and layout edits; accepted current versions are frozen. Check changed_pages,
-pending_pages and status.rendering. Metadata edits do not spend this budget.
+Local layout edits have no paid-image revision cap. Check changed_pages,
+pending_pages and status.rendering; changed pixels require current review evidence.
 Print images use <=240dpi JPEG derivatives; original art and vector text remain intact.
 Use --max-file-bytes with the receiving send_files limit. All delivery files are
 preflighted before replacing the prior package. Printing instructions/sheet count
@@ -286,6 +293,9 @@ Never set QA merely to make validate pass.''')
                       'images': [str(p.relative_to(project)) for p in project.rglob('*.png')],
                       'requests': [{'path': str(p.relative_to(project)), 'status': read_json(p).get('status')}
                                    for p in project.rglob('*.request.json')]}
+        elif args.command == 'preview':
+            from bookbot.preview import preview
+            result = preview(ROOT, project, args.page, layout_file=args.layout)
         elif args.command == 'generate':
             from bookbot.models import generate
             result = generate(ROOT, project, args.prompt, args.output, asset=args.asset, references=args.reference)

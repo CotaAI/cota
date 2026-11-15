@@ -122,13 +122,13 @@ init 创建空模板，不能直接 build；Bot 应先把用户确认的分页�
 
 build 输出 book.pdf、全部逐页渲染图、全书联系表、封面封底预览、打印说明和纸张映射。中文由 ReportLab 使用嵌入字体排版，图片模型不生成最终中文；每页位置由明确的毫米坐标决定，不强制统一版式。文字溢出或字体缺字会报错。内容、插图、字体或版式变化时，重新 build 会清除旧的审校通过标志，要求复核；输入一致时保留有效审校状态。暂不实现出血、CMYK、骑马钉拼版等印厂流程；需要这些规格时应另做匹配的制作方案。
 
-版式字段严格校验：图片用 `asset`；文字支持 `text/box/font_size/align/fill/background/padding`，其中 `align` 为 left/center/right，`fill` 为 `#RRGGBB`。默认文字底色 `background: "#fffaf0"`、内边距 `padding: 1` 毫米；box 包含内边距，底色只覆盖实际行高，深色字与实色底的对比不足时拒绝输出。明确使用 `background: null` 可保留透明排版，但须检查画面纹理、文字对比和主体遮挡。`image_path`、`weight` 等未实现字段会报错，避免“改了参数但画面没变”。`build --help` 列出全部页面字段；`status` 列出 PDF 面号与对应资产，包含结构留白。构建返回输入哈希；输入未变且 PDF、逐页预览和交付文件完整时 `reused: true`，不重复渲染；产物损坏则重建并清除旧 QA。
+版式字段严格校验：图片用 `asset`；文字支持 `text/box/font_size/align/fill/background/padding`，其中 `align` 为 left/center/right，`fill` 为 `#RRGGBB`。默认透明文字、`padding: 0`，不自动加底色、不设审美对比度硬阈值。可显式指定 `background: "#颜色"` 和毫米内边距；这只是可选设计能力，不是每页的默认处理。box 包含内边距；需要底色时仅覆盖实际行高。文字颜色、位置和分行由模型结合真实画面决定，最终检查整体美感、阅读与主体避让。`image_path`、`weight` 等未实现字段会报错，避免“改了参数但画面没变”。`build --help` 列出全部页面字段；`status` 列出 PDF 面号与对应资产，包含结构留白。构建返回输入哈希；输入未变且 PDF、逐页预览和交付文件完整时 `reused: true`，不重复渲染；产物损坏则重建并清除旧 QA。
 
 `image_understand` 发送真实图片，`review --tool-call-id` 从 Store 核验并导入这次调用，报告保留 `image_inputs` 与调用来源。默认只需 `review --asset 稳定标识 --tool-call-id 实际调用ID`，程序从 Store 取得真实图片和完整标准，自动生成证据文件名。可选 `--image/--prompt` 仅用于额外核验预期输入，不能替换实际调用内容。按“问题、修改、复核”推进；付费图像初次生成后最多再修两轮，结果未知先核查。本地文字和排版没有三版本硬上限，status.rendering 的 versions 只用于追踪；没有明确改善时停止无效尝试并报告待办。版式修改后旧验收仅适用于旧版本，不能复用成新版本通过。命令直接执行，不接可能掩盖退出码的 `| tail` 等管道；脚本执行成功不等于画面或整本书验收通过。
 
 审阅标准应以用户要求、事实与图文一致、角色连续性、可读性为必要项；纯审美和未指定的精确位置为 `[advice]`。侧视遮挡不等于角色少了轮子，不能把“看见四个轮子”强加为所有视角的要求。`review --help` 提供统一 JSON：每条 check 用 `status`，最外层用 `verdict`。标准确有错误时，先用修正标准取得真实审阅结果，再以 `--criteria-change-reason "修改原因"` 导入；旧标准与旧证据保留，旧通过不能证明新标准通过，不删除 `.bookbot` 重置记录。原因记录用于审计，不是外部授权或防篡改机制。
 
-先规划每页文字区域，再生成构图；优先使用专用留白或浅色文字底，保护区域不能挡住人物与关键解释。需要透明叠字时明确关闭底色并逐页检查。不要用重新绘图解决文字位置、颜色和内边距问题。正文保持 PDF 矢量文字，审阅实际渲染页，不能只检查原插图或全书缩略图。
+先规划图文共同叙事与自然留白，再生成构图。默认透明排版，利用画面色板、字号、分行与阅读动线解决字图匹配；不机械套框，不为挪动文字而反复重画插图。正文保持 PDF 矢量文字，审阅实际渲染页与必要局部，不能只检查原插图或全书缩略图。
 
 可以完成独立工作后集中交付审阅稿与待定选项；对用户直接表达进展与具体问题，不复述接口排错、自我指令或把计划中的确认说成已收到。
 
@@ -136,9 +136,22 @@ build 输出 book.pdf、全部逐页渲染图、全书联系表、封面封底�
 
 图片请求日志保留提示词、参考图路径、模型名、输入/输出哈希；不保留密钥或 base64。成功生成且输入相同时复用；修改用新版本输出名。`started` 且没有图片表示请求结果未知，先检查供应商记录，不自动再请求。Shell 单次上限300秒，本轮整体上限3600秒和100次模型迭代；这不是后台任务队列。
 
+## 单页试排：先看效果，再决定版式
+
+```sh
+uv run scripts/book.py --project rabbit-cloud-v1 preview --page 5
+uv run scripts/book.py --project rabbit-cloud-v1 preview --page 5 --layout drafts/page-05-option-b.json
+```
+
+`--layout` 文件直接使用 book.json 中一个 page 对象的格式（含原 page 编号），不是另一套配置。可以调整 text_elements 的位置、字号、分行、颜色与图片裁切，保存有明确差异的候选；命令不会自动把候选应用到清单。
+
+返回 `preview` 整页 PNG、`text_regions[].preview` 局部 PNG，以及实际换行数、字号和占用高度。整页按 144 dpi 渲染，局部保留原始像素供放大核对；使用现有 image_understand 看整页的图文关系，必要时看文字局部。测量只帮助判断能否排下，不自动评价好看或验收通过。
+
+试排只写 `.bookbot/previews/`，不要求其它页的图已生成，不改正式 PDF、book.json、QA、审阅记录或正式版本计数。选定候选后将版式更新到 book.json，再 build 并检查真实成品。通用美观原则在 Skill 的 [视觉与图文版式](skills/creating-childrens-picture-books/references/visual-and-layout.md)，工具操作留在这里，Skill 不耦合 Cota 接口。
+
 ## 验证
 
-Bot 附带13组、15轮 `policy/eval/data.yml`，重点验证业务理解、限制保持、缺项说明、取消、打印结构和不虚构交付：
+Bot 附带14组、16轮 `policy/eval/data.yml`，重点验证业务理解、限制保持、缺项说明、取消、打印结构和不虚构交付：
 
 ```sh
 cota eval --config . --debug

@@ -26,8 +26,8 @@ def _rgb(colour):
     return tuple(int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5))
 
 
-def _text_protection(item):
-    background, padding = item.get('background', '#fffaf0'), item.get('padding', 1)
+def _text_style(item):
+    background, padding = item.get('background'), item.get('padding', 0)
     if background is not None and (not isinstance(background, str)
             or not re.fullmatch(r'#[0-9a-fA-F]{6}', background)):
         raise ValueError('Text background must be #RRGGBB or null for explicitly transparent text')
@@ -35,13 +35,6 @@ def _text_protection(item):
         raise ValueError('Text padding must be a nonnegative millimetre value')
     if 2 * padding >= min(item['box'][2:]):
         raise ValueError('Text padding leaves no available text area')
-    if background is not None:
-        def luminance(colour):
-            linear = [c / 12.92 if c <= .04045 else ((c + .055) / 1.055) ** 2.4 for c in _rgb(colour)]
-            return sum(c * weight for c, weight in zip(linear, (.2126, .7152, .0722)))
-        a, b = sorted((luminance(item.get('fill', '#1f1f29')), luminance(background)))
-        if (b + .05) / (a + .05) < 4.5:
-            raise ValueError('Text and solid background have insufficient contrast; choose more distinct colours')
     return {'background': background.lower() if background is not None else None, 'padding': float(padding)}
 
 
@@ -107,7 +100,7 @@ def validate_layout(data):
                 raise ValueError(f'Page {number}: align must be left, center or right')
             if not isinstance(item.get('fill', '#1f1f29'), str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', item.get('fill', '#1f1f29')):
                 raise ValueError(f'Page {number}: fill must be a #RRGGBB colour')
-            _text_protection(item)
+            _text_style(item)
     return width, height
 
 
@@ -156,7 +149,7 @@ def _page_hashes(root, project, data):
     geometry = {key: float(data['format'][key]) for key in ('width_mm', 'height_mm')}
     result = {}
     for page in data['pages']:
-        value = {'blank': page.get('blank', False), 'geometry': geometry, 'renderer': 4}
+        value = {'blank': page.get('blank', False), 'geometry': geometry, 'renderer': 5}
         if not value['blank']:
             value['font'] = font
             if page.get('asset'):
@@ -164,7 +157,7 @@ def _page_hashes(root, project, data):
                              image_box=[float(n) for n in page['image_box']], image_fit=page.get('image_fit', 'contain'))
             value['text'] = [{'text': item['text'], 'box': [float(n) for n in item['box']],
                              'font_size': float(item.get('font_size', 18)), 'align': item.get('align', 'left'),
-                             'fill': item.get('fill', '#1f1f29').lower(), **_text_protection(item)}
+                             'fill': item.get('fill', '#1f1f29').lower(), **_text_style(item)}
                             for item in page.get('text_elements', [])]
         result[str(page['page'])] = sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode())
     return result
@@ -303,7 +296,9 @@ def _write_pdf(root, project, data, output):
     canvas = Canvas(str(output), pagesize=(width * mm, height * mm), pageCompression=1)
     canvas.setTitle(data['title'])
     canvas.setAuthor('Cota Picture Book')
+    page_regions = []
     for page in data['pages']:
+        regions = []
         if not page.get('blank'):
             if page.get('asset'):
                 x, y, w, h = page['image_box']
@@ -313,7 +308,7 @@ def _write_pdf(root, project, data, output):
                                  preserveAspectRatio=fit == 'contain', anchor='c')
             for item in page.get('text_elements', []):
                 x, y, w, h = item['box']
-                protection = _text_protection(item)
+                protection = _text_style(item)
                 padding = protection['padding']
                 outer_x, outer_y, outer_w = x, y, w
                 x, y, w, h = x + padding, y + padding, w - 2 * padding, h - 2 * padding
@@ -324,6 +319,8 @@ def _write_pdf(root, project, data, output):
                 leading = size * 1.4
                 if len(lines) * leading > h * mm:
                     raise ValueError(f"Page {page['page']}: text overflows its box; revise the text or layout")
+                regions.append({'box': list(item['box']), 'font_size': size, 'line_count': len(lines),
+                                'used_height_mm': round(len(lines) * leading / mm + 2 * padding, 2)})
                 if protection['background'] is not None:
                     panel_height = len(lines) * leading + 2 * padding * mm
                     canvas.setFillColorRGB(*_rgb(protection['background']))
@@ -337,10 +334,12 @@ def _write_pdf(root, project, data, output):
                 anchor = x + {'left': 0, 'center': w / 2, 'right': w}[align]
                 for line_no, line in enumerate(lines):
                     draw(anchor * mm, (height - y) * mm - size - line_no * leading, line)
+        page_regions.append(regions)
         canvas.showPage()
     canvas.save()
     if len(PdfReader(output).pages) != len(data['pages']):
         raise ValueError('PDF page count mismatch')
+    return page_regions
 
 
 def _preview_images(stage, project, data, numbers):
