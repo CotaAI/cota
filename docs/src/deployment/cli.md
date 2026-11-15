@@ -5,7 +5,6 @@ cota --version
 cota --help
 cota run --help
 cota shell --help
-cota train --help
 cota annotate --help
 cota eval --help
 ```
@@ -39,17 +38,6 @@ shell 仅支持 direct，输入 `/stop` 退出；没有 --session 参数，每�
 
 完整调试说明见 [Debug](debug.md)。
 
-## train
-
-```bash
-cota train --config ./my-bot
-cota train --config ./my-bot --check
-```
-
-根据 agent.yml 的 policy 方法构建产物，默认 models/policy.json。它不启动 Bot/Store/Pi；BM25/规则等可离线训练，Embedding 会请求向量服务。
-`--check` 验证产物与配置/案例是否匹配，不重新训练。缺失、过期或损坏时非零退出。
-默认 all 不要求预训练；更新已加载的 Bot 仍需重启或重新加载。详见 [Policy 训练与推理](../concepts/trainable-policy.md)。
-
 ## annotate
 
 直接编写 policies/name/steps 不需要数据库。也可以从真实对话整理：
@@ -64,8 +52,8 @@ export 从持久 SQL Store 读取 user_utter/bot_utter，生成一份待编辑 P
 import 只校验文件格式和预算并写入新文件，不读取或修改会话数据库；没有来源版本或 policy_annotation Event。
 手写文件同样可以 import。输出路径必须不存在，命令不会覆盖已有文件。
 
-审核后将结果放入 Bot 的 policy/；训练型策略重新 train，再重新加载 Agent。
-Skill 名称在 Pi 发现目录后、首次模型请求前核验，不由 annotate 重新实现 Skill parser。
+审核后将结果放入含 POLICY.md 的 policy/，重新加载 Agent 重建索引。
+Skill 名称应与 Pi 目录一致；annotate 不重新实现 Skill parser 或在发现阶段执行策略。
 见 [对话式标注](../concepts/skill-policy.md)。
 
 ## eval

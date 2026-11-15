@@ -28,6 +28,13 @@ const send = value => {
   return writing;
 };
 const notify = (method, payload) => send({type: 'notification', method, payload});
+const reportError = (error, protocol = false) => send({type: 'error',
+  error: protocol ? 'Invalid Pi worker protocol message' : error.message,
+  code: protocol ? 'protocol_error' : controller.signal.aborted ? 'cancelled' : error.code ?? 'execution_failed',
+  phase: protocol ? 'bridge' : error.phase ?? 'execution',
+  error_type: protocol ? 'PiBridgeError' : controller.signal.aborted ? 'AbortError' : error.error_type ?? error.name,
+  ...(error.request_id ? {request_id: error.request_id} : {}),
+});
 const rpc = (method, payload) => new Promise((resolve, reject) => {
   const id = ++nextId;
   pending.set(id, {resolve, reject});
@@ -52,13 +59,12 @@ input.on('line', async line => {
       started = true;
       execute(message.options, rpc, controller.signal, notify).then(
         result => send({type: 'done', result}),
-        error => {process.exitCode = 1; return send({type: 'error', error: error.message,
-          ...(error.code === 'model_error' ? {code: 'model_error', error_type: error.error_type} : {})});},
+        error => {process.exitCode = 1; return reportError(error);},
       ).finally(() => input.close());
     } else throw new Error('Invalid protocol message');
   } catch (error) {
     process.exitCode = 1;
-    await send({type: 'error', error: error.message});
+    await reportError(error, true);
     input.close();
   }
 });

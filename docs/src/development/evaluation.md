@@ -1,6 +1,6 @@
 # Bot 对话评测
 
-Cota 用 LLM 逐条评判业务要求。验证文件随 Bot 分享，评测过程独立于运行时和 Policy 训练；没有自动修改或应用 Bot 的 RSI 功能。
+Cota 用 LLM 逐条评判业务要求。验证文件随 Bot 分享，评测过程独立于日常对话运行；没有自动修改或应用 Bot 的 RSI 功能。
 
 ## 编写验证文件
 
@@ -44,7 +44,7 @@ cota eval
 cota eval --output workspace/evaluations/baseline --debug
 ```
 
-新的 weather 模板自带30个案例、43轮输入、94条评测要求。默认 all Policy 不需要训练；选择依赖索引/embedding等训练产物的方法后，先执行 `cota train`。init 跳过已有 Bot，升级代码不会自动覆盖用户已有的 Bot 文件。
+新的 weather 模板自带30个案例、43轮输入、94条评测要求。Policy 在加载 Bot 时建立索引，由模型按需查阅，无需训练命令。init 跳过已有 Bot，升级代码不会自动覆盖用户已有的 Bot 文件。
 
 ## 执行评测
 
@@ -57,7 +57,7 @@ cota eval --config ./my-bot --cases ./my-bot/policy/eval/basic.yml --repeat 3
 cota eval --config ./my-bot --case 'data.yml::budget_change' --debug
 ```
 
-`--config` 是实际被测 Bot，绝不是只借用模型连接。使用该 Bot 的配置、Skill、Policy、训练产物与资源。若训练产物过期，先运行 `cota train`。
+`--config` 是实际被测 Bot，绝不是只借用模型连接。使用该 Bot 的配置、Skill、Policy 文件和资源，并建立该版本的检索索引。
 
 每个案例、每次重复都使用新的临时 Bot 目录、SQLite、用户与会话；同一案例的多轮保持历史。运行目录不含 policy/eval、配置中的历史数据库、日志或 workspace；资源目录里的静态数据库会保留。原 Bot 定义与聊天记录不改动；默认结果写入原 Bot 的 `workspace/evaluations/<run_id>/`，也可以用 `--output` 指定。已有输出目录不会覆盖。
 

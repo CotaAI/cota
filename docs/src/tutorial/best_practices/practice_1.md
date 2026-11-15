@@ -19,8 +19,8 @@ policies:
               缺失字段不能当成零值，查询失败要明确告知。
 ```
 
-Bot 内有序的 thought 可以分别指导能力选择、执行结果处理和话术。Cota 在每次模型请求中提供预算内的完整示例，模型结合当前真实情况判断适用性。Policy 不是强制工作流或精确语义路由器。
+Bot 内有序的 thought 可以分别指导能力选择、执行结果处理和话术。先在 policy/POLICY.md 声明案例用途，模型按需使用 policy_guidance 检索示例，再结合当前真实情况判断适用性。Policy 不是强制工作流或精确语义路由器。
 
-测试普通查询、城市缺失、多城市比较、HTTP 错误及新会话隔离。检查 Trace 中的 Skill 读取、调用参数、工具结果和回复；用 Debug request/preparation 核对实际 Policy/thought；有读取记录不代表任务已完成。
+测试普通查询、城市缺失、多城市比较、HTTP 错误及新会话隔离。检查 Trace 中的 Skill 读取、调用参数、工具结果和回复；用 policy_guidance 的实际工具结果及 Debug request 核对案例使用；有读取记录不代表任务已完成。
 
 改进时可以直接编写新示例，也可以 export 真实对话、人工修改后 import。主文件始终采用同一格式，不另存来源或标注版本，也不写回会话，详见 [对话标注与 Policy](../../concepts/skill-policy.md)。

@@ -22,13 +22,12 @@
 
 ```sh
 uv run scripts/book.py doctor
-cota train --config .
 cota shell --config . --debug
 ```
 
 doctor 只检查配置与依赖，不消耗模型额度，也不代表接口已经通过验收。新环境先用真实角色图、参考图新动作/编辑和一张中文样页验证，再批量成书。
 
-此示例使用 BM25 从业务案例中选取最多3条相关 Policy。`cota train` 在本地建立索引，不调用模型；修改 Policy 后重新训练。运行时使用 Pi 的 token 估算和压缩组件，支持同一条用户任务中的长执行链路。未知主模型容量时使用明确标记的 65,536 token 保守预算；可在 `llms.default.context_window` 填写经供应商确认的容量。Debug 的 Model Requests 显示预算来源、请求大小和实际用量。
+此示例在加载时读取 policy/POLICY.md，建立本地 BM25 索引，不调用模型。主模型按需使用 policy_guidance 查阅业务案例，返回上限由清单的 top_k 决定；修改文件后重新加载。运行时使用 Pi 的 token 估算和压缩组件，支持同一条用户任务中的长执行链路。未知主模型容量时使用明确标记的 65,536 token 保守预算；可在 `llms.default.context_window` 填写经供应商确认的容量。Debug 的 Model Requests 显示预算来源、请求大小和实际用量。
 
 可以输入：
 
@@ -40,12 +39,12 @@ Shell 中可用 `/file "/路径/参考图.png"` 添加参考图或资料，再�
 
 ## 有限修订与审阅复用
 
-插图按稳定对象标识管理，首次生成后最多再修两轮，换文件名不重置次数。原生 `image_generate` 不写旧配套 `generate` 的计数日志，因此 Bot 必须保存并核对制作记录；不能把 `status.production` 当作原生工具已强制执行的额度。PDF 每面预算仍由排版程序执行。已有完整图片与审阅证据先复用；结果未知时不盲目重试。
+插图按稳定对象标识管理，首次生成后最多再修两轮，换文件名不重置次数。原生 `image_generate` 不写旧配套 `generate` 的计数日志，因此 Bot 必须保存并核对制作记录；不能把 `status.production` 当作原生工具已强制执行的额度。PDF 排版版本只做追踪，不作为付费预算。已有完整图片与审阅证据先复用；结果未知时不盲目重试。
 
 审阅先固定编号标准和 JSON 返回格式，保存成文件，原样传给 `image_understand.prompt`；目标图片通过 `image_path` 的真实绝对路径传入。成功后用 `review --tool-call-id` 导入该次实际调用。导入只读本 Bot 的 SQLite Store，不请求模型；核对图片 SHA-256、标准、模型和成功状态，再生成规范审阅证据。已有同图同标准证据先复用，不能重复调用工具求不同结论。`.bookbot/` 保存固定标准和规范审阅证据，原生图像调用由 Cota Store 记录；这些是作品文件，不是 Cota 的新 Event/数据库表。`image_inputs` 是服务实际见到的原标签，复用别名通过 `current_image_inputs` 对照，不伪造新的观察。
 
 ```sh
-uv run scripts/book.py --project rabbit-cloud-v1 review --tool-call-id "实际成功调用返回的tool_call_id" --asset page-04 --prompt reviews/page-04-criteria.txt --image illustrations/page-04-r1.png --output reviews/page-04-r1.json
+uv run scripts/book.py --project rabbit-cloud-v1 review --tool-call-id "实际成功调用返回的tool_call_id" --asset page-04
 uv run scripts/book.py --project rabbit-cloud-v1 status
 ```
 
@@ -53,7 +52,7 @@ uv run scripts/book.py --project rabbit-cloud-v1 status
 
 这些约束限制重复成本，审阅仍可能存在不确定性，不会自动把 `book.json.qa` 改为通过。相同图的观察冲突应如实标记待确认；可选审美建议不应触发无限重画。正式交付仍需完成原有验收；未完成时仅交付明确标记的审阅稿。
 
-PDF 排版还按**每个面**累计整页版本：首版后最多两次修订，包含本地修改插图、文字和位置；`status.rendering` 显示剩余修订数与未验收面。固定标准下通过必要检查的当前版本会冻结，不能靠改面号、另建目录或删记录绕过。与绘图的付费次数是两种独立预算，都保存在作品的 `.bookbot/`。次数用尽只表示停止修改，不表示质量通过。
+PDF 排版按**每个面**累计版本，`status.rendering` 显示版本数与未验收面。没有本地排版的三版本硬上限；修复文字、颜色和位置后，旧图通过证据不会自动应用到新图。已通过内容不做无关润色，局部修改只重绘和复核受影响页面；付费图像生成预算独立管理。
 
 审阅标准写成编号列表，默认是必要项，可选项写 `[advice]`：
 
@@ -123,9 +122,15 @@ init 创建空模板，不能直接 build；Bot 应先把用户确认的分页�
 
 build 输出 book.pdf、全部逐页渲染图、全书联系表、封面封底预览、打印说明和纸张映射。中文由 ReportLab 使用嵌入字体排版，图片模型不生成最终中文；每页位置由明确的毫米坐标决定，不强制统一版式。文字溢出或字体缺字会报错。内容、插图、字体或版式变化时，重新 build 会清除旧的审校通过标志，要求复核；输入一致时保留有效审校状态。暂不实现出血、CMYK、骑马钉拼版等印厂流程；需要这些规格时应另做匹配的制作方案。
 
-版式字段严格校验：图片用 `asset`；文字只支持 `text/box/font_size/align/fill`，其中 `align` 为 left/center/right，`fill` 为 `#RRGGBB`。`image_path`、`weight` 等未实现字段会报错，避免“改了参数但画面没变”。`build --help` 列出全部页面字段；`status` 列出 PDF 面号与对应资产，包含结构留白。构建返回输入哈希；输入未变且 PDF、逐页预览和交付文件完整时 `reused: true`，不重复渲染；产物损坏则重建并清除旧 QA。
+版式字段严格校验：图片用 `asset`；文字支持 `text/box/font_size/align/fill/background/padding`，其中 `align` 为 left/center/right，`fill` 为 `#RRGGBB`。默认文字底色 `background: "#fffaf0"`、内边距 `padding: 1` 毫米；box 包含内边距，底色只覆盖实际行高，深色字与实色底的对比不足时拒绝输出。明确使用 `background: null` 可保留透明排版，但须检查画面纹理、文字对比和主体遮挡。`image_path`、`weight` 等未实现字段会报错，避免“改了参数但画面没变”。`build --help` 列出全部页面字段；`status` 列出 PDF 面号与对应资产，包含结构留白。构建返回输入哈希；输入未变且 PDF、逐页预览和交付文件完整时 `reused: true`，不重复渲染；产物损坏则重建并清除旧 QA。
 
-`image_understand` 发送真实图片，`review --tool-call-id` 从 Store 核验并导入这次调用，报告保留 `image_inputs` 与调用来源。每次导入用一个 `--image` 指定对应目标图，标准文件须与工具实际使用的 prompt 一致。按“问题、修改、复核”推进，同一问题默认最多两轮无效修正后保存进度并报告阻塞，避免无限重建。命令直接执行，不接可能掩盖退出码的 `| tail` 等管道；脚本执行成功不等于画面或整本书验收通过。
+`image_understand` 发送真实图片，`review --tool-call-id` 从 Store 核验并导入这次调用，报告保留 `image_inputs` 与调用来源。默认只需 `review --asset 稳定标识 --tool-call-id 实际调用ID`，程序从 Store 取得真实图片和完整标准，自动生成证据文件名。可选 `--image/--prompt` 仅用于额外核验预期输入，不能替换实际调用内容。按“问题、修改、复核”推进；付费图像初次生成后最多再修两轮，结果未知先核查。本地文字和排版没有三版本硬上限，status.rendering 的 versions 只用于追踪；没有明确改善时停止无效尝试并报告待办。版式修改后旧验收仅适用于旧版本，不能复用成新版本通过。命令直接执行，不接可能掩盖退出码的 `| tail` 等管道；脚本执行成功不等于画面或整本书验收通过。
+
+审阅标准应以用户要求、事实与图文一致、角色连续性、可读性为必要项；纯审美和未指定的精确位置为 `[advice]`。侧视遮挡不等于角色少了轮子，不能把“看见四个轮子”强加为所有视角的要求。`review --help` 提供统一 JSON：每条 check 用 `status`，最外层用 `verdict`。标准确有错误时，先用修正标准取得真实审阅结果，再以 `--criteria-change-reason "修改原因"` 导入；旧标准与旧证据保留，旧通过不能证明新标准通过，不删除 `.bookbot` 重置记录。原因记录用于审计，不是外部授权或防篡改机制。
+
+先规划每页文字区域，再生成构图；优先使用专用留白或浅色文字底，保护区域不能挡住人物与关键解释。需要透明叠字时明确关闭底色并逐页检查。不要用重新绘图解决文字位置、颜色和内边距问题。正文保持 PDF 矢量文字，审阅实际渲染页，不能只检查原插图或全书缩略图。
+
+可以完成独立工作后集中交付审阅稿与待定选项；对用户直接表达进展与具体问题，不复述接口排错、自我指令或把计划中的确认说成已收到。
 
 原 Skill 的创作资料、主题指南和验证器完整保留。验证器通过不代表语言、视觉或实物打印自动合格；脚本不自动勾选审校。审校记录与实际页面必须一致。没有实物打印时保持 `print_tested: false` / `pending-physical-proof`。`deliverables --draft` 仅列出明确未验收的审阅稿；正式清单默认必须先 validate。脚本返回路径，由 send_files 完成通用附件交付。
 
@@ -133,7 +138,7 @@ build 输出 book.pdf、全部逐页渲染图、全书联系表、封面封底�
 
 ## 验证
 
-Bot 附带10组、12轮 `policy/eval/data.yml`，重点验证业务理解、限制保持、缺项说明、取消、打印结构和不虚构交付：
+Bot 附带13组、15轮 `policy/eval/data.yml`，重点验证业务理解、限制保持、缺项说明、取消、打印结构和不虚构交付：
 
 ```sh
 cota eval --config . --debug

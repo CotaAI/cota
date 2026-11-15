@@ -38,10 +38,9 @@ async def test_reads_are_single_results_with_compact_resources(mock_agent, tmp_p
     assert results[2].payload['status'] == 'error'
     assert 'resource' not in results[2].payload
     assert dst.active_skill == 'SearchWeb'
-    assert (await runtime._policy_guidance(dst.context_messages))[1] == ['SearchWeb']
-    assert (await runtime._policy_guidance([]))[1] == []
-    other_results = [m for m in dst.context_messages if m.get('cotaResultEventId') != results[0].event_id]
-    assert (await runtime._policy_guidance(other_results))[1] == []
+    message = next(m for m in dst.context_messages if m.get('cotaResultEventId') == results[0].event_id)
+    assert message['toolName'] == 'read'
+    assert message['content'] == [{'type': 'text', 'text': skill.read_text()}]
     headers = await store.event_headers(dst.session_id)
     header = next(h for h in headers if h['event_id'] == results[0].event_id)
     assert header['summary']['resource_skill'] == 'SearchWeb'

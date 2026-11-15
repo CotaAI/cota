@@ -48,12 +48,15 @@ def _observation(root, tool_call_id):
         raise ValueError('No unique committed successful image_understand call; inspect the tool result') from None
 
 
-def record_review(root, project, prompt_file, images, output, *, asset, tool_call_id):
+def record_review(root, project, prompt_file=None, images=None, output=None, *, asset, tool_call_id,
+                  criteria_change_reason=None):
+    args, details, text, source = _observation(root, tool_call_id)
+    images = images or [args.get('image_path', '')]
     if len(images) != 1:
         raise ValueError('Native review imports one target image; review each PDF face separately')
-    args, details, text, source = _observation(root, tool_call_id)
     config = model_config(root, 'vision')
-    prompt = confined(project, prompt_file).read_text(encoding='utf-8').strip()
+    prompt = (confined(project, prompt_file).read_text(encoding='utf-8')
+              if prompt_file else args.get('prompt', '')).strip()
     if not prompt or len(prompt) > 32000:
         raise ValueError('Review prompt must be nonempty and at most 32000 characters')
     inputs = [image_data(project, images[0])]
@@ -67,10 +70,10 @@ def record_review(root, project, prompt_file, images, output, *, asset, tool_cal
     current = [{**evidence[0], 'path': str(image.relative_to(project))}]
     identity = sha256((_identity(config, prompt, inputs) + ':' + asset + ':native-review-v1').encode())
     with Production(project, asset) as production:
-        path = _artifact_path(project, output, '.json')
+        path = _artifact_path(project, output or f'reviews/{asset}-{identity[:16]}.json', '.json')
         if path.exists() and read_json(path).get('input_hash') != identity:
             raise ValueError('Review already exists; choose a new revision filename')
-        production.bind_criteria(prompt)
+        production.bind_criteria(prompt, change_reason=criteria_change_reason)
         canonical = production.review_path(identity)
         journal = canonical.with_suffix('.request.json')
         cached = _cached_review(canonical, journal, identity, asset)
@@ -79,7 +82,8 @@ def record_review(root, project, prompt_file, images, output, *, asset, tool_cal
                 raise ValueError('Saved visual review was modified; preserve existing evidence')
             if not path.exists():
                 write_json(path, cached)
-            return {**cached, 'reused': True, 'current_image_inputs': current}
+            return {**cached, 'reused': True, 'current_image_inputs': current,
+                    'report_path': str(path.relative_to(project))}
         record = {'asset': asset, 'model': config['model'], 'input_hash': identity, 'content': text,
                   'prompt': prompt, 'assessment': assess(text, prompt), 'source': source,
                   'images': [evidence[0]['path']], 'image_inputs': evidence, 'created_at': time.time()}
@@ -87,7 +91,8 @@ def record_review(root, project, prompt_file, images, output, *, asset, tool_cal
         write_json(journal, {'kind': 'review', 'asset': asset, 'status': 'completed', 'input_hash': identity,
                              'report_hash': sha256(canonical.read_bytes())})
         write_json(path, record)
-        return {**record, 'reused': False, 'current_image_inputs': current}
+        return {**record, 'reused': False, 'current_image_inputs': current,
+                'report_path': str(path.relative_to(project))}
 
 
 def require_visual_reviews(project):

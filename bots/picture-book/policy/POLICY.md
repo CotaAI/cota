@@ -81,7 +81,7 @@ top_k: 5
 - Bot:
   - Thought: 沿用 page-04 的固定要求、稳定对象 ID 和已保存版本，只修具体问题；初次生成之后最多再修两轮，不以改名、改标准或重建项目恢复次数。
   - Skills: creating-childrens-picture-books
-  - Result: generate 返回 revision_limit_reached，asset 为 page-04，attempts 为 3，retryable 为 false。
+  - Result: 制作记录显示 page-04 已实际付费生成三次，关键问题仍未解决。
   - Thought: 本页不能继续付费重试。保存现有作品与未解决项，继续其它可独立完成的页面和排版；不把次数到顶当作质量通过，不绕过配套程序重新调用接口。
   - Reply: 第四页还有这处需要确认，我先保留现有版本，不再反复重画。其它页面可以继续整理，交付时我会明确标出这一项。
 
@@ -107,10 +107,10 @@ top_k: 5
 
 - User: 第七面上下有一点留白，再改改背景颜色试试。
 - Bot:
-  - Thought: 检查 status.rendering 和当前 PDF 面的固定审阅证据。留白可用 image_fit=cover 确定裁切，或用 contain 保留整图，不拼色带反复微调；本地修改也占整页修订预算。
+  - Thought: 检查当前 PDF 面的真实审阅证据。留白可用 image_fit=cover 确定裁切，或用 contain 保留整图，不拼色带反复微调。排版版本数用于追踪，不是付费绘图次数。
   - Skills: creating-childrens-picture-books
   - Result: pdf-face-07 必要检查通过，仅有背景色建议，当前版本已验收。
-  - Thought: 保留已验收版本，建议不阻塞交付；不删除记录、改面号或重建项目重置额度。继续其它页面的必要检查。
+  - Thought: 保留已验收版本，纯审美建议不阻塞交付；若文字确实不清楚则进行本地修复，并重新审阅受影响页面。保留历史与证据，不删除记录。
   - Reply: 第七面的必要检查已经通过，颜色微调先记作可选建议，我会保留这个版本，继续检查其余页面。
 
 ## delivery-size-before-final-review
@@ -122,3 +122,19 @@ top_k: 5
   - Result: 导出返回 delivery_size_exceeded，file 为 book.pdf，actual_bytes 为 21056605，max_file_bytes 为 20971520，retryable 为 false。
   - Thought: 目前尚未交付，不能重复发送相同超限文件。保留原图与已有成果，解决导出体积；做不到则清晰报告限制和可用部分，不伪造验收。
   - Reply: PDF 目前超过了附件大小限制，还没有发送。我会保留原始图片和已完成内容，先处理导出体积。
+
+## readable-text-before-delivery
+
+- User: 这页文字和人物头发混在一起，看不清。
+- Bot:
+  - Thought: 这是必要的可读性问题，优先在排版层调整文字区域或使用有足够对比的浅色底与内边距，不为此重复付费绘图。检查底色不会遮住人物或关键解释对象。
+  - Result: 本地排版修复已生成新版本；旧的逐页验收只对应旧图。
+  - Thought: 用真实新渲染页重新检查文字和主体，只更新受影响证据，实际通过后才交付。
+  - Reply: 我会先调整这一页的文字区域，让每行都清楚可读，再检查修改后的页面。其它页面保持原样。
+
+## consolidate-decisions
+
+- User: 先做成可以看的版本，有不确定的地方最后一起告诉我。
+- Bot:
+  - Thought: 完成不依赖待定选择的工作，保留有争议的版本和证据，最后提供可审阅成果与具体选项。不能把计划询问当作用户已经回答。
+  - Reply: 好的，我先整理可完成的部分，最后把审阅稿和需要你决定的事项一起给你。

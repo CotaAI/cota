@@ -69,6 +69,7 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
   const model = options.provider ? nativeModel(resolveContextModel(options.model), options.provider) : resolveContextModel(options.model);
   let requestMessages;
   const settings = compactionSettings(model, options.compaction);
+  const summaryModel = {...model, maxTokens: settings.summaryMaxTokens};
   let contextBudget;
   const request = async (method, payload) => {
     if (fatal) throw fatal;
@@ -175,28 +176,32 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
         if (!forceCompaction && !shouldCompact(contextBudget.budget_tokens, settings.triggerTokens + settings.reserveTokens, settings)
             && contextBudget.serialized_bytes <= settings.maxRequestBytes) break;
         if (attempt >= 2) throw new Error('Context still exceeds the Pi token/byte/image budget after compaction; narrow the task or increase the context budget');
-        const summaryStream = async (_model, summaryContext) => {
+        const summaryStream = async (summaryModel, summaryContext, summaryOptions = {}) => {
+          const maxTokens = summaryOptions.maxTokens ?? summaryModel.maxTokens;
           if (options.provider) {
-            const stream = await nativeStream({model, provider: options.provider, context: summaryContext,
-              purpose: 'compaction', maxTokens: Math.min(2000, settings.reserveTokens), rpc: request, signal});
+            const stream = await nativeStream({model: summaryModel, provider: options.provider, context: summaryContext,
+              purpose: 'compaction', maxTokens, streamOptions: summaryOptions, rpc: request,
+              signal: summaryOptions.signal ?? signal});
             const message = await stream.result();
             if (['error', 'aborted'].includes(message.stopReason)) {
               fatal ??= Object.assign(new Error(message.errorMessage || 'Native summary failed'),
-                message.cotaModelError ? {code: 'model_error', error_type: message.cotaErrorType} : {});
+                message.cotaModelError ? {code: 'model_error', phase: 'compaction',
+                  error_type: message.cotaErrorType, request_id: stream.requestId} : {});
               throw fatal;
             }
             return stream;
           }
           const response = await request('summarize', {messages: summaryContext.messages,
-            systemPrompt: getCurrentSystemPrompt(summaryContext.messages), maxTokens: Math.min(2000, settings.reserveTokens)});
-          const message = assistantMessage(response, model);
+            systemPrompt: getCurrentSystemPrompt(summaryContext.messages), maxTokens});
+          const message = assistantMessage(response, summaryModel);
           const stream = createAssistantMessageEventStream();
           stream.push({type: 'done', reason: message.stopReason, message});
           return stream;
         };
         const retention = forceCompaction ? {...settings, keepRecentTokens: Math.min(settings.keepRecentTokens,
           Math.max(1, Math.floor(contextBudget.estimated_tokens / 2)))} : settings;
-        const result = await compactContext(projected, model, retention, summaryStream, signal, prepared.tools);
+        const result = await compactContext(projected, summaryModel, retention, summaryStream, signal, prepared.tools)
+          .catch(error => {fatal ??= error; throw error;});
         const committed = await request('compact', {...result,
           reason: forceCompaction ? 'overflow' : contextBudget.serialized_bytes > settings.maxRequestBytes ? 'bytes' : 'threshold',
           tokens_before: contextBudget.budget_tokens});
@@ -280,7 +285,8 @@ export async function runAgent(options, rpc, signal, notify = async () => {}) {
       }
       fatal ??= Object.assign(new Error(event.message.errorMessage || 'Pi model request interrupted'),
         options.provider && event.message.cotaModelError && !signal?.aborted
-          ? {code: 'model_error', error_type: event.message.cotaErrorType} : {});
+          ? {code: 'model_error', phase: 'model', error_type: event.message.cotaErrorType,
+            request_id: event.message.cotaRequestId} : {});
       throw fatal;
     }
     if (event.type === 'tool_execution_start') {

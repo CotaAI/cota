@@ -1,6 +1,5 @@
 """Skill discovery is immutable run metadata, independent of replay snapshots."""
 from types import SimpleNamespace
-from unittest.mock import Mock
 
 import pytest
 
@@ -102,17 +101,17 @@ async def test_metadata_is_detached_and_persisted_catalog_cannot_be_rewritten(st
 
 
 @pytest.mark.asyncio
-async def test_discovery_is_saved_before_policy_validation_fails(store, mock_agent, tmp_path):
+async def test_discovery_diagnostics_persist_without_invoking_retrieval(store, mock_agent, tmp_path):
     store.enable_debug_log(tmp_path / 'execution.log')
     dst = start()
-    mock_agent.policy.validate_skills = Mock(side_effect=ValueError('unknown policy skill'))
     runtime = PiAgentRuntime(mock_agent, dst, 's', checkpoint=store.save, store=store)
     payload = {'skills': [], 'diagnostics': [{'message': 'invalid SKILL.md'}]}
-    with pytest.raises(ValueError, match='unknown policy skill'):
-        await runtime._handle_request('skills_loaded', payload)
+    await runtime._handle_request('skills_loaded', payload)
     discovery = (await store.run_metadata('s', 'r'))['discovery']
     assert {k: v for k, v in discovery.items() if k != 'tools'} == payload
     assert discovery['tools']
+    assert (await store.run_metadata('s', 'r'))['available_skills'] == []
+    assert [event.type for event in dst.events] == ['user_utter', 'run_started']
     mock_agent._llm_mock.generate_chat.assert_not_awaited()
 
 

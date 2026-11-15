@@ -236,6 +236,46 @@ function oversizedHistory(){return [user,
   {role:'assistant',content:[{type:'toolCall',id:'old-tool',name:'act',arguments:{n:1}}],timestamp:2,cotaEventId:'old-call'},
   {role:'toolResult',toolCallId:'old-tool',toolName:'act',content:[{type:'text',text:'guide '.repeat(6000)}],timestamp:3,cotaEventId:'old-result'},
   {role:'user',content:'continue',timestamp:4,cotaEventId:'latest'}];}
+
+test('summary output uses the Pi model allowance instead of a Cota 2000-token cap', async t => {
+  const f = await fixture(t, async (_req, res, n) => {
+    const body = f.requests.at(-1).body;
+    const budget = body.max_tokens ?? body.max_completion_tokens;
+    if (n === 1 && budget <= 2000) {
+      sse(res);res.write(chunk({content:'incomplete summary'}));res.write(chunk({},'length'));
+      return res.end('data: [DONE]\n\n');
+    }
+    done(res, n === 1 ? 'Complete task checkpoint.' : 'continued');
+  });
+  f.options.messages = oversizedHistory();
+  f.options.model = {contextWindow: 32000, maxTokens: 8000};
+  f.options.compaction = {trigger_tokens: 5000, keep_recent_tokens: 500, max_tokens:8000};
+  const rpc = async (method, payload) => method === 'compact' ? {messages:[
+    {role:'user',content:payload.summary,timestamp:5,cotaEventId:'summary',cotaCompaction:true},
+    f.options.messages.at(-1)]} : f.rpc(method,payload);
+  assert.equal((await runAgent(f.options,rpc)).status,'completed');
+  assert.equal(f.requests[0].body.max_tokens ?? f.requests[0].body.max_completion_tokens,8000);
+  assert.equal(f.requests.length,2);
+});
+
+for (const kind of ['truncated', 'empty']) test(`invalid summary is a typed execution failure (${kind})`, async t => {
+  const f = await fixture(t, async (_req, res) => {
+    sse(res);res.write(chunk({content:kind === 'truncated' ? 'partial' : ''}));
+    res.write(chunk({},kind === 'truncated' ? 'length' : 'stop'));res.end('data: [DONE]\n\n');
+  });
+  f.options.messages=oversizedHistory();f.options.model={contextWindow:8000,maxTokens:500};
+  f.options.compaction={reserve_tokens:1000,keep_recent_tokens:1000};
+  await assert.rejects(runAgent(f.options,f.rpc), error => {
+    assert.equal(error.phase,'compaction');
+    assert.equal(error.code,kind === 'truncated' ? 'summary_truncated' : 'summary_empty');
+    assert.equal(error.request_id,'req-1');
+    return true;
+  });
+  assert.equal(f.requests.length,1);
+  assert.equal(f.rpcCalls.some(c=>c.method==='compact'),false);
+  assert.equal(f.toolCalls.length,0);
+});
+
 for(const fail of [false,true])test(`native compaction uses provider stream without public deltas (failure=${fail})`,async t=>{
   const f=await fixture(t,async(_req,res,n)=>{if(fail&&n===1){res.writeHead(503,{'content-type':'application/json'});return res.end('{"error":{"message":"summary unavailable"}}');}done(res,n===1?'useful summary':'final answer');});
   f.options.messages=oversizedHistory();f.options.model={contextWindow:8000,maxTokens:500};

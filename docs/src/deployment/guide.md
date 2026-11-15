@@ -36,7 +36,7 @@ base_store:
 无 Store 配置时可能使用 MemoryStore，它不能跨重启保留历史。每个独立 Bot 部署使用自己的数据库或存储命名空间。
 
 模型凭据写入 `llms`，渠道凭据写入 `channels`。先用 shell 验证，再开启外部入口。
-训练型 Policy 在启动前执行 train/--check；缺失或过期索引会使加载失败。
+Policy 与 Knowledge 索引在加载 Agent 时从 Bot 文件建立；修改案例或知识文件后重新加载服务。
 
 ## 单进程启动
 

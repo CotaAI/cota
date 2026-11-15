@@ -1,10 +1,11 @@
 """Cota orchestration around Pi Core, with no Python model/tool execution loop.
 
 DST owns business state and the execution checkpoint. Store commits each durable
-artifact before the worker proceeds. Policy guidance is separate from user text;
-Environment authorization and backend operations enforce native tool access.
+artifact before the worker proceeds. Policy and Knowledge are on-demand tools;
+environment authorization and backend operations enforce native tool access.
 """
 import asyncio
+from contextlib import nullcontext
 from copy import copy
 import json
 import logging
@@ -19,7 +20,7 @@ from cota.events.utils.tool import text_result
 from cota.executor.tools.base import ToolWrapper
 from cota.executor.environment import DEFAULT_DEPLOY, ExecutionEnvironment, NATIVE_TOOLS
 from cota.constant import DEFAULT_AGENT_LOOP_PROMPT, DEFAULT_DIALOGUE_MAX_TOKENS
-from .pi_bridge import PiBridge, PiModelError
+from .pi_bridge import PiBridge, PiExecutionError, PiModelError
 from .pi_context import to_openai
 from .pi_images import ContextImages
 from .pi_trace import PiTraceRecorder
@@ -41,12 +42,8 @@ class RunInProgress(RuntimeError):
     """A running execution cannot be presumed abandoned from persisted state alone."""
 
 
-class ModelCallError(RuntimeError):
+class ModelCallError(PiModelError):
     """A provider request failed, distinct from a failed durable checkpoint."""
-
-    def __init__(self, message, *, error_type=None):
-        super().__init__(message)
-        self.error_type = error_type
 
 
 class PiAgentRuntime:
@@ -88,6 +85,8 @@ class PiAgentRuntime:
             owner = getattr(checkpoint, '__self__', None)
             diagnostic_store = owner if hasattr(owner, 'debug_enabled') else None
         self._trace = PiTraceRecorder(dst, store=diagnostic_store)
+        from cota.store import Store
+        self._execution_store = diagnostic_store if isinstance(diagnostic_store, Store) else None
         self._models = PiModelObserver(self._trace, self._checkpoint)
         self._system_prompt = ''
         self._runtime_context = ''
@@ -515,13 +514,17 @@ class PiAgentRuntime:
         return {'mode': 'summary', 'summary': summary}
 
     async def run(self):
-        with model_trace(self._trace, self._checkpoint):
+        ownership = (self._execution_store.execution_guard(self.session_id)
+                     if self._execution_store is not None else nullcontext(None))
+        with ownership as guard, model_trace(self._trace, self._checkpoint):
+            self._bridge.execution_fd = guard.fd if guard is not None else None
             try:
-                return await self._run()
+                return await self._run(executor=guard.identity if guard is not None else None)
             except PiModelError as error:
-                raise ModelCallError(str(error), error_type=error.error_type or self._models.last_error_type) from error
+                raise ModelCallError(str(error), error_type=error.error_type or self._models.last_error_type,
+                                     code=error.code, phase=error.phase, request_id=error.request_id) from error
 
-    async def _run(self):
+    async def _run(self, *, executor=None):
         previous = self.dst.execution
         current_run_id = None
         if previous.get('status') == 'running':
@@ -541,6 +544,7 @@ class PiAgentRuntime:
             self.dst.append_event(Event(EventType.RUN_STARTED, {
                 'input_event_id': latest_id, 'previous_run_id': previous.get('run_id'),
                 'engine': 'pi', 'engine_version': '1.4.0',
+                **({'executor': executor} if executor is not None else {}),
                 **(self.group_trigger or {}),
             }, run_id=current_run_id))
             if self.group_trigger:
@@ -604,7 +608,8 @@ class PiAgentRuntime:
             except Exception:
                 logger.warning('Could not finalize interrupted native model diagnostics')
             if current_run_id and self.dst.execution.get('run_id') == current_run_id:
-                status = 'interrupted' if isinstance(error, asyncio.CancelledError) else 'failed'
+                status = ('interrupted' if isinstance(error, asyncio.CancelledError)
+                          or getattr(error, 'code', None) == 'cancelled' else 'failed')
                 # Preserve failure facts even when the checkpoint failed. A new
                 # run must commit them before proceeding; never retry old tools.
                 self._trace.record('run_finished', {
@@ -612,6 +617,9 @@ class PiAgentRuntime:
                         error.error_type or self._models.last_error_type if isinstance(error, PiModelError)
                         else getattr(error, 'error_type', None)) or type(error).__name__,
                     'error': str(error),
+                    **({key: value for key in ('code', 'phase', 'request_id')
+                        if (value := getattr(error, key, None)) is not None}
+                       if isinstance(error, PiExecutionError) else {}),
                 })
                 if not self._checkpoint_failed:
                     try:

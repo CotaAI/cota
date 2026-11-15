@@ -13,12 +13,20 @@ class PiBridgeError(RuntimeError):
     pass
 
 
-class PiModelError(PiBridgeError):
+class PiExecutionError(RuntimeError):
+    """A reported execution failure; the transport delivered it successfully."""
+
+    def __init__(self, message, *, code='execution_failed', phase='execution', error_type=None, request_id=None):
+        super().__init__(message)
+        self.code, self.phase = code, phase
+        self.error_type, self.request_id = error_type, request_id
+
+
+class PiModelError(PiExecutionError):
     """A failed native provider call, distinct from checkpoint/protocol failure."""
 
-    def __init__(self, message, *, error_type=None):
-        super().__init__(message)
-        self.error_type = error_type
+    def __init__(self, message, *, code='model_error', phase='model', error_type=None, request_id=None):
+        super().__init__(message, code=code, phase=phase, error_type=error_type, request_id=request_id)
 
 
 async def _read_frame(reader):
@@ -52,6 +60,7 @@ class PiBridge:
     def __init__(self, node=None, timeout=300):
         self.node = node
         self.timeout = timeout
+        self.execution_fd = None
 
     async def discover_skills(self, cwd, skill_paths):
         """Read Pi's visible catalog, without an agent turn or executable RPCs."""
@@ -69,6 +78,7 @@ class PiBridge:
             str(runtime.node), str(runtime.worker), stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             limit=PIPE_CHUNK_BYTES,
+            **({'pass_fds': (self.execution_fd,)} if self.execution_fd is not None else {}),
         )
         stderr = bytearray()
         async def drain_stderr():
@@ -98,15 +108,23 @@ class PiBridge:
                     while True:
                         message = await _read_frame(process.stdout)
                         if message is None:
-                            await reader
-                            raise PiBridgeError('Pi worker exited unexpectedly: ' + stderr.decode(errors='replace'))
+                            # A worker can close stdout while remaining alive.
+                            # Never await stderr EOF before reporting a broken pipe.
+                            raise PiBridgeError(f'Pi worker output closed unexpectedly (exit code {process.returncode}): '
+                                                + stderr.decode(errors='replace'))
                         if message.get('type') == 'done':
                             return message['result']
                         if message.get('type') == 'error':
                             error = message.get('error', 'Pi worker failed')
+                            fields = {key: message[key] for key in ('code', 'phase', 'error_type', 'request_id')
+                                      if key in message}
+                            if (not isinstance(error, str) or any(not isinstance(v, str) or not v for v in fields.values())):
+                                raise PiBridgeError('Invalid Pi worker error record')
+                            if message.get('code') == 'protocol_error':
+                                raise PiBridgeError(error)
                             if message.get('code') == 'model_error':
-                                raise PiModelError(error, error_type=message.get('error_type'))
-                            raise PiBridgeError(error)
+                                raise PiModelError(error, **fields)
+                            raise PiExecutionError(error, **fields)
                         if message.get('type') == 'notification':
                             if message.get('method') != 'stream' or not isinstance(message.get('payload'), dict):
                                 raise PiBridgeError('Invalid Pi worker notification')

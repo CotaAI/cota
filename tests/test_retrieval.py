@@ -1,5 +1,4 @@
 """Shared retrieval infrastructure: tokenizer, BM25 index, Markdown chunker."""
-
 from cota.retrieval import tokens, BM25Index, chunk_markdown
 from cota.knowledge.index import _extract_window
 

@@ -17,6 +17,66 @@ def message(text='hello'):
             'usage': {'input': 5, 'output': 2, 'cacheRead': 0, 'cacheWrite': 0, 'totalTokens': 7}}
 
 
+@pytest.mark.parametrize('debug', [False, True])
+async def test_truncated_summary_stops_cleanly_across_real_worker_and_processor(mock_agent, tmp_path, debug):
+    import json
+    from aiohttp import web
+    from cota.events import UserUtterEvent, BotUtterEvent
+    from cota.llm import LLM
+    from cota.message import Message
+    from cota.processor import Processor
+    bodies = []
+
+    async def serve(request):
+        body = await request.json()
+        bodies.append(body)
+        frames = [{'choices': [{'index': 0, 'delta': {'content': 'TRUNCATED_PRIVATE'}, 'finish_reason': None}]},
+                  {'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'length'}]}]
+        return web.Response(text=''.join('data: ' + json.dumps(v) + '\n\n' for v in frames) + 'data: [DONE]\n\n',
+                            content_type='text/event-stream')
+
+    app = web.Application()
+    app.router.add_post('/v1/chat/completions', serve)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '127.0.0.1', 0)
+    await site.start()
+    llm = LLM({'type': 'openai', 'key': 'local-only', 'model': 'test', 'context_window': 32000,
+               'apibase': f'http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/v1'})
+    mock_agent.llm_instance = lambda name=None: llm
+    mock_agent.dialogue.update(max_tokens=500, compaction={'trigger_tokens':5000, 'keep_recent_tokens':500, 'max_tokens':8000})
+    dst, store = DST('summary', mock_agent), MemoryStore()
+    if debug:
+        store.enable_debug_log(tmp_path / 'debug.log')
+    dst.append_event(UserUtterEvent('Preserve the existing task. ' * 2000))
+    dst.append_event(BotUtterEvent('Previously saved work.'))
+    await store.save(dst)
+    try:
+        processor = Processor(mock_agent, store, sanitize_errors=True)
+        assert await processor.handle_message(Message(text='continue', session_id='summary', receiver='bot')) == 'failed'
+        saved = await store.load('summary')
+        terminal = next(e for e in saved.events if e.type == 'run_finished')
+        assert terminal.payload['error_type'] == 'SummaryTruncated'
+        assert terminal.payload['code'] == 'summary_truncated'
+        assert terminal.payload['phase'] == 'compaction'
+        assert terminal.payload['request_id']
+        assert len(bodies) == 1 and (bodies[0].get('max_tokens') or bodies[0]['max_completion_tokens']) == 8000
+        assert not any(e.type == 'context_compaction' for e in saved.events)
+        assert 'TRUNCATED_PRIVATE' not in str(saved.context_messages)
+        assert '压缩' in saved.latest_bot_text() and '停止' in saved.latest_bot_text()
+        assert saved.latest_user_text() == 'continue'
+        if debug:
+            record = await store.model_debug('summary', terminal.payload['request_id'])
+            assert record['status'] == 'rejected' and record['error_type'] == 'SummaryTruncated'
+            assert record['response']['finish_reason'] == 'length'
+            assert record['transport']['attempts'][-1]['status_code'] == 200
+        else:
+            assert await store.model_debug_headers('summary') == []
+    finally:
+        await llm.close()
+        await runner.cleanup()
+
+
 @pytest.mark.asyncio
 async def test_image_projection_usage_source_survives_replay_without_debug():
     from cota.runtime.pi_models import PiModelObserver

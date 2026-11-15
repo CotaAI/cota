@@ -109,7 +109,7 @@ cota eval
 
 weather 自带 **30 个对话评测案例**，覆盖多轮条件变更、预算约束、业务回复和异常处理。天气查询使用外部接口，活动查询使用随示例提供的活动目录，便于复现验证。详见 [weather 示例](bots/weather/README.md)。
 
-想验证更长的制作流程，可以使用 [绘本工坊](bots/picture-book/README.md)：组合故事与分镜、图像生成/编辑、视觉审校和中文 PDF，并通过配套 Web 应用下载成品。它使用默认 machine 环境，需要自行配置图像/视觉服务及可选排版依赖。
+想验证更长的制作流程，可以使用 [绘本工坊](bots/picture-book/README.md)：组合故事与分镜、图像生成/编辑、视觉审校和中文 PDF，并通过统一附件能力交付成品。它使用默认 machine 环境，需要自行配置图像/视觉服务及可选排版依赖。
 
 对话支持[文件附件](docs/src/concepts/attachments.md)：Shell 用 `/file "路径"` 添加文件，Web 支持上传和授权下载；两者沿用统一的会话与历史链路。machine 环境的 Bot 可交付工作区中的报告、图片或 PDF，文件内容独立于事件数据库保存。
 
@@ -127,32 +127,35 @@ cota run --chat-app --host 127.0.0.1 --port 5005
 
 ```text
 my-bot/
-├── agent.yml                 # 角色、行为、工具权限与 Policy 策略
+├── agent.yml                 # 角色、行为与工具权限
 ├── endpoints.yml             # 模型、存储与 Channel 配置
 ├── skills/                   # 业务能力说明、SOP 与资源
 └── policy/
-    ├── data.yml              # 业务案例：教 Bot 怎样做
+    ├── POLICY.md             # 业务案例：按需查阅正确做法
     └── eval/data.yml         # 验证案例：检查它是否做到
 ```
 
 **Skill 描述“能做什么”，Policy 指导“这时候怎样做”。**模型结合当前对话和真实执行结果选择、组合能力。
 
-例如，天气服务没有返回有效数据时，期望 Bot 说明情况。在 `policy/data.yml` 写下：
+例如，天气服务没有返回有效数据时，期望 Bot 说明情况。在 `policy/POLICY.md` 写下：
 
-```yaml
-policies:
-  - name: 天气查询失败时说明情况
-    steps:
-      - user: 北京现在多少度？
-      - bot:
-          - skills: [weather]
-          - result: 主服务与备用服务都没有返回有效天气数据。
-          - reply: 暂时没查到北京的气温，稍后再试一下吧。
+```markdown
+---
+name: weather-policy
+description: 天气查询与失败处理的业务策略
+top_k: 5
+---
+
+## 天气查询失败时说明情况
+
+- User: 北京现在多少度？
+- Bot:
+  - Skills: weather
+  - Result: 主服务与备用服务都没有返回有效天气数据。
+  - Reply: 暂时没查到北京的气温，稍后再试一下吧。
 ```
 
-`result` 描述案例适用的结果条件；运行时仍以本次实际数据为准。你可以直接编写案例，也可以用 `cota annotate export` 导出真实对话草稿，人工修改后通过 `cota annotate import` 校验。
-
-案例较多时，可选择 BM25、Embedding 或模型策略，并按需用 `cota train` 准备索引等产物。运行时结合当前对话与执行事实，在每次模型请求前选取适用指导。使用方法见 [业务标注](docs/src/concepts/skill-policy.md) 与 [Policy 训练和推理](docs/src/concepts/trainable-policy.md)。
+`result` 是案例条件，运行时仍以实际证据为准。Cota 加载文件并建立本地索引，由模型按需调用 `policy_guidance` 查阅；不需要训练命令，也不在每次请求前自动注入案例。你也可以用 `cota annotate export/import` 从真实对话整理 YAML 案例，审核后放入同一目录。详见 [业务标注](docs/src/concepts/skill-policy.md) 与 [Policy 检索](docs/src/concepts/trainable-policy.md)。
 
 ### 验证：按业务要求逐项检查
 
@@ -226,7 +229,7 @@ policies:
 <details>
 <summary><strong>可以自动优化 Bot 吗？</strong></summary>
 
-当前支持记录、业务标注、Policy 训练、对话评测与版本比较，由开发者据此更新 Bot。自动生成优化版本并验证、应用的 RSI 流程仍是后续方向。
+当前支持记录、业务标注、Policy 检索、对话评测与版本比较，由开发者据此更新 Bot。自动生成优化版本并验证、应用的 RSI 流程仍是后续方向。
 
 </details>
 

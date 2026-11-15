@@ -94,3 +94,5 @@ SQL 中请求正文、准备详情及响应正文独立保存，状态更新只�
 Pi 会标准化不同供应商的 usage。若接口没有报告缓存细分，标准化字段可能为 0；不能仅凭这一数值认定服务端完全没有缓存。
 
 压缩时查看 purpose=compaction 的模型请求和侧栏 Compacting context；提交完成后 Events 中出现 context_compaction，包含 reason（threshold/bytes/overflow）和 tokens_before。下一次主请求的 context_budget 展示压缩后预算；不要把工作阈值误认作模型硬容量。原生溢出恢复时，前一主请求可显示 failed / ContextOverflowError，随后是 compaction 和新的 dialogue 请求；这不代表整个 run 已失败，最终以 run_finished 为准。
+
+摘要 HTTP 请求成功不代表摘要可用。原生摘要返回 `finish_reason=length` 时，Model Requests 标记 rejected / SummaryTruncated，完整 request/response、200 状态和实际输出 token 仍保留；原有 run_finished 记录 `code=summary_truncated`、`phase=compaction` 和请求 ID。不会生成 context_compaction，也不会把摘要正文投递给用户。该错误属于执行失败，不再显示为 PiBridgeError。检查摘要的 `request.max_tokens`（或供应商对应字段），并根据模型能力调整 `dialogue.compaction.max_tokens` 与 reserve_tokens。

@@ -11,7 +11,7 @@
 | 普通 wheel 构建失败 | 发布 wheel 需准备 bundled runtime；源码开发用 `uv pip install -e .`，见 [安装](../installation/install.md) |
 | endpoints 中模型字段为空 | 直接填写 key/apibase/model；不是填写 COTA_API_KEY 环境变量 |
 | Unsupported agent/config keys | 按 [配置参考](../configuration/overview.md) 使用当前字段；旧 Action/Runtime 配置不兼容 |
-| Policy artifact missing/stale/invalid | 核对 policy/*.yml 与 options，执行 train，再 `train --check`，重新加载 Agent |
+| 没有 policy_guidance 工具 | 核对 policy/POLICY.md 的清单格式与工具权限；修改后重新加载 Agent |
 | Skill 名称未知 | 检查 SKILL.md frontmatter 和 Pi 目录；Policy 引用名称必须一致 |
 | Incompatible Store schema | 事件表 schema 不兼容；先备份。有价值的数据需要单独迁移，勿直接删库 |
 
@@ -35,8 +35,8 @@ WebSocket 使用 resume 绑定身份和会话；重连传最后游标，客户�
 - read 成功不代表业务成功：检查是否执行真实查询，以及 tool_result 的内容。
 - 文档提到的工具不存在：先注册 Tool/MCP，检查 allow/deny；修改 Skill 不会安装依赖。
 - 出现 requested_arguments：Pi 对模型参数做过类型转换；arguments 是实际实参，requested_arguments 保留不同的原始提议。
-- Policy 没按预期工作：先确认实际 request 的 business_guidance，再看输入事实、result 条件和选择诊断；不能仅凭案例被选中断定模型会遵循。
-- 训练/标注成功但在线没变化：已有 Agent 不热更新，重新加载；训练型策略还需新产物匹配当前配置。
+- Policy 没按预期工作：先检查 policy_guidance 的实际调用参数与结果，再看输入事实和 result 条件；检索到案例不保证模型会遵循。
+- 修改标注后在线没变化：已有 Agent 不热更新，重新加载以重建索引。
 
 ## 执行与投递
 

@@ -45,6 +45,11 @@ def validate_execution(value):
         raise ValueError('Invalid execution status')
     if 'mode' in value and value['mode'] != 'group':
         raise ValueError('Execution mode must be group when present')
+    if 'executor' in value:
+        executor = value['executor']
+        if (not isinstance(executor, dict) or set(executor) != {'host', 'scope'}
+                or any(not isinstance(item, str) or not item for item in executor.values())):
+            raise ValueError('executor requires nonempty host and scope strings')
     if 'reason' in value and value['reason'] not in ('mention', 'proactive'):
         raise ValueError('Invalid group response reason')
     if 'context_through' in value and (type(value['context_through']) is not int or value['context_through'] < 1):

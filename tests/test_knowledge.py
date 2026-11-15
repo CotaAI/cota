@@ -1,6 +1,5 @@
 """Knowledge base: loader, index, tool integration."""
 import os
-
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 

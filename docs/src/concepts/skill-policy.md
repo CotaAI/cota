@@ -2,7 +2,7 @@
 
 Cota 以 Skill 定义业务能力，以 Trace 保存执行证据，以围绕 Skill 的业务流程标注沉淀 Policy，再用 Policy 改善后续 Skill 的选择、组合与执行。
 
-两种来源使用完全相同的文件格式：运营可以直接编写期望对话，也可以修改真实对话整理出的草稿。无需消息编号范围、意图总结、阶段标签或执行事件 ID。
+运营可直接在 `policy/POLICY.md` 写对话案例，格式见 [Policy 配置](../configuration/policy.md)；也可修改真实对话导出的 YAML 草稿。两种格式表达相同的有序步骤，无需消息编号范围、意图总结、阶段标签或执行事件 ID。下面介绍适合导出和校验的 YAML 格式。
 
 ## 像写对话一样标注
 
@@ -79,7 +79,7 @@ policies:
 
 ## 从零编写
 
-把文件保存到 Bot 的 `policy/` 目录。默认 all 策略重新加载 Agent 即可；训练型策略需先执行 `cota train --config BOT`。它不需要会话或数据库，也不需要先运行一次机器人。
+先建立 `policy/POLICY.md` 清单；YAML 案例可保存到同目录。重新加载 Agent 后索引生效，不需要训练、会话或数据库，也不需要先运行一次机器人。
 
 也可以先校验并生成供审核的文件：
 
@@ -87,7 +87,7 @@ policies:
 cota annotate import --config bots/weather --input manual.yml --output reviewed.yml
 ```
 
-此命令只处理文件，不连接 Store。它检查格式和预算，保持原有 steps/thought 顺序，输出同一套 policies 格式。Skill 名称在 Pi 发现能力后、第一次模型请求前验证。
+此命令只处理文件，不连接 Store。它检查格式和预算，保持原有 steps/thought 顺序，输出同一套 policies 格式。Skill 名称应与实际 Pi 目录一致；案例不会在发现阶段自动选择或执行。
 
 ## 从真实对话整理
 
@@ -107,7 +107,7 @@ cota annotate import --config bots/weather --input review.yml --output reviewed.
 
 导入只校验格式和预算并生成 Policy 文件，不读取或修改会话数据库。再次导出始终读取真实对话；已编辑的案例保存在 Policy 文件中。执行事件不保存人工标注，也不承担 Policy 修订管理。
 
-输出文件不会覆盖已有文件。将审核后的文件放入 `policy/`；训练型策略执行 `cota train --config BOT` 后重新加载 Agent，默认 all 策略直接重新加载即可。更新同名案例时替换原 Policy 文件，避免重复加载。当前不自动发布或热更新；自动化的 event → policy 转换及写入另行设计。
+输出文件不会覆盖已有文件。将审核后的文件放入含 `POLICY.md` 的 `policy/`，重新加载 Agent 即可。更新同名案例时替换原 Policy 文件，避免重复加载。当前不自动发布或热更新；自动化的 event → policy 转换及写入另行设计。
 
 独立 export CLI 需要持久 SQL Store（文件 SQLite、MySQL 等）；内存 Store 可在 Bot 进程中使用以下接口：
 
@@ -123,10 +123,10 @@ write_worksheet("reviewed.yml", read_worksheet("review.yml"))
 
 ## Policy 怎样影响 Pi
 
-每次模型请求前，Cota 将预算内的完整 Policy 示例放入独立的业务指导中，保留 user、thought、skills、result、reply 顺序，并标明 thought 的主要指导对象。工具执行后、用户补充信息后及恢复运行时，模型都能结合最新事实继续使用这些原则。
+模型按需调用 policy_guidance 后，Cota 返回预算内的完整 Policy 示例，保留 user、thought、skills、result、reply 顺序，并标明 thought 的主要指导对象。工具执行后，模型结合实际对话和执行证据继续判断，不因读取案例就自动执行其中的流程。
 
 同一段业务指导可以同时影响能力选择、异常处理与话术。Cota 不会把示例未来的用户消息或回复当成已发生的事实，也不会把人工 thought 包装成模型已经产生的思考。
 
-默认 all 提供有界的完整案例注入；还可配置词项、向量、模型判断或模型搜索等 Policy。训练和扩展接口见 [可训练的 Policy](trainable-policy.md)。当前保留完整案例及其条件，模型可标记关注步骤，但没有逐步骤强制执行。核心来源事件记录实际案例名称/哈希与选择状态；完整 thought 和选择诊断在 Debug preparation 中查看。结合实际 request 检查指导是否进入请求，再与真实调用、回复比较。模型决策质量仍需要业务评测，单纯“注入成功”不代表一定遵循。
+当前使用本地 BM25 索引，由工具接收 scenario 查询；文件配置和生命周期见 [Policy 检索](trainable-policy.md)。完整结果与真实返回数量保存在 tool_result，后续 run 的请求可只保留查询摘要。通过 Events、Trace 与 Debug request 核对实际检索、调用和回复。检索相关不表示业务前提满足，模型决策质量仍需业务评测。
 
 标注统一使用对话式 Policy 文件，与执行事件流独立。完整配置见 [Policy](../configuration/policy.md)，持久化见 [DST](dst.md)。

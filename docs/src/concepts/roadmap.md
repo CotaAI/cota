@@ -7,7 +7,7 @@
 - Bot 文件定义：角色、场景、Skill、工具范围、Policy 与部署资源。
 - 官方 TypeScript Pi Agent Core 执行；复用 Pi Skill 发现、格式化和按需读取。
 - 事件驱动的 DST，逐条事件保存、快照恢复、Trace 与独立 Debug 模型诊断。
-- 对话式 Policy 标注，手工编写或从对话导出草稿；多种 train/load/guidance 策略。
+- 对话式 Policy 标注，手工编写或从对话导出草稿；文件加载时建立 BM25 索引，模型按需检索。
 - 对话验证集、LLM Judge、默认进度提示、结构化评测产物、历史 Trace 重评和多版本对比。
 - Application 的单进程会话协调、跨会话有限并发、输入去重和历史查询。
 - cmdline、Web HTTP/WebSocket、飞书；Web 重连补历史，飞书持久化回复重试。
@@ -27,7 +27,7 @@
 | 定时/后台任务 | 保留 SchedulerService 后端供可信应用使用；模型不提供定时或后台任务工具，多人定时投递尚未接通 |
 | 记忆与隔离 | user_id 隔离个人记忆；工具进程和 workspace 不构成安全沙箱 |
 | 设备 MCP 资源 | 默认用户 MCP 池尚未自动接入 Agent cleanup，应用需显式管理；见 [MCP](../components/mcp.md) |
-| 配置更新 | Policy/agent 配置需重新加载；训练型 Policy 先重训，没有自动版本晋升或热更新 |
+| 配置更新 | Policy/agent 配置需重新加载；文件索引随加载重建，没有自动版本晋升或热更新 |
 | 聊天应用 | 访客身份，无账号找回、跨设备身份恢复、音视频或完整 IM 产品能力 |
 
 ## 下一阶段：RSI
@@ -45,7 +45,7 @@
 ```
 
 固定对话验证集已通过 [cota eval](../development/evaluation.md) 实现：保存逐项评分、执行证据、Bot/验证集/评委身份，并支持重评与对比。它可作为 RSI 的验证基础，但评分仍需复核事实与评委偏差。Bot 对 Bot 的对话模拟、候选生成、版本管理和应用门槛仍待设计。
-当前不实现“一键优化”、自动评估发布或自动修改在线 Bot。已有 trace、annotate、train 和 eval 是基础能力，不等同于完整 RSI。
+当前不实现“一键优化”、自动评估发布或自动修改在线 Bot。已有 Trace、标注、检索和评测是基础能力，不等同于完整 RSI。
 
 ## 后续交付方向
 

@@ -36,7 +36,7 @@ COTA_RUNTIME_DIR="$PWD/.build/pi-runtime" python -m build
 
 ## Python 与 Node 的边界
 
-`PiBridge` 为每轮启动 worker，通过 JSON-lines 交换带确认的请求和独立的流式通知。普通 `openai` 端点由 Pi 官方 provider 在 Node 内直接组装请求并读取 SSE；主对话和压缩摘要走同一模型通道。Cota 在 `prepareRequest` 前后提供 Policy 与工具范围，通过 `onPayload` 观察实际请求，并接收完整模型输出和执行事实。Python 专用的 `custom`、`openai-rag` 端点继续使用其适配器传输，不伪装成流式接口，也不引入另一套 Agent 循环。
+`PiBridge` 为每轮启动 worker，通过 JSON-lines 交换带确认的请求和独立的流式通知。普通 `openai` 端点由 Pi 官方 provider 在 Node 内直接组装请求并读取 SSE；主对话和压缩摘要走同一模型通道。Cota 在 `prepareRequest` 提供已提交上下文、运行时信息与工具范围，通过 `onPayload` 观察实际请求，并接收完整模型输出和执行事实。Python 专用的 `custom`、`openai-rag` 端点继续使用其适配器传输，不伪装成流式接口，也不引入另一套 Agent 循环。
 
 桥接独立处理顺序请求和有界的公开文字通知。慢速或断开的展示端不能阻塞执行确认；拥塞时允许舍弃预览片段，完整已提交回复仍为准。连接关闭、取消、超时或错误会结束本轮，通过 AbortSignal 让 Pi 清理模型连接和命令进程，再回收 worker。
 
@@ -47,7 +47,7 @@ COTA_RUNTIME_DIR="$PWD/.build/pi-runtime" python -m build
 | 原生模型调用、流式解析、模型—工具循环、顺序工具执行 | 模型配置、业务指导、执行授权与 Python 扩展能力 |
 | Skill 目录与八个原生工具实现 | 执行环境、资源根目录、读取证据与授权 |
 | 本轮暂态消息 | 事件投影、快照、历史恢复 |
-| 调用 `prepareRequest`，组装当前工作上下文 | 从已提交 DST 重算 Policy guidance 与工具 schema |
+| 调用 `prepareRequest`，组装当前工作上下文 | 从已提交 DST 生成请求投影与工具 schema |
 
 工具以顺序模式执行。Pi 的 `beforeToolCall` 钩子让 Cota 在副作用前保存校验后的参数；checkpoint 失败不会获得确认。
 
@@ -57,16 +57,16 @@ Pi 1.4 区分可执行工具和供应商工具声明：`AgentContext.tools` 绑�
 
 基础 system 包含 Bot 固定指令、Skill 目录、工具使用指南和执行环境。Policy、用户记忆、知识检索结果、群聊触发信息不拼进基础 system。模板中的 `task_description` / `agent_description` 仍渲染 Bot 描述；其它运行时变量在 system 中保留稳定的引用提示，实际值放入 `runtimeContext`。原有 `agent.yml` 模板不需要改写。
 
-记忆、知识与模板动态值在本轮启动时读取；Policy 则在每次主模型请求前根据最新已提交事实重新准备。工具循环不会因此反复检索同一份知识或重读用户记忆。
+用户记忆及模板动态值在本轮启动时准备。Knowledge 与 Policy 不自动查询：Bot 分别提供 `search_knowledge` 和 `policy_guidance` 工具，由 Pi 驱动的模型按当前需求决定是否调用。索引在 Agent 加载时从 `KNOWLEDGE.md` / `POLICY.md` 及同目录内容建立，不需要训练命令。
 
 每次主模型请求的顺序为：
 
 1. Pi Core 调用 `prepareRequest`。Node 经桥接请求 Cota 的 `prepare`，不反传完整历史。
-2. Cota 从已提交 DST 工作上下文选择 Policy，返回 `systemPrompt`、`runtimeContext`、当前工具声明及图片资源目录。训练与检索仍由 Cota Policy 负责；人工 thought 作为业务指导，不冒充模型思考或执行事实。
+2. Cota 返回 `systemPrompt`、`runtimeContext`、当前工具声明、图片资源目录及规范工作消息。原生 provider 和 Python 自定义适配器均使用这份消息投影；上一 run 的检索结果可在请求副本中用查询摘要替代，当前 run 的完整结果保留。
 3. Node 投影需要的图片，在消息末尾临时追加一个 `role: custom`、`customType: cota.runtime_context` 的消息，内容用 `<runtime_context>` 包裹。执行预算只在警告/收尾时加入，不在普通请求中不断更新计数。
 4. 使用 Pi 官方 `convertToLlm()` 将该 custom 消息转换成 `user` 文本块，并计入 token/字节预算。必要时复用 Pi 压缩真实工作上下文；临时指导不进入摘要或 `replaced_message_ids`，压缩提交后重新准备指导。
 5. Pi Core 的 `transformContext` 返回本次投影，官方 `convertToLlm()` 转换后，由 Pi provider 组装实际请求、工具字段和流式连接。所有供应商使用相同的消息类型，没有按模型切换成 system/developer 的分支。
-6. Pi 执行模型决定的工具。Cota 提交真实回复和工具事实。下一请求重新执行以上过程，使用最新指导，而不携带上一次的临时指导。
+6. Pi 执行模型决定的工具。Knowledge / Policy 工具通过标准 `content/details/isError` 返回结果；`details.hits` 是本次实际返回数量，不从正文推断。Cota 保存完整工具结果与查询摘要，下一请求使用已提交证据。人工 thought 是案例指导，不冒充模型思考或业务事实。
 
 ```text
 Agent.state / DST：真实用户消息 → Bot 决策 → 工具结果 → …
@@ -74,15 +74,15 @@ Agent.state / DST：真实用户消息 → Bot 决策 → 工具结果 → …
 LLM：稳定 system + 当前工具声明 + 工作历史 + 一条 runtime_context（user）
 ```
 
-`display: false` 本身不是防持久化机制。这里依靠请求投影与 `agent.state.messages` 分离：临时消息仅由 `transformContext` 返回，不提交给 Agent 状态、DST、Store Events 或 Channel。它不会触发一个新用户回合，也不会成为下一次 Policy 检索的用户问题。Debug 可以保存含该消息的实际请求；关闭 Debug 后不保证能还原完整请求。这里的 `user` 是 Pi custom 转换后的模型协议角色，不是 Cota 的 `user_utter` 事件。
+`display: false` 本身不是防持久化机制。这里依靠请求投影与 `agent.state.messages` 分离：临时消息仅由 `transformContext` 返回，不提交给 Agent 状态、DST、Store Events 或 Channel。它不会触发一个新用户回合。Debug 可以保存含该消息的实际请求；关闭 Debug 后不保证能还原完整请求。这里的 `user` 是 Pi custom 转换后的模型协议角色，不是 Cota 的 `user_utter` 事件。按需检索的结果则是真实 `tool_result`，完整保存在 Store，和临时运行时信息分开。
 
-缓存优化还包括：选定 Policy 案例在展示时按名称稳定排序（不改变检索排名、入选或步骤顺序）；Python 恢复与 Node 投影使用一致的历史图片引用、内容顺序与不可变版本路径；收尾保留工具声明，使用 `tool_choice: none` 并在执行前阻止工具副作用。
+缓存优化还包括：Python 恢复与 Node 投影使用一致的历史图片引用、内容顺序与不可变版本路径；工具声明稳定排序；收尾保留工具声明，使用 `tool_choice: none` 并在执行前阻止工具副作用。检索、跨 run 摘要化和压缩都会合理改变工作历史，不承诺整个请求永久只追加。
 
 这改善前缀稳定性，不承诺供应商的实际命中率。尾部指导变化会使它之后的前缀失效；图片从当前证据转为历史引用、压缩、模型/配置或权限变更仍会形成合理边界。第一版没有把过期指导留在历史中换取完全追加的请求。Debug 的 `cache` 指纹只检查同一 run 内 model/system/tools 的变化，不证明完整历史相同；`usage.cache_hit_ratio` 来自供应商用量，经 Pi 标准化，不是估算值。
 
 模型回复同时包含公开文字和工具调用时，完整 assistant 消息仍归属于第一条 `tool_started`；另保存一条以 `llm_event_id` 指向它的 `bot_utter` 用于历史展示和投递。两者同次提交后才执行工具；这条公开发言不再生成第二份模型上下文。隐藏推理不属于公开文字。
 
-原生请求单次默认总时限180秒、默认不自动重试；空行保活、SDK 退避以及请求观察钩子的等待不能延长该时限，详见 [endpoints.yml](../configuration/endpoints.md)。初始历史只同步一次，图片由不可变资源引用代替，不携带历史 Base64。普通 prepare 不从 Node 传回历史；Cota 从已提交 DST 计算 Policy，Node 接收稳定 system、本次 runtimeContext、工具声明及资源目录，自定义适配器接收同样精简过的消息。压缩后也使用这一投影恢复。Debug 模式额外传回一次实际供应商请求。工具首次产生的图片仍完整提交给 Cota，后续按需通过 `image_resource(id)` 加载，尚未引入通用二进制传输协议。
+原生请求单次默认总时限180秒、默认不自动重试；空行保活、SDK 退避以及请求观察钩子的等待不能延长该时限，详见 [endpoints.yml](../configuration/endpoints.md)。Node 的普通 prepare 请求不反传历史；Cota 返回自己的已提交工作投影，Node 以它准备下一次请求。图片由不可变资源引用代替，不携带历史 Base64；压缩提交后也使用这一投影恢复。Debug 模式额外传回一次实际供应商请求。工具首次产生的图片仍完整提交给 Cota，后续按需通过 `image_resource(id)` 加载，尚未引入通用二进制传输协议。
 
 `text_delta` 只作为实时预览发送给支持它的 Channel；思考、工具参数等增量不作为用户回复。完整回复提交后以同一 request_id 替换预览，不新增逐 token Event。必要的 Pi 推理签名和续接内容保存在来源事件的可选 `llm.continuation` 中，用于恢复模型协议；普通聊天历史不展示它，普通无签名文本不会增加该字段。
 
@@ -100,11 +100,29 @@ Cota 负责证据、资源作用域和传输投影；Pi 继续负责模型—工
 
 模型容量保持供应商配置或 Pi 目录中的真实值；工作触发阈值独立配置。`compactionSettings` 默认使用 `min(64000, contextWindow-reserveTokens)`；近期保留量默认 `min(12000, triggerTokens/2)`。适配层向 Pi `shouldCompact` 传递对应的有效预算，不改 provider 的模型容量。`findCutPoint` 和 `compact` 继续负责合法切点与摘要。若期望保留量挡住安全切分，适配层只缩小保留目标并再次调用 Pi，不自行裁断工具配对。
 
+连续压缩时，适配层从 `cotaCompaction` 消息中取出旧摘要，以 Pi 的 `previousSummary` 参数传入；只有上次保留的原始消息参加本次切分和增量总结。旧摘要不会再次冒充用户的新输入。保存替换范围时同时包含旧摘要及本次被压缩的原始前缀，保留安全切点之后的完整消息。Pi 负责更新历史摘要及需要的回合摘要；这能改善上下文衔接，但不保证摘要模型不会遗漏或误判事实，重要状态仍以 Events 和实际文件为准。
+
 预算优先结合有效供应商 usage 与新增消息估算。`llm.image_projection` 保存产生该响应时的图片投影与模型标识指纹；恢复为 Pi 消息的 `cotaImageProjection`。对最新 usage 对应的历史前缀重新计算后，相同才沿用 usage。图片从像素转为引用、模型切换或压缩使旧测量失效；新投影取得真实响应后，usage 可再次使用。既有无指纹记录遇到省略图片时仍保守估算。指纹不扫描或保存整份文本/Base64，不是 prompt 缓存命中证明。
 
-主模型的原生 provider 请求可使用 Pi `isContextOverflow` 识别显式溢出。第一次溢出不提交 Assistant 事实；剩余决策预算允许且非收尾时，适配层结束本次 Pi 调用，在下一次 Pi continuation 的 prepare 边界强制压缩一次。压缩先提交 Cota Store，再重新准备 Policy 和模型请求。再次溢出、取消、摘要失败、存储失败或无安全切点时明确停止。已提交工具不重放，未知外部副作用不自动重试；普通网络错误、额度不足不走压缩恢复。Python custom/RAG 端点保留现有适配器的错误行为。
+主模型的原生 provider 请求可使用 Pi `isContextOverflow` 识别显式溢出。第一次溢出不提交 Assistant 事实；剩余决策预算允许且非收尾时，适配层结束本次 Pi 调用，在下一次 Pi continuation 的 prepare 边界强制压缩一次。压缩先提交 Cota Store，再重新准备工作投影和模型请求。再次溢出、取消、摘要失败、存储失败或无安全切点时明确停止。已提交工具不重放，未知外部副作用不自动重试；普通网络错误、额度不足不走压缩恢复。Python custom/RAG 端点保留现有适配器的错误行为。
 
 现有 `context_compaction` 额外保存 `reason`（threshold/bytes/overflow）和 `tokens_before`；后者为请求预算计数，不是精确供应商计费。Debug 的下一次请求展示压缩后的预算。请求准备中的超限不会绕过固定指令与当前图片批次限制。
+
+摘要输出与主回复预算分开：`compaction.max_tokens` 默认取 `min(8192, reserve_tokens)`，不能超过预留空间。适配层将该输出限额绑定到摘要模型，并透传 Pi 的摘要调用选项（如取消信号、无缓存保留与 session 路由）到已有 provider；Python custom/RAG 摘要适配器接收相同输出预算。Cota 检查摘要输入加输出预算，Pi 继续生成摘要、选择安全切点并拒绝被截断的检查点。
+
+## 执行错误与通信错误
+
+IPC 继续使用现有 protocol=1 的 JSONL、顺序 RPC ID、持久化后 ACK 和独立流式预览。Node 的终止错误透传 `code`、`phase`、`error_type` 和可用的 `request_id`；Python 用 `PiExecutionError` 承接已成功传输的执行失败，用其子类 `PiModelError` 区分原生模型请求失败。`PiBridgeError` 只表示损坏帧、协议错误、连接/进程通信失败。stdout 提前关闭会立即进入停止清理，不等待仍存活进程的 stderr EOF。
+
+原有 `run_finished` 保存这些少量标识，不新增 Event 或数据库表。例如摘要截断记录 `code=summary_truncated`、`phase=compaction`、`error_type=SummaryTruncated`。Pi 对 prepare 异常的内部消息转换不会覆盖适配层保留的原始错误；主模型错误仍可沿请求 ID 找到诊断。
+
+压缩失败保留原上下文和已提交结果，不生成 context_compaction、不把残缺摘要当回复，不自动重跑工具。Processor 在持久化成功后给用户明确的停止提示；Store 检查点失败仍直接停止，不为了发送提示再次尝试提交。取消、模型请求、压缩和通信错误可分别定位，不改变 Pi 的执行循环。
+
+## 本机执行中断后的续聊
+
+Cota 使用本机会话执行锁排除同时运行；PiBridge 把锁描述符继承给 Node，保持 Pi 的模型、工具与取消流程不变。新运行在 `run_started.executor` 中记录主机和 Store 作用域指纹。新用户输入只有在取得同一作用域的锁、确认原运行归属之后，才补记原运行的 `run_finished(interrupted, ExecutorExited)`。正常查询不修改状态，恢复不会重放旧工具调用，也不会把未知结果写成失败或成功。
+
+用户在同一会话发送“继续”会产生新的 user_utter 和 run_started，由 Pi 使用已提交结果与未知结果提示继续决策；Cota 不添加自动重试循环。此机制适用于 macOS/Linux 本机文件 SQLite，以及 MemoryStore 当前实例；远端 SQL、Windows、跨主机和旧的无归属运行保持拒绝自动接管。文件锁不确认外部服务或脱离 Pi 管理的进程是否停止；这些副作用仍需业务工具核实。详见 [DST 恢复边界](dst.md#恢复与不兼容处理)。
 
 ## Skill 资源边界
 

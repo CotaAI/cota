@@ -52,12 +52,12 @@ Skill 的资源文件和 Policy 也可能含业务资料，应由创作者决定
 ## 更新一个已经运行的 Bot
 
 1. 保存当前 Bot 文件版本及必要的数据备份。
-2. 修改 Skill、角色或 Policy；训练型策略重新运行 `cota train --config BOT` 和 `--check`。
+2. 修改 Skill、角色或 Policy，保留 policy/POLICY.md 的用途说明和案例。
 3. 用 shell/debug 和代表性问题验证新行为。
 4. 停止旧执行实例，再加载新配置；保持或更换 Store 应根据是否需要延续原会话决定。
 
 保持相同 session_id 和持久 Store 才能接续会话；Web app 还需要保留成员数据库与签名密钥。
-新建独立部署时不要复制原服务的用户身份与历史。运行中的 Agent 不会自动采用新 Policy 产物。
+新建独立部署时不要复制原服务的用户身份与历史。运行中的 Agent 不会自动重建 Policy 索引，修改后需要重新加载。
 当前没有内置版本注册表、自动灰度、回滚命令或 RSI 自动应用流程。
 
 具体部署见 [部署指南](guide.md)，应用身份边界见 [应用契约](application.md)。

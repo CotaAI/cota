@@ -106,7 +106,7 @@ def test_metadata_change_preserves_pdf_previews_qa_and_revision_budget(book, mon
     assert render_status(project)['pages']['1']['versions'] == 1
 
 
-def test_page_edits_are_bounded_across_builds_and_preserve_previous_package(book):
+def test_local_text_repairs_are_not_blocked_by_a_paid_image_budget(book):
     layout, root, project, _ = book
     for number in range(3):
         data = load(project)
@@ -114,16 +114,12 @@ def test_page_edits_are_bounded_across_builds_and_preserve_previous_package(book
         save(project, data)
         result = layout.build(root, project)
         assert result['changed_pages'] == [1] if number else result['changed_pages'] == [1, 2]
-    before = (project / 'book.pdf').read_bytes()
-    previews = (project / 'previews/pages/page-1.png').read_bytes()
     data = load(project)
     data['pages'][0]['text_elements'][0]['text'] = 'Fourth version'
     save(project, data)
-    with pytest.raises(ValueError) as blocked:
-        layout.build(root, project)
-    assert blocked.value.details['reason'] == 'page_revision_limit_reached'
-    assert (project / 'book.pdf').read_bytes() == before
-    assert (project / 'previews/pages/page-1.png').read_bytes() == previews
+    assert layout.build(root, project)['changed_pages'] == [1]
+    assert layout.render_status(project)['pages']['1']['versions'] == 4
+    assert layout.build(root, project)['reused'] is True
 
 
 def test_unchanged_and_repaired_outputs_do_not_spend_a_revision(book):
@@ -138,7 +134,7 @@ def test_unchanged_and_repaired_outputs_do_not_spend_a_revision(book):
     assert load(project)['qa']['pdf_rendered_reviewed'] is False
 
 
-def test_accepted_exact_version_is_frozen_without_guessing_free_text(book):
+def test_correcting_an_accepted_layout_invalidates_its_old_visual_pass(book):
     from bookbot.common import sha256
     layout, root, project, _ = book
     layout.build(root, project)
@@ -156,9 +152,10 @@ def test_accepted_exact_version_is_frozen_without_guessing_free_text(book):
     data = load(project)
     data['pages'][0]['image_box'] = [10, 10, 100, 80]
     save(project, data)
-    with pytest.raises(ValueError) as blocked:
-        layout.build(root, project)
-    assert blocked.value.details['reason'] == 'accepted_page_changed'
+    result = layout.build(root, project)
+    assert result['changed_pages'] == [1]
+    assert not layout.render_status(project)['pages']['1']['accepted']
+    assert 1 in layout.render_status(project)['pending_pages']
 
 
 def test_delivery_size_is_checked_before_replacing_previous_files(book):

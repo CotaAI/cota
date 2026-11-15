@@ -8,7 +8,7 @@
 | activity-search | 按城市、人数、门票预算、亲子和室内外条件筛选 | 同目录 activities.json，全部为虚构测试数据 |
 | outing-plan | 组合天气与活动，处理约束变化和部分失败 | 前两者的实际读取结果与用户约束 |
 
-使用 `environment.type: none`，工具仍只有内置 `web_fetch` 和受限的 Pi `read`。无需 Shell、活动 API、额外进程或新 Tool。Skill 附带 JSON 已在资源读取范围内；活动查询可以不联网，但模型服务仍需可用。
+使用 `environment.type: none`，可用 web_fetch、受限的 Pi read 和自动注册的 policy_guidance。无需 Shell、活动 API、额外进程或新 Tool。Skill 附带 JSON 已在资源读取范围内；活动查询可以不联网，但模型服务仍需可用。
 
 按 [示例说明](../README.md) 填写当前 Bot 的 endpoints.yml 后，在仓库根目录运行：
 
@@ -54,15 +54,15 @@ Bot 定位、Skill description 和 Policy 使用正常业务表述；基础 prom
 - SKILL.md 阅读记录为 resource.kind=skill。
 - activities.json 阅读记录为 resource.kind=reference，归属 activity-search，并保留文件哈希。
 - JSON 不是另一个 Skill，也不意味着某个业务步骤已经完成。
-- 在 Model Requests 检查真实读取的数据是否进入后续请求，以及 business_guidance 是否包含相关 Policy。
+- 在 Model Requests 检查真实读取的数据是否进入后续请求，以及按需 policy_guidance 的实际返回。
 
-默认 all 策略提供最多 16 个案例，当前包含 12 个，留出少量补充标注的空间，适合先观察完整规则；使用检索策略时再比较案例命中与预算。案例中的结果条件必须由真实执行证据支持，不能直接当作已经发生的结果。
+当前有 12 个案例，模型通过 policy_guidance 按需查询，返回上限由 POLICY.md 的 top_k 控制。案例中的结果条件必须由真实执行证据支持，不能直接当作已经发生的结果。
 
 ```bash
 python -m pytest tests/test_bot_templates.py tests/integration/test_example_bots.py -q
 ```
 
-自动化测试验证真实 Pi 多 Skill / JSON 读取、Policy 注入、SQLite 持久化恢复及 init/打包包含附带数据。模型响应与天气结果在测试中受控：这是执行合同测试，不代表真实模型已经通过上面的业务决策测试。真实 HTTP 的传输、地址限制和超时另有工具测试覆盖。
+自动化测试验证真实 Pi 多 Skill / JSON 读取、Policy 工具查询、SQLite 持久化恢复及 init/打包包含附带数据。模型响应与天气结果在测试中受控：这是执行合同测试，不代表真实模型已经通过上面的业务决策测试。真实 HTTP 的传输、地址限制和超时另有工具测试覆盖。
 
 历史保存在本 Bot 的 workspace/sessions.db。HTTP 权限不是域名白名单；本次没有放宽资源或网络访问范围。
 
@@ -76,30 +76,11 @@ cota annotate export --config bots/weather --session SESSION_ID --output weather
 cota annotate import --config bots/weather --input weather-review.yml --output weather-reviewed.yml
 ```
 
-确认后将生成文件放入本 Bot 的 `policy/`，重新加载 Agent。也可以从零编写同格式 Policy。导出的 .source.json 来源文件无需编辑；标注人员不需要填写消息范围或事件 ID。详细说明见 [Skill 与对话标注](../../docs/src/concepts/skill-policy.md)。
+确认后将生成文件放入本 Bot 的 `policy/`，重新加载 Agent。也可以从零编写同格式 Policy。标注人员不需要填写消息范围或事件 ID。详细说明见 [Skill 与对话标注](../../docs/src/concepts/skill-policy.md)。
 
-### 训练和选择业务指导
+### 按需查阅业务指导
 
-默认使用 all 策略，无需训练。要尝试本地词项检索，将 agent.yml 的 policy 配置改成：
-
-```yaml
-policy:
-  type: bm25
-  max_policies: 4
-  max_chars: 12000
-  options:
-    top_k: 8
-```
-
-然后执行：
-
-```bash
-cota train --config bots/weather
-cota train --config bots/weather --check
-cota shell --config bots/weather
-```
-
-案例或 options 修改后重新 train 并加载。索引保存为 `models/policy.json`，可随 Bot 包分享；运行时会校验版本。BM25 只提供相关候选，不判定实际天气成功或失败。模型选择、Embedding 和受限 grep/read 方案见 [可训练的 Policy](../../docs/src/concepts/trainable-policy.md)。
+`policy/POLICY.md` 包含清单与对话案例，加载 Bot 时建立 BM25 索引。模型按需调用 `policy_guidance`；通过清单中的 top_k 控制候选数量。检索只表示相关，不证明实际天气成功或失败。修改后重新加载 Agent，不需要训练命令。详见 [Policy 检索](../../docs/src/concepts/trainable-policy.md)。
 
 ## 对话验证与 LLM 评测
 
@@ -115,12 +96,12 @@ cota eval
 cota eval --output workspace/evaluations/baseline --debug
 ```
 
-weather 默认 all Policy 无需先训练。若改为需要训练产物的 Policy 方法，先执行 `cota train`。init 会跳过已存在的 Bot，不会自动更新旧目录中的验证文件。
+weather 在加载时自动建立 Policy 索引。init 会跳过已存在的 Bot，不会自动更新旧目录中的验证文件。
 
 案例覆盖：天气城市澄清、歧义、多城市、改口、明天及周末预报；活动人数与预算变更、预算临界值、每人/总价、免费/未知价/不可用项目、亲子与时长约束、费用范围、预订边界、优惠猜测、任务切换与取消。天气结果以实际服务为准，不预设网络一定成功或失败。
 
 
-`policy/eval/data.yml` 随 Bot 一起交付，包含30个案例、43轮业务输入、94条 `reply-review`，不参与 Policy 训练。配置本 Bot 的 endpoints.yml 后运行：
+`policy/eval/data.yml` 随 Bot 一起交付，包含30个案例、43轮业务输入、94条 `reply-review`，不参与 Policy 索引。配置本 Bot 的 endpoints.yml 后运行：
 
 ```bash
 cota eval --config bots/weather --output /tmp/weather-evaluation-1
@@ -146,7 +127,7 @@ cota eval compare workspace/evaluations/baseline workspace/evaluations/after --o
 
 ## 更新已有副本与核对评测
 
-`cota init` 不覆盖已有 weather。更新模板时，对照合并 agent.yml、skills/、policy/ 和 README，保留自己的 endpoints.yml、业务修改与运行数据；训练型 Policy 更新案例后需重新 train，再加载 Bot。新增预报和回复指引需要同步这些 Bot 文件，仅升级框架不会改变旧副本的行为。
+`cota init` 不覆盖已有 weather。更新模板时，对照合并 agent.yml、skills/、policy/ 和 README，保留自己的 endpoints.yml、业务修改与运行数据；更新 Policy 案例后重新加载 Bot 即可重建索引。新增预报和回复指引需要同步这些 Bot 文件，仅升级框架不会改变旧副本的行为。
 
 普通评测和 debug 评测都会把工具的结构化 result 与实际文本 content 交给评委。HTTP 响应正文可能位于 content，核对温度、日期、价格时不能只看 result 中的状态码。评委缺证据、误解要求或理由与结论矛盾时，先检查对应的 execution.json / judge.json；修正评判逻辑后用 `cota eval judge` 重评已有 Trace。
 

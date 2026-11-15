@@ -79,7 +79,7 @@ def test_alignment_and_colour_reach_the_pdf(book, align, min_x, max_x):
     layout, _, root, project, data = book
     renderer(layout, root)
     from pypdf import PdfReader
-    data['pages'][0]['text_elements'][0].update(align=align, fill='#ff0000')
+    data['pages'][0]['text_elements'][0].update(align=align, fill='#ff0000', background=None, padding=0)
     manifest(project, data)
     result = layout.build(root, project)
     page = PdfReader(project / 'book.pdf').pages[0]

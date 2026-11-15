@@ -19,7 +19,8 @@ function summaryStream(calls, response = 'Goal: Make a book. Progress: guide rea
     calls.push(context);
     const stream = createAssistantMessageEventStream();
     const message = {role: 'assistant', content: [{type: 'text', text: response}], stopReason: 'stop',
-      usage: {input: 200, output: 30, cacheRead: 0, cacheWrite: 0, totalTokens: 230}, timestamp: 2};
+      usage: {input: 200, output: 30, cacheRead: 0, cacheWrite: 0, totalTokens: 230,
+        cost: {input:0, output:0, cacheRead:0, cacheWrite:0, total:0}}, timestamp: 2};
     stream.push({type: 'done', reason: 'stop', message});
     return stream;
   };
@@ -55,6 +56,27 @@ test('a single unsplittable request fails explicitly instead of dropping a tool 
   await assert.rejects(compactContext([msg('user', 'x'.repeat(40000), 'u')], model, settings,
     summaryStream([])), /cannot|boundary|split/i);
 });
+test('repeated compaction passes prior summary to Pi separately from new conversation', async () => {
+  const previous = {...msg('user', '<historical_summary>\nWaiting for the reader to choose.\n</historical_summary>', 's1'),
+    cotaCompaction: true};
+  const messages = [previous,
+    msg('assistant', [{type:'text', text:'Saved the draft. '.repeat(1000)}], 'saved'),
+    msg('user', 'Use the side-view version and continue.', 'decision'), ...history().slice(2)];
+  const before = JSON.stringify(messages), calls = [];
+  const result = await compactContext(messages, {...model, contextWindow:100000}, settings, summaryStream(calls));
+  assert.equal(result.replaced_message_ids[0], 's1');
+  assert(calls.some(c => JSON.stringify(c).includes('<previous-summary>')));
+  assert(!JSON.stringify(calls).includes('<historical_summary>'));
+  assert.equal(JSON.stringify(messages), before);
+  assert(!result.replaced_message_ids.includes(result.first_kept_id));
+});
+test('a prior summary alone cannot make the current input disposable', async () => {
+  const calls = [];
+  const messages = [{...msg('user', 'Prior completed work.', 's1'), cotaCompaction:true},
+    msg('user', 'New instruction', 'latest')];
+  await assert.rejects(compactContext(messages, model, settings, summaryStream(calls)), /boundary|compact/i);
+  assert.equal(calls.length, 0);
+});
 test('explicit capacity wins and unknown capacity is labelled as a fallback', () => {
   assert.equal(resolveContextModel({id: 'private-model', contextWindow: 32000, maxTokens: 2000}).contextWindow, 32000);
   assert.equal(resolveContextModel({id: 'private-model', maxTokens: 2000}).capacitySource, 'fallback');
@@ -71,6 +93,14 @@ test('working threshold is independent of model capacity and bounds retention', 
   for (const trigger_tokens of [0, -1, true, 1.2])
     assert.throws(() => compactionSettings(large, {trigger_tokens}), /working|trigger|budget/i);
   assert.throws(() => compactionSettings(large, {trigger_tokens: 4000, keep_recent_tokens: 5000}), /budget/i);
+});
+
+test('summary output budget is independent of a short dialogue reply', () => {
+  const short = resolveContextModel({contextWindow: 1000000, maxTokens: 500});
+  assert.equal(compactionSettings(short).summaryMaxTokens,8192);
+  assert.equal(compactionSettings(short,{max_tokens:12000}).summaryMaxTokens,12000);
+  assert.equal(compactionSettings(short,{reserve_tokens:1000}).summaryMaxTokens,1000);
+  assert.throws(()=>compactionSettings(short,{max_tokens:20000}),/summary|output|budget/i);
 });
 
 test('usage is valid again after omitted image projection stabilizes', () => {
@@ -102,6 +132,15 @@ test('oversized imported summary input is rejected before calling a provider', a
     msg('user', 'c'.repeat(8000), 'current')];
   await assert.rejects(compactContext(messages, model, settings, summaryStream(calls)), /summary.*budget/i);
   assert.equal(calls.length, 0);
+});
+
+test('summary input leaves room for the actual Pi model output allowance', async () => {
+  const calls = [], largeOutput = {...model, maxTokens: 4000};
+  const messages = [msg('user','x'.repeat(18000),'old'),
+    msg('assistant',[{type:'text',text:'saved'}],'a'),msg('user','continue','new')];
+  await assert.rejects(compactContext(messages,largeOutput,
+    compactionSettings(largeOutput,{keep_recent_tokens:10}),summaryStream(calls)), /summary.*budget/i);
+  assert.equal(calls.length,0);
 });
 
 test('Pi cancellation never produces a replacement summary', async () => {

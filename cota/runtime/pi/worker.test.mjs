@@ -104,6 +104,29 @@ test('prepared context replaces the persisted projection, including compaction',
   assert.equal(result.messages.length, 3);
 });
 
+test('Python summary adapters receive a budget independent of the dialogue reply', async () => {
+  let history = [{role:'user',content:'confirmed facts '.repeat(2000),cotaEventId:'old',timestamp:1},
+    {role:'assistant',content:[{type:'text',text:'work saved'}],cotaEventId:'a',timestamp:2},
+    {role:'user',content:'continue',cotaEventId:'current',timestamp:3}];
+  const calls=[];
+  const rpc=async(method,payload)=>{
+    calls.push({method,payload});
+    if(method==='prepare')return {messages:history,tools:[]};
+    if(method==='summarize')return {content:'Complete checkpoint.',finish_reason:'stop'};
+    if(method==='compact'){
+      history=[{role:'user',content:payload.summary,cotaCompaction:true,cotaEventId:'summary',timestamp:4},history.at(-1)];
+      return {messages:history};
+    }
+    if(method==='model')return {content:'continued'};
+    return {};
+  };
+  const result=await runAgent({messages:history,maxIterations:3,model:{contextWindow:32000,maxTokens:500},
+    compaction:{trigger_tokens:5000,keep_recent_tokens:500,max_tokens:8000}},rpc);
+  assert.equal(result.status,'completed');
+  assert.equal(calls.find(c=>c.method==='summarize').payload.maxTokens,8000);
+  assert.equal(calls.filter(c=>c.method==='model').length,1);
+});
+
 function httpHarness({advertise = true, allowed = true, recordFailure = false, args = {url: 'http://127.0.0.1'}} = {}) {
   const records = [], authorizations = [], contexts = [], preparations = [], events = [], order = [];
   const history = [user];

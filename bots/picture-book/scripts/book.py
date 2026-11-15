@@ -53,16 +53,17 @@ def compact_result(command, result, project, args):
     if command == 'review':
         from bookbot.review_checks import assess
         assessment = result.get('assessment') or assess(result['content'], result['prompt'])
-        report = project_path(ROOT, args.project) / args.output
+        report_path = result['report_path']
+        report = project_path(ROOT, args.project) / report_path
         verdict = assessment['verdict']
         return {'asset': result['asset'], 'verdict': verdict, 'reused': result.get('reused', False),
                 'checks_passed': sum(c['status'] == 'pass' for c in assessment['checks']),
                 'issues': [c for c in assessment['checks'] if c['status'] != 'pass'],
                 'image_inputs': result['image_inputs'],
                 **({'current_image_inputs': result['current_image_inputs']} if result.get('current_image_inputs') else {}),
-                'evidence': {'path': args.output, 'sha256': sha256(report.read_bytes())},
+                'evidence': {'path': report_path, 'sha256': sha256(report.read_bytes())},
                 'next': ('Preserve this version and continue independent work' if verdict == 'pass' else
-                         'Address only required failures within the remaining page revision budget' if verdict == 'revise' else
+                         'Correct required failures; prefer deterministic layout repairs over paid image regeneration' if verdict == 'revise' else
                          'Preserve this version and report uncertainty; do not request another verdict for the same bytes')}
     if command == 'generate':
         fields = ('asset', 'attempt', 'status', 'output', 'input_hash', 'sha256', 'reused', 'reused_from')
@@ -143,8 +144,14 @@ falsely setting QA to passed. Generate artwork without final Chinese text.''')
     generate.add_argument('--reference', action='append', default=[], help='Actual image file, relative to project; repeatable')
     review = commands.add_parser('review', help='Verify and save an actual image_understand observation; no model request',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''First call image_understand with the target image and the exact prompt file text.
-Then pass its returned source tool_call_id here. This command only imports committed
+        epilog='''Call image_understand with fixed numbered checks and the real target image.
+Use this exact response format (status belongs to each check; verdict is overall):
+{"checks":[{"id":"1","status":"pass","evidence":"Visible evidence"}],"verdict":"pass"}
+Include one check per numbered requirement; status is pass/fail/uncertain.
+Then import with: review --asset pdf-face-05 --tool-call-id CALL_ID
+The prompt, image and output filename are derived from that committed call;
+optional --prompt/--image verify additional expected inputs, never replace them.
+This command only imports committed
 successful tool evidence from this Bot SQLite Store; it does not call a model.
 All paths stay inside the project. Use one --image for the actual target PNG/JPEG/WebP,
 <=32 MiB. A read result or main-model opinion is not formal visual review evidence.
@@ -162,8 +169,10 @@ output names or byte-identical image aliases. image_inputs remains the original
 service evidence; current_image_inputs maps aliases when reused. Canonical evidence
 is in .bookbot/reviews; do not edit/remove it to obtain another verdict. Conflicting
 manual observations are uncertain, not permission to keep rerolling the image.
-Changed pixels need a new review output filename; changed criteria require a
-separate user-requested production task rather than silently resetting this one.
+Changed pixels receive a distinct evidence filename automatically. To correct
+genuinely wrong criteria, use new tool evidence and --criteria-change-reason TEXT;
+this preserves criteria history and invalidates old passes, not paid-image counts.
+Do not revise criteria merely to make a failing image pass.
 The report is evidence, not automatic QA approval. Correct issues and record the
 actual language/content/visual review before updating book.json qa flags.
 Write numbered criteria (1. ... / 2. ...); all are required unless prefixed
@@ -172,11 +181,13 @@ Verdicts: pass, revise (required failure), uncertain (missing/unclear evidence).
 Advice never blocks acceptance. Invalid/unstructured replies remain uncertain;
 do not repeatedly ask the same image for a different verdict.
 Use pdf-face-01 etc. for final rendered faces. A canonical required-check pass
-freezes that exact page version; it does not automatically approve the whole book.''')
+accepts only that exact page version; a local layout repair invalidates its pass.
+It does not automatically approve the whole book.''')
     review.add_argument('--asset', required=True, help='Stable review target; e.g. page-04 or pdf-face-05. Criteria are fixed on its first review')
-    review.add_argument('--prompt', required=True, help='UTF-8 review instructions file, relative to project')
-    review.add_argument('--image', action='append', required=True, help='One actual review target; same image_path used by image_understand')
-    review.add_argument('--output', required=True, help='Review JSON path, relative to project')
+    review.add_argument('--prompt', help='Optional expected UTF-8 prompt file; must match actual tool evidence')
+    review.add_argument('--image', action='append', help='Optional expected target; same bytes as the actual tool image')
+    review.add_argument('--output', help='Optional report path; default is a stable evidence-specific filename')
+    review.add_argument('--criteria-change-reason', help='Explicit reason for correcting criteria; preserves prior criteria and evidence')
     review.add_argument('--tool-call-id', required=True, help='Import a committed image_understand result from this Bot SQLite Store; makes no model request. '
         'Use one --image and the exact prompt sent to the tool. The returned tool source contains its call ID')
     build = commands.add_parser('build', help='Lay out Chinese text and render every PDF page',
@@ -193,15 +204,19 @@ This renderer uses explicit page layout (millimetres from the top-left; fonts in
   "image_fit": "contain",
   "text_elements": [
     {"text": "小兔抬头，云朵轻轻飘过。", "box": [10, 110, 190, 25], "font_size": 18,
-     "align": "left", "fill": "#1f1f29"}
+     "align": "left", "fill": "#1f1f29", "background": "#fffaf0", "padding": 1}
   ]
 }
 
 Each box is [left, top, width, height] within the page. Asset paths are relative to
 the project. Place all visible text in text_elements, not the legacy page text field.
 Text supports only text, box, font_size (8-72 pt), align (left/center/right) and
-fill (#RRGGBB). Defaults: 18 pt, left, #1f1f29. Bold/weight, custom line spacing,
-background panels and image_path are unsupported and rejected, not ignored.
+fill (#RRGGBB), background (#RRGGBB or null), padding (nonnegative mm).
+Defaults: 18 pt, left, dark #1f1f29 on solid ivory #fffaf0, padding 1 mm.
+box includes padding; panel height follows actual wrapped lines, not unused box height.
+Foreground/panel contrast must be at least 4.5. Use background:null explicitly only
+over known clear artwork; visual review still checks readability and subject overlap.
+Bold/weight, custom line spacing and image_path are unsupported and rejected.
 Page fields: page, role, title, text, blank, blank_reason, layout, asset, image_box, image_fit,
 text_elements, context_asset, detail_asset, arrow_count, notes. title/role/layout/
 notes and context/detail fields are metadata/evidence, not extra drawing commands.
@@ -277,7 +292,8 @@ Never set QA merely to make validate pass.''')
         elif args.command == 'review':
             from bookbot.tool_reviews import record_review
             result = record_review(ROOT, project, args.prompt, args.image, args.output,
-                                   asset=args.asset, tool_call_id=args.tool_call_id)
+                                   asset=args.asset, tool_call_id=args.tool_call_id,
+                                   criteria_change_reason=args.criteria_change_reason)
         elif args.command == 'build':
             from bookbot.layout import build
             result = build(ROOT, project, max_file_bytes=args.max_file_bytes)

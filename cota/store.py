@@ -7,6 +7,9 @@ import asyncio
 from copy import deepcopy
 from contextlib import nullcontext
 import json
+import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import time
 from typing import Dict
 from weakref import WeakValueDictionary, WeakKeyDictionary
@@ -61,6 +64,42 @@ class Store:
         self._input_locks = WeakValueDictionary()
         # Lifetime follows the detached execution, not every historical session.
         self._execution_commits = WeakKeyDictionary()
+        self._execution_directory = None
+
+    def execution_guard(self, session_id):
+        """Local exclusion only; remote SQL backends retain conservative recovery."""
+        from cota.runtime.execution import local_execution_guard
+        if os.name != 'posix':
+            return nullcontext(None)
+        engine = getattr(self, 'engine', None)
+        if engine is not None and engine.dialect.name != 'sqlite':
+            return nullcontext(None)
+        if self._execution_directory is None:
+            self._execution_directory = TemporaryDirectory(prefix='cota-executors-')
+        directory = (Path(self._execution_directory.name) if isinstance(self._execution_directory, TemporaryDirectory)
+                     else self._execution_directory)
+        return local_execution_guard(directory, session_id)
+
+    async def recover_interrupted_run(self, dst):
+        """Close a proven exited local run, without resuming or retrying tools.
+
+        Save uses the existing revision check; concurrent conversation changes
+        fail rather than replacing newer facts. Reads never call this method.
+        """
+        if dst.execution.get('status') != 'running':
+            return
+        from cota.events import Event
+        from cota.runtime.pi_runtime import RunInProgress
+        run_id = dst.execution['run_id']
+        start = next(event for event in reversed(dst.events)
+                     if event.type == 'run_started' and event.run_id == run_id)
+        with self.execution_guard(dst.session_id) as guard:
+            if guard is None or start.payload.get('executor') != guard.identity:
+                raise RunInProgress('Previous executor ownership cannot be verified locally; '
+                                    'reconcile its executor before submitting new input')
+            dst.append_event(Event('run_finished', {'status': 'interrupted', 'error_type': 'ExecutorExited'},
+                                   run_id=run_id))
+            await self.save(dst)
 
     def input_admission_lock(self, session_id):
         lock = self._input_locks.get(session_id)
@@ -130,8 +169,8 @@ class Store:
                input_event_id(mid) == run['payload'].get('input_event_id')
                for (sid, mid), pending in self._inputs.items()):
             return
-        from cota.runtime.pi_runtime import RunInProgress
-        raise RunInProgress('Previous run is still running; reconcile its executor before submitting new input')
+        dst = await self.load(session_id)
+        await self.recover_interrupted_run(dst)
 
     async def input_receipt(self, session_id, message_id):
         """Current input status from live admission or immutable user/run facts.
@@ -713,6 +752,9 @@ class SQLStore(SQLDeliveryStore, Store):
             self.engine.dispose()
             raise
         self._io_lock = asyncio.Lock()
+        if self.engine.dialect.name == 'sqlite' and self.engine.url.database not in (None, '', ':memory:'):
+            database = Path(self.engine.url.database).resolve()
+            self._execution_directory = database.parent / '.cota' / 'executors' / digest(str(database))
 
     @staticmethod
     def _create_database(engine, db):

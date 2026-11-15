@@ -78,25 +78,20 @@ weather/
 │   ├── activity-search/SKILL.md
 │   ├── activity-search/activities.json
 │   └── outing-plan/SKILL.md
-├── policy/data.yml
+├── policy/POLICY.md
 ├── policy/eval/data.yml
 └── workspace/                 # 运行时生成，不作为 Bot 定义分享
 ```
 
-- agent.yml：角色、对话场景、模型引用、工具范围、Policy 方法。
+- agent.yml：角色、对话场景、模型引用、工具范围。
 - endpoints.yml：实际模型服务、Store 和渠道部署凭据。
 - SKILL.md：天气查询、活动查询和出行规划的 SOP；Pi 发现目录，模型按需读取。
-- policy/data.yml：期望的业务对话流程，用 thought、skills、result、reply 指导选择和处理。
+- policy/POLICY.md：期望的业务对话流程，用 thought、skills、result、reply 指导选择和处理。
 
-`policy/eval/data.yml`：给评委的对话验证要求，不参与 Policy 加载或训练，也不注入被测 Bot 的 prompt。
+`policy/eval/data.yml`：给评委的对话验证要求，不参与 Policy 索引，也不注入被测 Bot 的 prompt。
 
-修改 Policy 后重新加载 Bot。默认 all 无需训练；切换 BM25 等训练型方法后先运行：
+修改 Policy 后重新加载 Bot，即重建本地索引；由模型按需调用 policy_guidance。
 
-```bash
-cota train --config cota_projects/weather
-cota train --config cota_projects/weather --check
-```
-
-init 不升级现有 Bot，不复制运行 workspace、数据库、`.cota` 或日志。更新已有示例时，对照模板合并 agent.yml、skills/、policy/ 和 README，保留自己的 endpoints.yml、业务修改与运行数据；使用训练型 Policy 时重新 train。手动分享已使用的目录前，还需要清除自己填写的凭据。
+init 不升级现有 Bot，不复制运行 workspace、数据库、`.cota` 或日志。更新已有示例时，对照模板合并 agent.yml、skills/、policy/ 和 README，保留自己的 endpoints.yml、业务修改与运行数据。手动分享已使用的目录前，还需要清除自己填写的凭据。
 
 接着阅读 [天气实践](best_practices/practice_1.md)、[Policy 标注](../concepts/skill-policy.md) 和 [Agent 配置](../configuration/agent.md)。

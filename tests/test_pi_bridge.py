@@ -1,5 +1,6 @@
 """Exercise the actual subprocess pipe and acknowledgments without a model."""
 import asyncio
+import os
 from types import SimpleNamespace
 import sys
 
@@ -96,6 +97,64 @@ async def test_whole_turn_timeout_has_a_descriptive_error_and_stops_worker(worke
     worker("import time\ntime.sleep(10)\n")
     with pytest.raises(TimeoutError, match='Pi run.*total.*timeout'):
         await asyncio.wait_for(PiBridge(timeout=.1).run({}, None), 4)
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='Local ownership uses inherited descriptors')
+async def test_worker_keeps_execution_lock_after_coordinator_closes_its_copy(worker):
+    from cota.store import MemoryStore
+    from cota.runtime.pi_runtime import RunInProgress
+    worker('''print(json.dumps({'type':'request','id':1,'method':'ready','payload':{}}),flush=True)
+sys.stdin.readline()
+sys.stdin.read()
+''')
+    store, ready = MemoryStore(), asyncio.Event()
+    async def handler(method, payload):
+        ready.set()
+        return {}
+    bridge = PiBridge(timeout=10)
+    with store.execution_guard('s') as guard:
+        bridge.execution_fd = guard.fd
+        task = asyncio.create_task(bridge.run({}, handler))
+        await asyncio.wait_for(ready.wait(), 5)
+    try:
+        with pytest.raises(RunInProgress):
+            with store.execution_guard('s'):
+                pass
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 5)
+    with store.execution_guard('s'):
+        pass
+
+
+@pytest.mark.parametrize('code,phase,error_type', [
+    ('summary_truncated', 'compaction', 'SummaryTruncated'),
+    ('execution_failed', 'execution', 'TypeError'),
+])
+async def test_worker_execution_error_is_not_a_transport_error(worker, code, phase, error_type):
+    import json
+    frame = {'type':'error', 'error':'The execution stopped', 'code':code, 'phase':phase,
+             'error_type':error_type, 'request_id':'summary-request'}
+    worker(f'print({json.dumps(frame)!r},flush=True)\n')
+    with pytest.raises(RuntimeError) as caught:
+        await PiBridge().run({}, None)
+    error = caught.value
+    assert not isinstance(error, PiBridgeError)
+    assert error.code == code and error.phase == phase
+    assert error.error_type == error_type and error.request_id == 'summary-request'
+
+
+async def test_reported_protocol_failure_remains_a_bridge_error(worker):
+    worker('print(json.dumps({"type":"error","error":"Invalid protocol","code":"protocol_error","phase":"bridge"}),flush=True)\n')
+    with pytest.raises(PiBridgeError, match='Invalid protocol'):
+        await PiBridge().run({}, None)
+
+
+async def test_closed_stdout_does_not_wait_for_a_still_running_worker(worker):
+    worker('import os,time\nos.close(1)\ntime.sleep(10)\n')
+    with pytest.raises(PiBridgeError, match='closed|exited'):
+        await asyncio.wait_for(PiBridge(timeout=3).run({}, None), 5)
 
 
 @pytest.mark.asyncio

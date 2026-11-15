@@ -19,7 +19,30 @@ DELIVERABLES = {'reading_pdf': 'book.pdf', 'home_print_pdf': 'book.pdf',
 PAGE_FIELDS = {'page', 'role', 'title', 'text', 'blank', 'blank_reason', 'layout',
                'asset', 'image_box', 'image_fit', 'text_elements', 'context_asset', 'detail_asset',
                'arrow_count', 'notes'}
-TEXT_FIELDS = {'text', 'box', 'font_size', 'align', 'fill'}
+TEXT_FIELDS = {'text', 'box', 'font_size', 'align', 'fill', 'background', 'padding'}
+
+
+def _rgb(colour):
+    return tuple(int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5))
+
+
+def _text_protection(item):
+    background, padding = item.get('background', '#fffaf0'), item.get('padding', 1)
+    if background is not None and (not isinstance(background, str)
+            or not re.fullmatch(r'#[0-9a-fA-F]{6}', background)):
+        raise ValueError('Text background must be #RRGGBB or null for explicitly transparent text')
+    if type(padding) not in (int, float) or not math.isfinite(padding) or padding < 0:
+        raise ValueError('Text padding must be a nonnegative millimetre value')
+    if 2 * padding >= min(item['box'][2:]):
+        raise ValueError('Text padding leaves no available text area')
+    if background is not None:
+        def luminance(colour):
+            linear = [c / 12.92 if c <= .04045 else ((c + .055) / 1.055) ** 2.4 for c in _rgb(colour)]
+            return sum(c * weight for c, weight in zip(linear, (.2126, .7152, .0722)))
+        a, b = sorted((luminance(item.get('fill', '#1f1f29')), luminance(background)))
+        if (b + .05) / (a + .05) < 4.5:
+            raise ValueError('Text and solid background have insufficient contrast; choose more distinct colours')
+    return {'background': background.lower() if background is not None else None, 'padding': float(padding)}
 
 
 def validate_layout(data):
@@ -73,7 +96,7 @@ def validate_layout(data):
             unknown = item.keys() - TEXT_FIELDS
             if unknown:
                 raise ValueError(f'Page {number}: unsupported text fields {", ".join(sorted(unknown))}; '
-                                 'supported: text, box, font_size, align, fill')
+                                 'supported: text, box, font_size, align, fill, background, padding')
             if not isinstance(item.get('text'), str) or not item['text'].strip():
                 raise ValueError(f'Page {number}: text must be a nonempty string')
             _box(item.get('box'), width, height)
@@ -84,6 +107,7 @@ def validate_layout(data):
                 raise ValueError(f'Page {number}: align must be left, center or right')
             if not isinstance(item.get('fill', '#1f1f29'), str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', item.get('fill', '#1f1f29')):
                 raise ValueError(f'Page {number}: fill must be a #RRGGBB colour')
+            _text_protection(item)
     return width, height
 
 
@@ -132,7 +156,7 @@ def _page_hashes(root, project, data):
     geometry = {key: float(data['format'][key]) for key in ('width_mm', 'height_mm')}
     result = {}
     for page in data['pages']:
-        value = {'blank': page.get('blank', False), 'geometry': geometry, 'renderer': 3}
+        value = {'blank': page.get('blank', False), 'geometry': geometry, 'renderer': 4}
         if not value['blank']:
             value['font'] = font
             if page.get('asset'):
@@ -140,7 +164,7 @@ def _page_hashes(root, project, data):
                              image_box=[float(n) for n in page['image_box']], image_fit=page.get('image_fit', 'contain'))
             value['text'] = [{'text': item['text'], 'box': [float(n) for n in item['box']],
                              'font_size': float(item.get('font_size', 18)), 'align': item.get('align', 'left'),
-                             'fill': item.get('fill', '#1f1f29').lower()}
+                             'fill': item.get('fill', '#1f1f29').lower(), **_text_protection(item)}
                             for item in page.get('text_elements', [])]
         result[str(page['page'])] = sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode())
     return result
@@ -289,6 +313,10 @@ def _write_pdf(root, project, data, output):
                                  preserveAspectRatio=fit == 'contain', anchor='c')
             for item in page.get('text_elements', []):
                 x, y, w, h = item['box']
+                protection = _text_protection(item)
+                padding = protection['padding']
+                outer_x, outer_y, outer_w = x, y, w
+                x, y, w, h = x + padding, y + padding, w - 2 * padding, h - 2 * padding
                 size = item.get('font_size', 18)
                 if any(ord(c) not in font.face.charToGlyph for c in item['text'] if not c.isspace()):
                     raise ValueError('Chinese font is missing required glyphs; choose another font')
@@ -296,6 +324,11 @@ def _write_pdf(root, project, data, output):
                 leading = size * 1.4
                 if len(lines) * leading > h * mm:
                     raise ValueError(f"Page {page['page']}: text overflows its box; revise the text or layout")
+                if protection['background'] is not None:
+                    panel_height = len(lines) * leading + 2 * padding * mm
+                    canvas.setFillColorRGB(*_rgb(protection['background']))
+                    canvas.rect(outer_x * mm, (height - outer_y) * mm - panel_height,
+                                outer_w * mm, panel_height, stroke=0, fill=1)
                 canvas.setFont(font.fontName, size)
                 colour = item.get('fill', '#1f1f29')
                 canvas.setFillColorRGB(*(int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5)))

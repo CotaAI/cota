@@ -13,7 +13,7 @@
 # 定义业务行为
 - [Skill 业务能力](skills/overview.md)
 - [对话标注与 Policy](concepts/skill-policy.md)
-- [Policy 训练与推理](concepts/trainable-policy.md)
+- [Policy 检索与运行](concepts/trainable-policy.md)
 - [任务与多 Skill 组合](concepts/task.md)
 - [工具接入与执行环境](concepts/tool-adapters.md)
 

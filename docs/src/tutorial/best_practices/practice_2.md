@@ -1,6 +1,6 @@
 # 实践 2：用示例 Bot 验证 Pi 执行链路
 
-Cota 仅分发 `weather` 示例，用于入门和回归测试，覆盖业务规则与追问、Skill、工具调用和多轮对话评测。
+`weather` 示例用于入门和回归测试，覆盖业务规则与追问、Skill、工具调用和多轮对话评测；`picture-book` 示例用于验证多模态与长任务。
 
 ## 创建和运行
 
@@ -16,7 +16,7 @@ cota shell --config cota_projects/weather
 
 - `agent.yml` 定义角色、规则、模型引用、Pi 参数和工具权限。
 - `endpoints.yml` 定义模型服务和 Store。模型 key/model/apibase 直接使用配置文件中的值。
-- `policy/*.yml` 定义 policies/name/steps 案例，Bot 内以有序列表表达 thought、skills、result、reply。每次模型请求提供预算内完整示例，模型结合真实上下文判断；默认 all 会优先考虑当前上下文保留的成功读取所关联案例；其它策略使用其各自的检索或判断方法。
+- `policy/POLICY.md` 描述案例集合并可直接编写对话案例，同目录 YAML 文件也可提供 policies/name/steps 案例。模型按需调用 `policy_guidance` 检索，结果作为工具证据进入当前上下文，不在每次请求前自动注入。
 - `skills/<name>/SKILL.md` 定义可复用操作流程。Pi 只发现该 Bot 的 Skill，向模型展示目录，模型通过 `read(path)` 按需读取正文。weather 使用 Bot 允许的 `web_fetch`。
 
 成功读取文档会保存带 resource 元数据的工具结果并更新最近读取标签。标签在追问和完成回复后保留，不改变权限或自动注入正文；完整工具事实位于 Store events；context_messages 是供 Pi 使用的投影，可能已经压缩。
@@ -32,12 +32,12 @@ python -m pytest tests/test_bot_templates.py tests/integration/test_example_bots
 ```
 
 测试复制并加载 weather 示例及测试专用的对话配置，运行真实 Pi 子进程、OpenAI 客户端、工具与 SQLite。在外部 HTTP 边界提供固定响应，无需真实 API Key。
-覆盖模板初始化不覆盖已有文件、配置解析、业务案例注入、对话隔离、追问、重启恢复、HTTP 错误及禁止工具的拦截。
+覆盖模板初始化不覆盖已有文件、配置解析、业务案例检索、对话隔离、追问、重启恢复、HTTP 错误及禁止工具的拦截。
 
 固定模型响应验证的是程序行为，不是模型能否正确理解每一种说法。实际模型效果需要再用自己的模型服务测试。手工场景见生成的 weather README。
 
 ## 升级旧示例
 
-旧 动作配置会被新配置校验拒绝。保留有用的业务规则，迁移到 `agent.yml` 和 policies/name/steps 格式的 `policy/*.yml`；操作步骤放入 SKILL.md，实际能力通过 ToolRegistry 或 MCP 注册。
+旧动作配置会被新配置校验拒绝。保留有用的业务规则，迁移到 `agent.yml` 和 `policy/POLICY.md`；对话式 YAML 案例放在同一 policy 目录。操作步骤放入 SKILL.md，实际能力通过 ToolRegistry 或 MCP 注册。
 
 浏览器、桌面和闲鱼示例还依赖缺失的能力适配，因此没有继续作为可运行模板分发。仅改一个 runtime 字段不能使它们恢复工作。

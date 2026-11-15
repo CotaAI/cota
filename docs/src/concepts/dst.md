@@ -74,7 +74,7 @@ Store 在 run 结束或距上次快照达到事件间隔时建立快照。间隔
 | `created_at` | 快照创建时间；不同于 `state.created_at` 的会话时间 |
 | `checksum` | 对除 checksum 外整个快照内容计算的哈希 |
 
-`context_messages` 保留模型响应与工具结果之间的稳定关联，供下一轮 Pi 初始化。当前请求的 system prompt、Skill 目录和 Policy guidance 由 `prepare` 动态加入，不作为固定指令混入历史投影。上下文压缩只改变这一投影，完整原始事件仍保留。交给 Pi 的传输副本另把图片换成不可变资源引用，避免启动或恢复时携带全部历史 Base64；这不会回写或精简 DST，详见 [Pi runtime](pi-runtime.md#图片证据与工作上下文)。
+`context_messages` 保留模型响应与工具结果之间的稳定关联，供 Pi 初始化和后续请求准备。system prompt、Skill 目录和请求专用运行时信息由 `prepare` 加入。Policy 与 Knowledge 是按需工具，完整结果保存在 `tool_result`；上一 run 的结果在请求副本中可缩为带真实数量的查询摘要，不改写原始事件。上下文压缩通过 `context_compaction` 改变工作投影。传输副本另把图片换成不可变资源引用，避免启动或恢复时携带全部历史 Base64，详见 [Pi runtime](pi-runtime.md#图片证据与工作上下文)。
 
 ## 恢复与不兼容处理
 
@@ -84,7 +84,11 @@ Store 在 run 结束或距上次快照达到事件间隔时建立快照。间隔
 
 快照不兼容与数据库表结构不兼容是两回事。SQLStore 初始化会检查已有表缺失的列，发现不兼容时明确报错，不自动迁移旧表。快照回放能恢复派生状态，不能替代数据库 schema 迁移。
 
-如果已保存的 execution 仍为 `running`，新 runtime 抛出 `RunInProgress`。恢复方必须先确认旧执行者已停止，取得独占会话所有权，再重新读取最新状态，为同一个 run 追加 `run_finished`，payload 为 `{"status": "interrupted"}`，并通过 Store 提交。进程内会话锁不等于跨进程独占；不要仅因超时就宣告另一执行者已退出。
+如果已保存的 execution 仍为 `running`，新的明确用户输入会先检查本机执行归属。在 macOS/Linux 的本机文件 SQLite 下，Cota 和 Pi 子进程共同持有会话的 OS 文件锁；`run_started.executor` 保存主机和 Store 作用域指纹。只有取得同一作用域的独占锁且指纹一致，才为原 run 追加 `run_finished`，payload 为 `{"status": "interrupted", "error_type": "ExecutorExited"}`，通过 Store 提交后再接收新输入。用户可以在同一会话发送“继续”，Pi 从已提交上下文开展下一轮执行。
+
+锁文件位于数据库同级 `.cota/executors/`，运行中不要删除；释放锁只关闭文件描述符，不删除文件。Python 异常退出而 Pi 尚未退出时，子进程继承的描述符继续阻止接管。MemoryStore 使用自身临时锁目录，只支持当前 Store 的进程内生命周期。Windows、MySQL 等远端 SQL、其他主机或没有归属指纹的旧运行仍抛出 `RunInProgress`；需要部署方确认旧执行者停止并在独占条件下补记中断事实。本机文件锁不提供分布式租约，不应把 SQLite 放到多主机共享文件系统上使用这一恢复机制。
+
+`Store.load()`、历史/状态查询、重复提交原 message_id 都不会自动恢复或重新执行已开始的输入；也不会仅因长时间没有 Event 就宣告执行者退出。直接调用低层 Pi runtime 仍要求先完成协调，常规接入使用 Application 或 Processor。
 
 恢复只追加中断事实，不自动重放 pending tools。若工具副作用已经发生但结果未提交，需要检查外部系统再决定补偿或新任务；本地状态恢复不提供外部操作的 exactly-once 保证。
 

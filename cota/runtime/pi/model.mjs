@@ -20,10 +20,12 @@ function safeError(error, provider) {
 }
 
 export async function nativeStream({model, provider, context, purpose = 'dialogue',
-  contextBudget, maxTokens = model.maxTokens, toolChoice, rpc, signal, notify = async () => {}, onComplete = () => {}}) {
+  contextBudget, maxTokens = model.maxTokens, streamOptions = {}, toolChoice, rpc, signal,
+  notify = async () => {}, onComplete = () => {}}) {
   const {request_id, debug} = await rpc('model_begin', {purpose, model: model.id,
     ...(contextBudget ? {contextBudget} : {})});
   const output = createAssistantMessageEventStream();
+  output.requestId = request_id;
   const began = performance.now();
   const transport = {attempts: [], first_text_ms: null, timeout_seconds: provider.timeoutSeconds ?? 180, max_retries: provider.maxRetries ?? 0};
   const controller = new AbortController();
@@ -53,6 +55,7 @@ export async function nativeStream({model, provider, context, purpose = 'dialogu
       const messages = context.messages;
       controller.signal.throwIfAborted();
       const stream = streamCompletions(model, {messages, tools: context.tools}, {
+        ...streamOptions,
         apiKey: provider.apiKey, signal: controller.signal, timeoutMs, maxRetries: provider.maxRetries ?? 0,
         maxTokens, ...(toolChoice ? {toolChoice} : {}),
         fetch: async (url, init) => {
@@ -123,6 +126,7 @@ export async function nativeStream({model, provider, context, purpose = 'dialogu
       try {await bounded(notification('error'));} catch { /* The bridge may already be disconnected. */ }
       output.push({type: 'error', reason: controller.signal.aborted ? 'aborted' : 'error', error: {
         ...partial, role: 'assistant', content: [], cotaModelError: !signal?.aborted, cotaErrorType: error_type,
+        cotaRequestId: request_id,
         ...(overflow && !controller.signal.aborted ? {cotaContextOverflow: true} : {}),
         api: model.api, provider: model.provider, model: model.id,
         stopReason: controller.signal.aborted ? 'aborted' : 'error',

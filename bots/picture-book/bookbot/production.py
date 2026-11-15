@@ -7,6 +7,7 @@ import math
 import os
 from pathlib import Path
 import re
+import time
 
 from .common import confined, read_json, sha256, write_json
 
@@ -134,15 +135,24 @@ class Production:
                 attempts=len(records), remaining_generations=0)
         return len(records) + 1
 
-    def bind_criteria(self, prompt):
+    def bind_criteria(self, prompt, *, change_reason=None):
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError('Review criteria must be nonempty text')
         prompt = prompt.strip()
+        if change_reason is not None and (not isinstance(change_reason, str)
+                or not change_reason.strip() or len(change_reason) > 2000):
+            raise ValueError('Criteria change requires a nonempty reason of at most 2000 characters')
         path, previous = _criteria(self.project, self.asset)
         if previous and previous['criteria'] != prompt:
-            raise ProductionBlocked('review_criteria_changed', self.asset,
-                'Review criteria for this asset are already fixed',
-                'Reuse the original criteria; report conflicting observations as uncertain rather than starting another revision cycle')
+            if not change_reason:
+                raise ProductionBlocked('review_criteria_changed', self.asset,
+                    'Review criteria for this asset are already fixed',
+                    'Reuse the criteria; to correct a genuine criteria error, supply an explicit change reason and new evidence')
+            history = list(previous.get('history', []))
+            history.append({'criteria': previous['criteria'], 'criteria_hash': previous['criteria_hash'],
+                            'change_reason': change_reason.strip(), 'changed_at': time.time()})
+            write_json(path, {'asset': self.asset, 'criteria': prompt,
+                              'criteria_hash': sha256(prompt.encode()), 'history': history})
         if previous is None:
             write_json(path, {'asset': self.asset, 'criteria': prompt,
                               'criteria_hash': sha256(prompt.encode())})

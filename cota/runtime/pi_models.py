@@ -102,6 +102,8 @@ class PiModelObserver:
         if message.get('stopReason') not in ('stop', 'toolUse', 'length'):
             raise ValueError('An incomplete native response cannot become an assistant decision')
         diagnostic.update(status='completed', duration_ms=payload['duration_ms'])
+        if metadata['purpose'] == 'compaction' and message['stopReason'] == 'length':
+            diagnostic.update(status='rejected', code='summary_truncated', error_type='SummaryTruncated')
         if payload.get('transport'):
             diagnostic['transport'] = deepcopy(payload['transport'])
         if self.recorder.debug_enabled:

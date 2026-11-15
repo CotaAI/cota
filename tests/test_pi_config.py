@@ -62,7 +62,7 @@ def test_setup_rejects_old_node(monkeypatch):
         setup(check_only=True)
 
 
-@pytest.mark.parametrize('field', ['max_images', 'max_image_bytes'])
+@pytest.mark.parametrize('field', ['max_images', 'max_image_bytes', 'max_tokens'])
 @pytest.mark.parametrize('value', [0, -1, True, '8', 1.5])
 def test_image_budget_settings_are_positive_integers(field, value):
     from cota.config import validate_bot_config
@@ -77,7 +77,14 @@ def test_image_budget_settings_are_part_of_the_bot_contract():
 
 def test_working_context_budget_is_configurable():
     from cota.config import validate_bot_config
-    validate_bot_config({'dialogue': {'compaction': {'trigger_tokens': 64000, 'keep_recent_tokens': 12000}}})
+    validate_bot_config({'dialogue': {'compaction': {'trigger_tokens': 64000, 'keep_recent_tokens': 12000,
+                                                  'max_tokens': 8192}}})
+
+
+def test_summary_output_cannot_exceed_an_explicit_reserve():
+    from cota.config import validate_bot_config
+    with pytest.raises(ValueError, match='reserve_tokens'):
+        validate_bot_config({'dialogue': {'compaction': {'max_tokens': 8000, 'reserve_tokens': 4000}}})
 
 
 @pytest.mark.parametrize('value', [0, 1, -1, True, '64000', 1.5])

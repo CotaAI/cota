@@ -252,9 +252,7 @@ class Processor:
 
     async def _get_input_tracker(self, session_id):
         tracker = await self.get_tracker(session_id)
-        if tracker.execution.get('status') == 'running':
-            from cota.runtime.pi_runtime import RunInProgress
-            raise RunInProgress('Previous run is still running; reconcile its executor before submitting new input')
+        await self.store.recover_interrupted_run(tracker)
         return tracker
 
     async def handle_group_message(self, inbound, *, reason, expected_sequence=None):
@@ -363,19 +361,25 @@ class Processor:
         await self.save_tracker(self.dst)
 
     async def _run_runtime(self, runtime):
-        from cota.runtime.pi_runtime import ModelCallError
+        from cota.runtime.pi_bridge import PiExecutionError, PiBridgeError
         from cota.events import BotUtterEvent
         try:
             await runtime.run()
-        except (ModelCallError, TimeoutError) as error:
+        except (PiExecutionError, PiBridgeError, TimeoutError) as error:
             # The engine checkpoint remains failed; presenting an error must not
             # mark the task completed or automatically replay its side effects.
+            if getattr(runtime, '_checkpoint_failed', False):
+                raise
             timed_out = isinstance(error, TimeoutError) or getattr(error, 'error_type', None) == 'TimeoutError'
             text = ('本轮处理超时，已停止。当前进度已记录，您可以在本会话中继续。'
                     if timed_out else
                     '抱歉，处理时遇到错误，请稍后重试。'
                     if self.sanitize_errors or getattr(runtime, '_sanitize_errors', False)
                     else f'抱歉，处理时遇到错误：{error}')
+            if isinstance(error, PiExecutionError) and error.phase == 'compaction':
+                text = '上下文压缩未完成，本轮已停止。已保存的结果会保留；请处理问题后在本会话中继续。'
+            elif isinstance(error, PiBridgeError):
+                text = '执行连接已中断，本轮已停止。请查看日志或 Debug 确认原因，再在本会话中继续。'
             self.dst.append_event(BotUtterEvent(text=text, metadata={
                 'source': 'runtime_timeout' if timed_out else 'runtime_error'}))
             await self.save_tracker(self.dst)

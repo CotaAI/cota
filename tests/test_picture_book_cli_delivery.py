@@ -31,6 +31,18 @@ def test_review_cli_is_compact_with_saved_evidence_and_opt_in_full_output(native
     assert json.loads(full.stdout)['content'] == text
 
 
+def test_review_cli_needs_only_the_asset_and_actual_call(native_review):
+    root, project, _ = native_review
+    script = cli_copy(root)
+    result = subprocess.run([sys.executable, str(script), '--project', 'example', 'review',
+                             '--asset', 'pdf-face-01', '--tool-call-id', 'vision-call'],
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data['verdict'] == 'pass'
+    assert (project / data['evidence']['path']).is_file()
+
+
 def test_draft_deliverables_check_actual_byte_limit_before_sending(book_root):
     root,project=book_root
     for name in ('book.pdf','previews/overview.jpg','previews/covers.png','打印说明.md'):

@@ -1,21 +1,20 @@
 """Versioned PDF-page progress for the example Bot, independent of Cota DST.
 
-Call plan/complete under Production's project lock. Successful visual versions
-consume the budget; reading, metadata corrections and repairing outputs do not.
+Call plan/complete under Production's project lock. Version counts are an audit
+trail, not a paid-image budget. Changed pixels always require current evidence.
 """
 import re
 
 from .common import confined, read_json, sha256
-from .production import ProductionBlocked
+from .production import ProductionBlocked, _criteria
 
 _STATE = '.bookbot/render-state.json'
 _HASH = re.compile(r'[a-f0-9]{64}')
-MAX_PAGE_VERSIONS = 3
 
 
 def _invalid():
     return ProductionBlocked('render_history_invalid', 'render',
-        'Saved page-version history is invalid; its budget cannot be inferred',
+        'Saved page-version history is invalid and cannot be trusted',
         'Preserve the existing package and inspect the render history; do not reset it')
 
 
@@ -35,7 +34,7 @@ def load_state(project, manifest=None):
             raise ValueError()
         for number, row in data['pages'].items():
             if (not number.isdecimal() or int(number) < 1 or not isinstance(row, dict)
-                    or type(row.get('versions')) is not int or not 1 <= row['versions'] <= MAX_PAGE_VERSIONS
+                    or type(row.get('versions')) is not int or row['versions'] < 1
                     or not isinstance(row.get('input_hash'), str) or not _HASH.fullmatch(row['input_hash'])
                     or not isinstance(row.get('preview_hash'), str) or not _HASH.fullmatch(row['preview_hash'])
                     or type(row.get('blank')) is not bool):
@@ -46,7 +45,7 @@ def load_state(project, manifest=None):
 
 
 def accepted_review(project, number, preview_hash, *, require_native=False):
-    """Only exact, checksum-verified canonical required-check passes can freeze."""
+    """Only current-criteria, exact-image evidence can count as accepted."""
     folders = confined(project, '.bookbot/reviews')
     if not folders.exists():
         return False
@@ -63,6 +62,10 @@ def accepted_review(project, number, preview_hash, *, require_native=False):
                 metadata = read_json(confined(project, path.with_suffix('.request.json')))
                 target = report['image_inputs'][0]
                 assessment = report['assessment']
+                if 'prompt' in report or require_native:
+                    _, criteria = _criteria(project, folder.name)
+                    if criteria is None or criteria['criteria_hash'] != sha256(report.get('prompt', '').encode()):
+                        continue
                 if require_native:
                     source = report.get('source', {})
                     if source.get('tool') != 'image_understand' or not all(
@@ -99,16 +102,6 @@ def plan_versions(project, state, hashes):
         previous = state['pages'].get(number)
         if previous and previous['input_hash'] == fingerprint and number in active:
             continue
-        asset = f'pdf-face-{int(number):02d}'
-        if previous and accepted_review(project, int(number), previous['preview_hash']):
-            raise ProductionBlocked('accepted_page_changed', asset,
-                'This exact rendered page already passed its required checks',
-                'Preserve the accepted version; start a separate production task only for a genuine user-requested change')
-        if previous and previous['versions'] >= MAX_PAGE_VERSIONS:
-            raise ProductionBlocked('page_revision_limit_reached', asset,
-                'The baseline and two page revisions have already been built',
-                'Stop editing/rebuilding this page, preserve the current package and report unresolved checks',
-                versions=previous['versions'], remaining_revisions=0)
         changed.append(int(number))
     return changed
 
@@ -130,8 +123,7 @@ def render_status(project):
     for number, row in sorted(state['pages'].items(), key=lambda item: int(item[0])):
         accepted = accepted_review(project, int(number), row['preview_hash'])
         active = number in state.get('active_pages', state['pages'])
-        pages[number] = {**row, 'remaining_revisions': MAX_PAGE_VERSIONS - row['versions'],
-                         'accepted': accepted, 'active': active}
+        pages[number] = {**row, 'accepted': accepted, 'active': active}
         if active and not row['blank'] and not accepted:
             pending.append(int(number))
     return {'pages': pages, 'pending_pages': pending, 'based_on': 'last_completed_build'}

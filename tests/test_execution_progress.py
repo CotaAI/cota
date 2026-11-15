@@ -112,3 +112,17 @@ async def test_native_provider_timeout_classification_survives_runtime_boundary(
     with pytest.raises(ModelCallError) as caught:
         await runtime.run()
     assert caught.value.error_type == 'TimeoutError'
+
+
+async def test_failed_checkpoint_never_presents_a_new_reply_or_retries_the_commit(mock_agent):
+    from cota.runtime.pi_bridge import PiExecutionError
+    processor = Processor(mock_agent, MemoryStore())
+    processor.dst = DST('failed-checkpoint', mock_agent)
+    processor.save_tracker = AsyncMock()
+    runtime = SimpleNamespace(run=AsyncMock(side_effect=PiExecutionError('stopped',phase='compaction')),
+                              publish_committed=AsyncMock(), _checkpoint_failed=True)
+    with pytest.raises(PiExecutionError):
+        await processor._run_runtime(runtime)
+    assert len(processor.dst.events) == 0
+    processor.save_tracker.assert_not_awaited()
+    runtime.publish_committed.assert_not_awaited()

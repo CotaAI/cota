@@ -27,7 +27,3 @@ dialogue:
 
 tools:
   allow: [web_fetch]
-
-policy:
-  max_policies: 16
-  max_chars: 18000

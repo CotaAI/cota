@@ -54,6 +54,43 @@ def record_review(native_review):
         asset='pdf-face-01', tool_call_id='vision-call')
 
 
+def test_review_import_derives_inputs_and_a_stable_output_from_the_call(native_review):
+    root, project, db = native_review
+    before = db.read_bytes()
+    reviews = importlib.import_module('bookbot.tool_reviews')
+    result = reviews.record_review(root, project, asset='pdf-face-01', tool_call_id='vision-call')
+    assert result['assessment']['verdict'] == 'pass'
+    assert result['prompt'] == (project / 'criteria.txt').read_text()
+    assert result['image_inputs'][0]['path'] == 'previews/pages/page-1.png'
+    assert reviews.record_review(root, project, asset='pdf-face-01', tool_call_id='vision-call')['reused']
+    assert db.read_bytes() == before
+
+
+def test_reasoned_criteria_revision_preserves_evidence_and_invalidates_old_pass(native_review):
+    root, project, db = native_review
+    old = record_review(native_review)
+    old_file = (project / 'reviews/page-1.json').read_bytes()
+    original = (project / '.bookbot/assets/pdf-face-01.json').read_bytes()
+    with sqlite3.connect(db) as conn:
+        start = json.loads(conn.execute('SELECT payload FROM events WHERE sequence=1').fetchone()[0])
+        start['arguments']['prompt'] = '1. Check readability without requiring every wheel to be visible.'
+        conn.execute('UPDATE events SET payload=? WHERE sequence=1', (json.dumps(start),))
+    update_result(db, lambda d: d.update(content=[{'type':'text','text':'Uncertain.'}]))
+    reviews = importlib.import_module('bookbot.tool_reviews')
+    with pytest.raises(ValueError, match='criteria'):
+        reviews.record_review(root, project, asset='pdf-face-01', tool_call_id='vision-call')
+    assert (project / '.bookbot/assets/pdf-face-01.json').read_bytes() == original
+    revised = reviews.record_review(root, project, asset='pdf-face-01', tool_call_id='vision-call',
+                                    criteria_change_reason='Correct an accidental visibility requirement.')
+    assert revised['assessment']['verdict'] == 'uncertain'
+    assert (project / 'reviews/page-1.json').read_bytes() == old_file
+    state = json.loads((project / '.bookbot/assets/pdf-face-01.json').read_text())
+    assert state['history'][0]['criteria'] == old['prompt']
+    assert state['history'][0]['change_reason']
+    render = importlib.import_module('bookbot.render_state')
+    assert not render.accepted_review(project, 1, old['image_inputs'][0]['sha256'])
+
+
 def test_native_review_imports_committed_observation_and_reuses_it(native_review):
     root, project, db = native_review
     before = db.read_bytes()

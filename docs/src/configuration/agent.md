@@ -20,8 +20,6 @@ dialogue:
 tools:
   allow: [web_fetch]
   deny: []
-policy:
-  type: all
 ```
 
 模型 `default` 在 `endpoints.yml` 定义。配置允许工具不会替代真实服务权限；不配置 Skill 也可以进行纯对话。
@@ -41,7 +39,8 @@ policy:
 | `dialogue.max_iterations` | Processor 创建 runtime 时默认 30，正整数 |
 | `dialogue.run_timeout_seconds` | 整轮 Pi bridge 超时，默认 300，正有限数值 |
 | `dialogue.compaction.trigger_tokens` | 工作上下文触发阈值，默认 64000；实际取它与 `context_window-reserve_tokens` 的较小值。整数且至少为 2，不修改供应商模型真实容量 |
-| `dialogue.compaction.reserve_tokens` | 上下文预留 token；默认取输出上限与 `min(16384, context_window/4)` 中较大者，必须覆盖 `max_tokens` 且小于模型容量 |
+| `dialogue.compaction.reserve_tokens` | 上下文预留 token；默认取主回复输出上限与 `min(16384, context_window/4)` 中较大者，必须覆盖主回复与摘要的输出预算且小于模型容量 |
+| `dialogue.compaction.max_tokens` | 摘要独立输出预算，默认 `min(8192, reserve_tokens)`，正整数且不能超过 `reserve_tokens`；不受主回复默认 500 tokens 限制。按实际摘要模型的输出能力配置 |
 | `dialogue.compaction.keep_recent_tokens` | Pi 切分时尽量保留的最近 token；默认 `min(12000, 实际触发阈值/2)` 向下取整，须小于实际触发阈值；安全切分需要时可减少保留量 |
 | `dialogue.compaction.max_request_bytes` | 序列化工作上下文（含工具定义、图片 Base64 与待注入图片的估计体积）的字节预算，默认 32 MiB（33554432），正整数且不超过 64 MiB；超出时也复用 Pi 压缩 |
 | `dialogue.compaction.max_images` | 有效模型上下文中的图片数量预算，默认 8，正整数 |
@@ -55,9 +54,12 @@ dialogue:
   compaction:
     trigger_tokens: 64000
     keep_recent_tokens: 12000
+    max_tokens: 8192
 ```
 
 超过 token 或序列化字节预算时，运行适配层调用 Pi 的公共判断、切分和摘要组件。单条当前输入、工具批次或固定指导过大时会明确报错。原生主模型明确报告上下文溢出时，在剩余模型决策次数允许且非收尾阶段下，最多压缩并续接一次；不会重放已执行工具。Python custom/RAG 适配器仍沿用自身错误路径。
+
+摘要预算作为摘要模型的输出限额交给 Pi，输入检查同时预留这部分输出空间；Pi 的摘要 prompt、合法切点和完整性检查保持原生行为。没有固定 2000-token 上限。即使提高预算，供应商仍可能截断输出；这种摘要不作为检查点提交，也不以同样参数无限重试。失败原因保存在原有 run_finished 和可选 Debug 诊断中。
 
 `mode` 和 `response` 的行为需结合 [群聊](../deployment/group.md) 与 Application 使用。`use_proxy_user`、`max_proxy_step`、`proxy_prompt` 和顶层 `user_proxy.description` 仍被配置校验接受，但当前带输入标识的 Processor 路径明确拒绝启用 proxy 模拟，不作为可部署对话方案。
 
@@ -67,7 +69,7 @@ Token、整体序列化字节、图片数量和图片字节预算分别检查。
 
 ## Prompt 变量
 
-允许的变量是 `task_description`、`agent_description`、`user_context_text`、`session_summary`、`latest_user_query`、`compressed_history`、`history_messages`、`knowledge`。写法为 `{{变量名}}`，未知变量报错。
+允许的变量是 `task_description`、`agent_description`、`user_context_text`、`session_summary`、`latest_user_query`、`compressed_history`、`history_messages`。写法为 `{{变量名}}`，未知变量报错。知识通过 `search_knowledge` 查询，不使用 `{{knowledge}}` 模板变量。
 
 `task_description` 和 `agent_description` 来自 Bot 描述；用户记忆取自 DST 已记录状态。历史消息本身已进入模型上下文，模板中重复插入完整 history 会增加长度，通常不需要。
 
@@ -97,13 +99,13 @@ environment:
 
 ## tools、policy 与 knowledge
 
-`tools.allow` / `deny` 是工具名称或分组名称列表。内置 `web_fetch` 使用 Pi 标准工具定义；machine 环境还可配置 `send_files`，用于交付工作区文件到当前会话，见 [附件](../concepts/attachments.md)。`image_generate` 和 `image_understand` 在 endpoints 中配置了对应端点时自动可用，见 [图片工具](../concepts/tool-adapters.md#图片生成与图片理解工具)。`group:network` 只包含 web_fetch，`group:image` 包含 image_generate 和 image_understand，`group:all` 可用于所有当前可用工具。省略 allow 表示允许当前启用的自定义工具，空 allow 不提供自定义工具；deny 优先。Pi 原生工具与 Skill 资源读取由 environment 决定。
+`tools.allow` / `deny` 是工具名称或分组名称列表。内置 `web_fetch` 使用 Pi 标准工具定义；machine 环境还可配置 `send_files`，用于交付工作区文件到当前会话，见 [附件](../concepts/attachments.md)。`image_generate` 和 `image_understand` 在 endpoints 中配置了对应端点时自动可用，见 [图片工具](../concepts/tool-adapters.md#图片生成与图片理解工具)。`group:network` 只包含 web_fetch，`group:image` 包含 image_generate 和 image_understand，`group:all` 可用于所有当前可用工具。省略 allow 表示允许当前启用的自定义工具；空 allow 不提供普通自定义工具。自动注册的内部检索工具不受 allow 白名单限制，但显式 deny（含 group:all）仍优先。Pi 原生工具与 Skill 资源读取由 environment 决定。
 
 未知分组在加载配置时拒绝；具体名称在应用完成工具注册后的运行入口校验，未注册或拼错的工具会在调用模型前报错。应用可在注册结束后调用 `agent.get_tool_registry().validate()` 提前检查。业务 API 凭据、身份鉴权与幂等由外围适配器或工具服务负责，Cota 不新增凭据管理配置，见 [Tool 适配](../concepts/tool-adapters.md)。
 
-Policy 不改变工具权限。`policy.type` 默认 `all`，其他策略的 options、训练和产物配置见 [Policy 配置](policy.md)。业务案例写入 `policy/`，不塞进 `agent.yml` 的 dialogue 字段。
+Policy 不改变工具权限。`policy/POLICY.md` 定义名称、用途、top_k 和案例，加载 Bot 时自动建立索引并注册 `policy_guidance`。不再通过 `agent.yml` 配置训练方法、产物或逐次自动注入。业务案例格式见 [Policy 配置](policy.md)。
 
-可选 `knowledge` 是列表，当前支持 `type: llm`，并指定 `llm`、可选 `prompt`、`max_tokens`、`temperature`。知识内容通过 `{{knowledge}}` 等模板调用参与本轮准备；它不是额外 Agent。
+可选 `knowledge/KNOWLEDGE.md` 定义知识库名称、用途、top_k、rerank 和可选模型引用；同目录的 Markdown / TXT 文件建立本地索引。加载 Bot 后注册 `search_knowledge`，由模型按需调用。rerank 可为 false、true 或 navigate；辅助模型使用 endpoints 中的命名资源，不参与主对话决策来源关联。没有 knowledge 顶层配置或额外 Agent。
 
 可选 `channels` 为部署默认值，推荐把平台凭证放在 endpoints。模型可用工具由当前配置与执行环境决定；群聊不加载成员个人记忆，详见 [Tool 适配](../concepts/tool-adapters.md)。
 

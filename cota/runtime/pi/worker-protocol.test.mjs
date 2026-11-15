@@ -4,7 +4,7 @@ import {createServer} from 'node:http';
 import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 
-async function worker(t,{cancel=false,fail=false,wrapup=false}={}) {
+async function worker(t,{cancel=false,fail=false,wrapup=false,invalid=false}={}) {
   const requests=[];
   const server=createServer(async(req,res)=>{let body='';for await(const part of req)body+=part;requests.push(JSON.parse(body));
     if(fail){res.writeHead(503,{'content-type':'application/json'});res.end('{"error":{"message":"unavailable"}}');return;}
@@ -32,7 +32,7 @@ async function worker(t,{cancel=false,fail=false,wrapup=false}={}) {
     });
     child.on('exit',code=>{if(!frames.some(frame=>['done','error'].includes(frame.type)))reject(new Error(`worker exited ${code}: ${stderr}`));});
   });
-  send({type:'start',protocol:1,options:{messages:[{role:'user',content:'hello',timestamp:1}],maxIterations:wrapup?2:1,...(wrapup?{wrapUpIterations:1}:{}),
+  send({type:'start',protocol:1,options:{messages:[{role:'user',content:'hello',timestamp:1}],maxIterations:invalid?0:wrapup?2:1,...(wrapup?{wrapUpIterations:1}:{}),
     provider:{apiKey:'test',baseUrl:`http://127.0.0.1:${server.address().port}/v1`,model:'test',timeoutSeconds:2,maxRetries:0,thinking:'disabled',vision:false}}});
   return {frame:await completion,frames,requests};
 }
@@ -44,6 +44,7 @@ test('production worker emits bounded stream frames and a compact final outcome'
 test('cancel frame aborts the provider stream through Pi cancellation',async t=>{
   const {frame,frames}=await worker(t,{cancel:true});
   assert.equal(frame.type,'error');assert.doesNotMatch(frame.error,/Invalid protocol message/);
+  assert.equal(frame.code,'cancelled');assert.equal(frame.error_type,'AbortError');
   assert(frames.some(f=>f.type==='request'&&f.method==='model_failed'));
   assert(frames.some(f=>f.type==='notification'&&f.payload.phase==='error'));
 });
@@ -51,7 +52,15 @@ test('cancel frame aborts the provider stream through Pi cancellation',async t=>
 test('worker identifies provider errors without exposing provider detail',async t=>{
   const {frame}=await worker(t,{fail:true});assert.equal(frame.type,'error');
   assert.equal(frame.code,'model_error');assert.match(frame.error,/request=req-worker/);
+  assert.equal(frame.phase,'model');assert.equal(frame.request_id,'req-worker');
   assert.doesNotMatch(frame.error,/unavailable/);
+});
+
+test('worker reports invalid execution configuration separately from protocol failure',async t=>{
+  const {frame,requests}=await worker(t,{invalid:true});
+  assert.equal(frame.type,'error');assert.equal(frame.code,'execution_failed');
+  assert.equal(frame.phase,'execution');assert.equal(frame.error_type,'Error');
+  assert.equal(requests.length,0);
 });
 
 
