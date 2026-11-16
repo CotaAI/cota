@@ -7,13 +7,14 @@ logger = logging.getLogger(__name__)
 
 
 class PolicyTool(Tool):
-    """BM25 policy search returning structured guidance with labeled thoughts.
+    """BM25 policy search with optional LLM rerank.
 
     Registered automatically when a Bot has a policy/ directory with POLICY.md.
     """
 
-    def __init__(self, index):
+    def __init__(self, index, agent=None):
         self._index = index
+        self._agent = agent
 
     @property
     def name(self):
@@ -41,7 +42,11 @@ class PolicyTool(Tool):
                     'details': {}, 'isError': True}
 
         try:
-            result, result_count = self._index.search(scenario)
+            if self._index.manifest.embedding and self._index._vector is not None:
+                emb_client = self._resolve_embedding_client()
+                result, result_count = await self._index.search_with_embedding(scenario, emb_client)
+            else:
+                result, result_count = self._index.search(scenario)
         except Exception as e:
             logger.error(f'Policy search failed: {e}')
             return {'content': [{'type': 'text', 'text': f'策略检索失败：{e}'}],
@@ -51,3 +56,7 @@ class PolicyTool(Tool):
             return {'content': [{'type': 'text', 'text': '未找到相关业务策略。'}], 'details': {'hits': 0}}
 
         return {'content': [{'type': 'text', 'text': result}], 'details': {'hits': result_count}}
+
+    def _resolve_embedding_client(self):
+        emb_name = self._index.manifest.embedding
+        return self._agent.embedding_client(emb_name)

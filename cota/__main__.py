@@ -280,6 +280,8 @@ async def shell(args):
         await agent.cleanup()
         raise ValueError('cota shell requires dialogue.mode=direct; use Application or a group Channel for group mode')
     configure_execution_logging(agent, args)
+    if hasattr(agent, 'init_embeddings'):
+        await agent.init_embeddings()
 
     # ── Single agent shell ──
     sys.stderr.write("Agent loaded. Type a message and press enter.\n")

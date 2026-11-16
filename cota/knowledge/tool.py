@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 class KnowledgeTool(Tool):
-    """BM25 knowledge search with optional LLM rerank/navigate.
+    """BM25 knowledge search with optional embedding-based hybrid retrieval.
 
     Registered automatically when a Bot has a knowledge/ directory with KNOWLEDGE.md.
     Each invocation is one atomic tool event — internal retrieval steps are invisible.
@@ -42,16 +42,12 @@ class KnowledgeTool(Tool):
             return {'content': [{'type': 'text', 'text': '请提供搜索关键词。'}],
                     'details': {}, 'isError': True}
 
-        rerank = self._index.manifest.rerank
         try:
-            if rerank == 'false':
-                result, result_count = self._index.search(query)
+            if self._index.manifest.embedding and self._index._vector is not None:
+                emb_client = self._resolve_embedding_client()
+                result, result_count = await self._index.search_with_embedding(query, emb_client)
             else:
-                llm = self._resolve_llm()
-                if rerank == 'navigate':
-                    result, result_count = await self._index.search_with_navigate(query, llm)
-                else:
-                    result, result_count = await self._index.search_with_rerank(query, llm)
+                result, result_count = self._index.search(query)
         except Exception as e:
             logger.error(f'Knowledge search failed: {e}')
             return {'content': [{'type': 'text', 'text': f'知识库检索失败：{e}'}],
@@ -62,6 +58,6 @@ class KnowledgeTool(Tool):
 
         return {'content': [{'type': 'text', 'text': result}], 'details': {'hits': result_count}}
 
-    def _resolve_llm(self):
-        llm_name = self._index.manifest.llm
-        return self._agent.llm_instance(llm_name)
+    def _resolve_embedding_client(self):
+        emb_name = self._index.manifest.embedding
+        return self._agent.embedding_client(emb_name)

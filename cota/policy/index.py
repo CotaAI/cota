@@ -4,6 +4,8 @@ import os
 from typing import Optional
 
 from cota.retrieval.bm25 import BM25Index
+from cota.retrieval.vector import VectorIndex, HybridIndex
+from cota.retrieval.cache import EmbeddingCache
 from cota.retrieval.chunker import parse_frontmatter
 from .catalog import PolicyCatalog, _render, _GUIDANCE, policy_skills
 
@@ -14,11 +16,12 @@ _REQUIRED_FIELDS = ('name', 'description')
 
 
 class PolicyManifest:
-    def __init__(self, name, description, top_k, directory):
+    def __init__(self, name, description, top_k, directory, embedding=None):
         self.name = name
         self.description = description
         self.top_k = top_k
         self.directory = directory
+        self.embedding = embedding
 
     @classmethod
     def load(cls, policy_dir) -> Optional["PolicyManifest"]:
@@ -34,12 +37,30 @@ class PolicyManifest:
         top_k = meta.get('top_k', 5)
         if not isinstance(top_k, int) or top_k < 1:
             raise ValueError('POLICY.md top_k must be a positive integer')
+        embedding = meta.get('embedding')
+        if embedding is not None and (not isinstance(embedding, str) or not embedding.strip()):
+            raise ValueError('POLICY.md embedding must be a non-empty string')
         return cls(
             name=meta['name'].strip(),
             description=meta['description'].strip(),
             top_k=top_k,
             directory=policy_dir,
+            embedding=embedding,
         )
+
+
+def _compact_repr(policy):
+    """Compact text representation of a policy case for embedding."""
+    parts = [policy['name']]
+    for step in policy['steps']:
+        if 'user' in step:
+            parts.append(f'用户: {step["user"]}')
+        for item in step.get('bot', []):
+            if 'thought' in item:
+                parts.append(f'指导: {item["thought"]}')
+            elif 'result' in item:
+                parts.append(f'结果: {item["result"]}')
+    return ' | '.join(parts)
 
 
 class PolicyIndex:
@@ -50,6 +71,9 @@ class PolicyIndex:
         self._catalog = catalog
         self._by_name = {p['name']: p for p in catalog.policies}
         self._bm25 = bm25
+        self._vector = None
+        self._doc_texts = [_compact_repr(p) for p in catalog.policies]
+        self._doc_ids = [p['name'] for p in catalog.policies]
 
     @classmethod
     def build(cls, policy_dir) -> Optional["PolicyIndex"]:
@@ -89,12 +113,43 @@ class PolicyIndex:
         """Returns (formatted_text, hit_count)."""
         k = top_k or self.manifest.top_k
         results = self._bm25.search(query, top_k=k)
+        return self._format_results(results, k)
+
+    async def attach_embeddings(self, embedding_client, bot_path):
+        """Compute or load cached embeddings and build the vector index."""
+        if not self._doc_texts:
+            return
+        cache = EmbeddingCache(os.path.join(bot_path, '.cota', 'embeddings'))
+        cached = cache.get(embedding_client.model, self._doc_texts)
+        if cached and len(cached) == len(self._doc_texts):
+            vectors = cached
+        else:
+            vectors = await embedding_client.embed(self._doc_texts)
+            cache.put(embedding_client.model, self._doc_texts, vectors)
+        items = [{'id': doc_id, 'embedding': vec}
+                 for doc_id, vec in zip(self._doc_ids, vectors)]
+        self._vector = VectorIndex(items)
+        logger.info('Policy vector index built: %d embeddings', len(items))
+
+    async def search_with_embedding(self, query, embedding_client, top_k=None):
+        """Hybrid BM25+vector search. Returns (text, hit_count)."""
+        k = top_k or self.manifest.top_k
+        query_vec = (await embedding_client.embed([query]))[0]
+        hybrid = HybridIndex(self._bm25, self._vector)
+        results = hybrid.search(query, query_vec, top_k=k)
+        return self._format_results(results, k)
+
+    def _format_results(self, results, top_k=None):
+        """Format BM25 results with budget control. Returns (text, hit_count)."""
         if not results:
             return '', 0
+        k = top_k or self.manifest.top_k
         parts = [_GUIDANCE]
         total = len(_GUIDANCE)
         hit_count = 0
         for r in results:
+            if hit_count >= k:
+                break
             policy = self._by_name.get(r['id'])
             if not policy:
                 continue

@@ -222,6 +222,8 @@ def create_app(agent=None, config_path=None, *, channel_config=None, authenticat
     @app.listener('before_server_start')
     async def start(app, loop):
         try:
+            if hasattr(agent, 'init_embeddings'):
+                await agent.init_embeddings()
             await application.start(configure=configure)
             if agent.store.debug_enabled:
                 from cota.debug.inspector import Inspector

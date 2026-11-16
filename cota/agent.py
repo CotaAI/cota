@@ -18,6 +18,7 @@ from cota.config import validate_bot_config
 from cota.knowledge import KnowledgeIndex, KnowledgeTool
 from cota.policy.index import PolicyIndex
 from cota.policy.tool import PolicyTool
+from cota.retrieval.embedding import EmbeddingClient
 
 from cota.executor.tools import ToolRegistry
 from cota.executor.user_memory import create_user_memory
@@ -62,6 +63,9 @@ class Agent:
         self.user_memory = None
         self._tool_registry: Optional[ToolRegistry] = None
         self._files = file_storage
+        self._embedding_clients: Dict[str, EmbeddingClient] = {}
+        self._knowledge_index = None
+        self._policy_index = None
 
     @property
     def files(self):
@@ -128,6 +132,17 @@ class Agent:
         knowledge_dir = os.path.join(path, 'knowledge')
         knowledge_index = KnowledgeIndex.build(knowledge_dir) if os.path.isdir(knowledge_dir) else None
 
+        # Embeddings
+        embedding_clients = {}
+        for emb_name, config in endpoints_config.get('embeddings', {}).items():
+            from cota.llm.factory import endpoint_value
+            embedding_clients[emb_name] = EmbeddingClient({
+                'key': endpoint_value(config, 'key'),
+                'apibase': endpoint_value(config, 'apibase'),
+                'model': endpoint_value(config, 'model'),
+                'dimensions': config.get('dimensions'),
+            })
+
         # User memory
         user_memory = create_user_memory(endpoints_config)
 
@@ -161,11 +176,14 @@ class Agent:
         if knowledge_index:
             tool_registry.register(KnowledgeTool(knowledge_index, agent))
         if policy_index:
-            tool_registry.register(PolicyTool(policy_index))
+            tool_registry.register(PolicyTool(policy_index, agent))
         skill_dir = os.path.abspath(os.path.join(path, 'skills'))
         agent.skill_paths = [skill_dir] if os.path.isdir(skill_dir) else []
         agent.user_memory = user_memory
         agent._image_endpoints = image_endpoints
+        agent._embedding_clients = embedding_clients
+        agent._knowledge_index = knowledge_index
+        agent._policy_index = policy_index
 
         return agent
 
@@ -187,14 +205,38 @@ class Agent:
             raise ValueError(f"LLM with name '{llm_name}' not found.")
         return llm_config
 
+    def embedding_client(self, name: Optional[Text] = None) -> Optional[EmbeddingClient]:
+        if not self._embedding_clients:
+            return None
+        if name is None:
+            return next(iter(self._embedding_clients.values()))
+        return self._embedding_clients.get(name)
+
+    async def init_embeddings(self):
+        """Attach vector indexes to knowledge/policy where embedding is configured."""
+        for index, attr in [(self._knowledge_index, 'embedding'), (self._policy_index, 'embedding')]:
+            if index is None:
+                continue
+            emb_name = getattr(index.manifest, attr, None)
+            if emb_name is None:
+                continue
+            client = self.embedding_client(emb_name)
+            if client is None:
+                logger.warning(f'Embedding client {emb_name!r} not found in endpoints')
+                continue
+            await index.attach_embeddings(client, self.config_path)
+
     async def cleanup(self):
         try:
             if self._tool_registry:
                 await self._tool_registry.cleanup()
         finally:
+            closeable = []
             models = {id(model): model for model in (self.llms or {}).values()}
-            results = await asyncio.gather(*(model.close() for model in models.values()
-                                             if callable(getattr(model, 'close', None))), return_exceptions=True)
+            closeable.extend(model.close() for model in models.values()
+                             if callable(getattr(model, 'close', None)))
+            closeable.extend(client.close() for client in self._embedding_clients.values())
+            results = await asyncio.gather(*closeable, return_exceptions=True)
             for result in results:
                 if isinstance(result, BaseException):
                     raise result

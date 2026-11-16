@@ -1,7 +1,6 @@
 """Knowledge base: loader, index, tool integration."""
 import os
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -45,7 +44,7 @@ class TestLoader:
         m = KnowledgeManifest.load(kb_dir)
         assert m.name == 'test-kb'
         assert m.description == '测试知识库'
-        assert m.rerank == 'false'
+        assert m.embedding is None
         assert m.top_k == 5
 
     def test_missing_required_field_raises(self, tmp_path):
@@ -55,11 +54,18 @@ class TestLoader:
         with pytest.raises(ValueError, match='description'):
             KnowledgeManifest.load(str(d))
 
-    def test_invalid_rerank_raises(self, tmp_path):
+    def test_embedding_field(self, tmp_path):
         d = tmp_path / 'kb'
         d.mkdir()
-        _write(str(d / 'KNOWLEDGE.md'), '---\nname: t\ndescription: d\nrerank: invalid\n---\n')
-        with pytest.raises(ValueError, match='rerank'):
+        _write(str(d / 'KNOWLEDGE.md'), '---\nname: t\ndescription: d\nembedding: default\n---\n')
+        m = KnowledgeManifest.load(str(d))
+        assert m.embedding == 'default'
+
+    def test_empty_embedding_raises(self, tmp_path):
+        d = tmp_path / 'kb'
+        d.mkdir()
+        _write(str(d / 'KNOWLEDGE.md'), '---\nname: t\ndescription: d\nembedding: ""\n---\n')
+        with pytest.raises(ValueError, match='embedding'):
             KnowledgeManifest.load(str(d))
 
     def test_discover_files_excludes_knowledge_md(self, kb_dir):
@@ -107,7 +113,7 @@ class TestIndex:
 class TestTool:
     def test_tool_properties(self, kb_dir):
         index = KnowledgeIndex.build(kb_dir)
-        agent = SimpleNamespace(llm_instance=lambda name: None)
+        agent = SimpleNamespace(embedding_client=lambda name: None)
         tool = KnowledgeTool(index, agent)
         assert tool.name == 'search_knowledge'
         assert '测试知识库' in tool.description
@@ -116,7 +122,7 @@ class TestTool:
     @pytest.mark.asyncio
     async def test_execute_returns_results(self, kb_dir):
         index = KnowledgeIndex.build(kb_dir)
-        agent = SimpleNamespace(llm_instance=lambda name: None)
+        agent = SimpleNamespace(embedding_client=lambda name: None)
         tool = KnowledgeTool(index, agent)
         result = await tool.execute(query='退款')
         assert not result.get('isError')
@@ -125,7 +131,7 @@ class TestTool:
     @pytest.mark.asyncio
     async def test_empty_query_returns_error(self, kb_dir):
         index = KnowledgeIndex.build(kb_dir)
-        agent = SimpleNamespace(llm_instance=lambda name: None)
+        agent = SimpleNamespace(embedding_client=lambda name: None)
         tool = KnowledgeTool(index, agent)
         result = await tool.execute(query='')
         assert result['isError']
@@ -133,39 +139,10 @@ class TestTool:
     @pytest.mark.asyncio
     async def test_no_match_returns_not_found(self, kb_dir):
         index = KnowledgeIndex.build(kb_dir)
-        agent = SimpleNamespace(llm_instance=lambda name: None)
+        agent = SimpleNamespace(embedding_client=lambda name: None)
         tool = KnowledgeTool(index, agent)
         result = await tool.execute(query='xyznotexist')
         assert '未找到' in result['content'][0]['text']
-
-
-class TestRerank:
-    @pytest.mark.asyncio
-    async def test_rerank_falls_back_on_llm_failure(self, kb_dir):
-        _write(os.path.join(kb_dir, 'KNOWLEDGE.md'),
-               '---\nname: t\ndescription: d\nrerank: true\n---\n')
-        index = KnowledgeIndex.build(kb_dir)
-        llm = SimpleNamespace(generate_chat=AsyncMock(side_effect=RuntimeError('fail')))
-        result = await index.search_with_rerank('退款', llm)
-        assert '退款' in result[0]
-
-    @pytest.mark.asyncio
-    async def test_rerank_uses_llm_response(self, kb_dir):
-        _write(os.path.join(kb_dir, 'KNOWLEDGE.md'),
-               '---\nname: t\ndescription: d\nrerank: true\n---\n')
-        index = KnowledgeIndex.build(kb_dir)
-        llm = SimpleNamespace(generate_chat=AsyncMock(return_value={'content': '0'}))
-        result = await index.search_with_rerank('退款', llm)
-        assert result[0]  # should return the first candidate
-
-    @pytest.mark.asyncio
-    async def test_rerank_preserves_heading_chain(self, kb_dir):
-        _write(os.path.join(kb_dir, 'KNOWLEDGE.md'),
-               '---\nname: t\ndescription: d\nrerank: true\n---\n')
-        index = KnowledgeIndex.build(kb_dir)
-        llm = SimpleNamespace(generate_chat=AsyncMock(return_value={'content': '0'}))
-        result = await index.search_with_rerank('退款', llm)
-        assert '[' in result[0] and ']' in result[0]
 
 
 class TestIndexQuality:
@@ -183,4 +160,4 @@ class TestIndexQuality:
         index = KnowledgeIndex.build(str(d))
         result, _ = index.search('搜索关键词')
         from cota.knowledge.index import _MAX_RESULT_CHARS
-        assert len(result) <= _MAX_RESULT_CHARS + 500  # allow margin for last chunk
+        assert len(result) <= _MAX_RESULT_CHARS + 500
