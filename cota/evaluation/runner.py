@@ -138,6 +138,7 @@ async def execute_case(bot, case, model, output, index, *, timeout, judge_timeou
     agent = None
     try:
         agent = Agent.load_from_path(str(bot))
+        await agent.async_setup()
         if debug:
             agent.store.enable_debug_log(str(bot / 'workspace/evaluation.log'))
         session = uuid4().hex

@@ -136,6 +136,7 @@ class Application:
                     return self
                 self._starting = True
                 try:
+                    await self.agent.async_setup()
                     await self.runner.start(configure=configure)
                 finally:
                     self._starting = False

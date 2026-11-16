@@ -226,6 +226,13 @@ class Agent:
                 continue
             await index.attach_embeddings(client, self.config_path)
 
+    async def async_setup(self):
+        """Idempotent async resource initialization. Call once after load_from_path."""
+        if getattr(self, '_async_setup_done', False):
+            return
+        await self.init_embeddings()
+        self._async_setup_done = True
+
     async def cleanup(self):
         try:
             if self._tool_registry:

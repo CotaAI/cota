@@ -119,17 +119,21 @@ class PolicyIndex:
         """Compute or load cached embeddings and build the vector index."""
         if not self._doc_texts:
             return
-        cache = EmbeddingCache(os.path.join(bot_path, '.cota', 'embeddings'))
-        cached = cache.get(embedding_client.model, self._doc_texts)
-        if cached and len(cached) == len(self._doc_texts):
-            vectors = cached
-        else:
-            vectors = await embedding_client.embed(self._doc_texts)
-            cache.put(embedding_client.model, self._doc_texts, vectors)
-        items = [{'id': doc_id, 'embedding': vec}
-                 for doc_id, vec in zip(self._doc_ids, vectors)]
-        self._vector = VectorIndex(items)
-        logger.info('Policy vector index built: %d embeddings', len(items))
+        try:
+            cache = EmbeddingCache(os.path.join(bot_path, '.cota', 'embeddings'))
+            cached = cache.get(embedding_client.cache_key, self._doc_texts)
+            if cached and len(cached) == len(self._doc_texts):
+                vectors = cached
+            else:
+                vectors = await embedding_client.embed(self._doc_texts)
+                cache.put(embedding_client.cache_key, self._doc_texts, vectors)
+            items = [{'id': doc_id, 'embedding': vec}
+                     for doc_id, vec in zip(self._doc_ids, vectors)]
+            self._vector = VectorIndex(items)
+            logger.info('Policy vector index built: %d embeddings', len(items))
+        except Exception as e:
+            logger.warning('Policy embedding init failed, BM25 fallback: %s', e)
+            self._vector = None
 
     async def search_with_embedding(self, query, embedding_client, top_k=None):
         """Hybrid BM25+vector search. Returns (text, hit_count)."""

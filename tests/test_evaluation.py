@@ -181,6 +181,9 @@ class FakeAgent:
     async def cleanup(self):
         self.closed = True
 
+    async def async_setup(self):
+        pass
+
 
 class FakeJudge:
     instances = []

@@ -53,7 +53,8 @@ async def test_shell_debug_lifecycle_and_failure_isolation(monkeypatch, tmp_path
             pass
         def flush_output(self):
             pass
-    agent = SimpleNamespace(store=MemoryStore(), workspace_path=str(tmp_path), name='test', cleanup=AsyncMock())
+    agent = SimpleNamespace(store=MemoryStore(), workspace_path=str(tmp_path), name='test',
+                            cleanup=AsyncMock(), async_setup=AsyncMock())
     processor = SimpleNamespace(dst=None, set_stream_callback=Mock())
     async def handle(message):
         callback = processor.set_stream_callback.call_args.args[0]

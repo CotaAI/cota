@@ -7,8 +7,14 @@ class VectorIndex:
 
     def __init__(self, items):
         self._items = []
+        self._dim = None
         for item in items:
             vec = item['embedding']
+            if self._dim is None:
+                self._dim = len(vec)
+            elif len(vec) != self._dim:
+                raise ValueError(
+                    f'Embedding dimension mismatch: expected {self._dim}, got {len(vec)} for {item["id"]}')
             norm = math.sqrt(sum(x * x for x in vec))
             self._items.append({
                 'id': item['id'],
@@ -20,6 +26,9 @@ class VectorIndex:
         q_norm = math.sqrt(sum(x * x for x in query_embedding))
         if q_norm == 0:
             return []
+        if self._dim is not None and len(query_embedding) != self._dim:
+            raise ValueError(
+                f'Query embedding dimension {len(query_embedding)} != index dimension {self._dim}')
         scored = []
         for item in self._items:
             if item['norm'] == 0:

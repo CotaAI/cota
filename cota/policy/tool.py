@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 class PolicyTool(Tool):
-    """BM25 policy search with optional LLM rerank.
+    """BM25 policy search with optional embedding-based hybrid retrieval.
 
     Registered automatically when a Bot has a policy/ directory with POLICY.md.
     """
@@ -44,7 +44,11 @@ class PolicyTool(Tool):
         try:
             if self._index.manifest.embedding and self._index._vector is not None:
                 emb_client = self._resolve_embedding_client()
-                result, result_count = await self._index.search_with_embedding(scenario, emb_client)
+                try:
+                    result, result_count = await self._index.search_with_embedding(scenario, emb_client)
+                except Exception as e:
+                    logger.warning(f'Embedding search failed, falling back to BM25: {e}')
+                    result, result_count = self._index.search(scenario)
             else:
                 result, result_count = self._index.search(scenario)
         except Exception as e:

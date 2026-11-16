@@ -20,7 +20,7 @@ async def test_native_retrieval_batch_preserves_origin_and_projects_old_results(
     knowledge = tmp_path / 'knowledge'
     knowledge.mkdir()
     (knowledge / 'KNOWLEDGE.md').write_text(
-        '---\nname: support\ndescription: refunds\nrerank: true\n---\nrefund.md', encoding='utf-8')
+        '---\nname: support\ndescription: refunds\n---\nrefund.md', encoding='utf-8')
     (knowledge / 'refund.md').write_text(
         '# 退款\n未找到订单时，先核对订单号。\n\n---\n\n退款期限是七天。', encoding='utf-8')
     policy = tmp_path / 'policy'
@@ -84,7 +84,7 @@ async def test_native_retrieval_batch_preserves_origin_and_projects_old_results(
         assert '2条结果' in results[1].payload['context']['summary']
         assert '七天' in str(results[0].payload)
         assert '七天' in str(dialogue[1]['messages'])
-        assert len([body for body in requests if not body.get('stream')]) == 1
+        assert len([body for body in requests if not body.get('stream')]) == 0
 
         # Restore through Store before continuing: events/snapshots retain the
         # complete evidence, while the later native request gets summaries.
@@ -102,7 +102,7 @@ async def test_native_retrieval_batch_preserves_origin_and_projects_old_results(
         assert any('七天' in str(event.payload) for event in (await store.load(dst.session_id)).events)
         if debug:
             headers = await store.model_debug_headers(dst.session_id)
-            assert sum(row['purpose'] == 'knowledge' for row in headers) == 1
+            assert sum(row['purpose'] == 'knowledge' for row in headers) == 0
             origin = await store.model_debug(dst.session_id, starts[0].payload['llm']['request_id'])
             assert origin['purpose'] == 'dialogue' and origin['run_id'] == first_run
         else:

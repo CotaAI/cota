@@ -45,7 +45,11 @@ class KnowledgeTool(Tool):
         try:
             if self._index.manifest.embedding and self._index._vector is not None:
                 emb_client = self._resolve_embedding_client()
-                result, result_count = await self._index.search_with_embedding(query, emb_client)
+                try:
+                    result, result_count = await self._index.search_with_embedding(query, emb_client)
+                except Exception as e:
+                    logger.warning(f'Embedding search failed, falling back to BM25: {e}')
+                    result, result_count = self._index.search(query)
             else:
                 result, result_count = self._index.search(query)
         except Exception as e:

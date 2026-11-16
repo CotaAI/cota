@@ -67,6 +67,9 @@ class MockAgent:
             self.store = MemoryStore()
         return Processor(agent=self, store=self.store)
 
+    async def async_setup(self):
+        pass
+
 
 @pytest.fixture
 def mock_agent():
